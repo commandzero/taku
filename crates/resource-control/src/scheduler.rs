@@ -9,7 +9,8 @@ use crate::project::current_environment;
 use crate::provider::{SecretFields, resolve_auth};
 use crate::reconcile::PushResult;
 use crate::transport::{
-    INTERNAL_GUARD_POINTER, RemoteResult, execute, execute_retry_safe, outbound, remove_pointer,
+    INTERNAL_GUARD_POINTER, OperationInput, RemoteResult, execute, execute_retry_safe, outbound,
+    remove_pointer,
 };
 use crate::variants::{baseline_path, discover, from_baseline, load_baseline};
 use crate::{
@@ -25,24 +26,34 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, Mutex};
 
+type GroupKey = (String, Option<String>, String);
+
 #[derive(Clone)]
 struct PreparedResource {
     item: InventoryEntry,
     target: TargetConfig,
     app: ApplicationDefinition,
+    effective_resource_types: BTreeMap<String, ResourceType>,
     resource_type: ResourceType,
     operation: Operation,
     auth: SecretFields,
     observation_path: PathBuf,
 }
 impl PreparedResource {
-    fn group(&self) -> (String, String) {
-        (self.item.target.clone(), self.item.resource_type.clone())
+    fn group(&self) -> GroupKey {
+        (
+            self.item.target.clone(),
+            self.item.namespace.clone(),
+            self.item.resource_type.clone(),
+        )
     }
     fn key(&self) -> String {
         format!(
-            "{}/{}/{}:write",
-            self.item.target, self.item.resource_type, self.item.id
+            "{}/{}/{}/{}:write",
+            self.item.target,
+            self.item.namespace.as_deref().unwrap_or("-"),
+            self.item.resource_type,
+            self.item.id
         )
     }
 }
@@ -52,6 +63,7 @@ struct PreparedDeletion {
     marker: DeletionMarker,
     target: TargetConfig,
     app: ApplicationDefinition,
+    effective_resource_types: BTreeMap<String, ResourceType>,
     resource_type: ResourceType,
     read: Operation,
     delete: Operation,
@@ -61,8 +73,11 @@ struct PreparedDeletion {
 impl PreparedDeletion {
     fn key(&self) -> String {
         format!(
-            "{}/{}/{}:delete",
-            self.marker.target, self.marker.resource_type, self.marker.id
+            "{}/{}/{}/{}:delete",
+            self.marker.target,
+            self.marker.namespace.as_deref().unwrap_or("-"),
+            self.marker.resource_type,
+            self.marker.id
         )
     }
 }
@@ -80,8 +95,8 @@ enum DeletionVerification {
 }
 
 enum ExecutionJob {
-    One((String, String), Box<PreparedResource>),
-    Many((String, String), Vec<PreparedResource>),
+    One(GroupKey, Box<PreparedResource>),
+    Many(GroupKey, Vec<PreparedResource>),
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -136,6 +151,7 @@ pub fn push(
     let mut reports = Vec::new();
     let mut prepared = Vec::new();
     let mut preparation_failed = BTreeSet::new();
+    let mut observation_files = BTreeMap::new();
     let mut binding_parts = vec![serde_yaml::to_string(&project)?, revision.clone()];
     for item in inventory {
         let target = &project.environments[&environment].targets[&item.target];
@@ -145,7 +161,7 @@ pub fn push(
             Ok(discovered) => discovered,
             Err(_) => {
                 reports.push(report(&environment, &item, "failed", "target_discovery"));
-                preparation_failed.insert((item.target.clone(), item.resource_type.clone()));
+                preparation_failed.insert(inventory_group(&item));
                 continue;
             }
         };
@@ -166,8 +182,20 @@ pub fn push(
         ));
         binding_parts.push(serde_yaml::to_string(&app)?);
         binding_parts.push(serde_yaml::to_string(&baseline)?);
-        let observation_path = cache_path(&root, &environment, &item.target, &item.resource_type);
-        let observation_file = load_observation(&observation_path)?;
+        let observation_path = cache_path(
+            &root,
+            &environment,
+            &item.target,
+            item.namespace.as_deref(),
+            &item.resource_type,
+        );
+        if !observation_files.contains_key(&observation_path) {
+            observation_files.insert(
+                observation_path.clone(),
+                load_observation(&observation_path)?,
+            );
+        }
+        let observation_file = &observation_files[&observation_path];
         if observation_file.binding != binding(&root, &project, &environment, &item.target, &app)? {
             bail!("Observed State is structurally invalid; run `taku fetch`");
         }
@@ -178,11 +206,19 @@ pub fn push(
         let current = if resource_type.write_intent != WriteIntent::Upsert
             || resource_type.concurrency_mode == crate::ConcurrencyMode::Guarded
         {
-            match read_current(target, &app, &resource_type, &auth, &item.id) {
+            match read_current(
+                target,
+                &app,
+                &resource_type,
+                &auth,
+                item.namespace.as_deref(),
+                &item.id,
+                Some(&item.value),
+            ) {
                 Ok(current) => current,
                 Err(_) => {
                     reports.push(report(&environment, &item, "failed", "targeted_read"));
-                    preparation_failed.insert((item.target.clone(), item.resource_type.clone()));
+                    preparation_failed.insert(inventory_group(&item));
                     continue;
                 }
             }
@@ -226,12 +262,12 @@ pub fn push(
                         "presence_conflict",
                         &format!("{:?}", resource_type.concurrency_mode).to_ascii_lowercase(),
                     ));
-                    preparation_failed.insert((item.target.clone(), item.resource_type.clone()));
+                    preparation_failed.insert(inventory_group(&item));
                     continue;
                 }
                 MissingPolicy::Delete => {
                     reports.push(report(&environment, &item, "failed", "missing_policy"));
-                    preparation_failed.insert((item.target.clone(), item.resource_type.clone()));
+                    preparation_failed.insert(inventory_group(&item));
                     continue;
                 }
                 MissingPolicy::Restore => {}
@@ -246,7 +282,7 @@ pub fn push(
                         "creation_conflict",
                         "existence_guard",
                     ));
-                    preparation_failed.insert((item.target.clone(), item.resource_type.clone()));
+                    preparation_failed.insert(inventory_group(&item));
                     continue;
                 }
                 resource_type.operations.create.clone()
@@ -259,23 +295,29 @@ pub fn push(
                         "presence_conflict",
                         "existence_guard",
                     ));
-                    preparation_failed.insert((item.target.clone(), item.resource_type.clone()));
+                    preparation_failed.insert(inventory_group(&item));
                     continue;
                 }
                 resource_type.operations.update.clone()
             }
-            WriteIntent::Upsert => resource_type.operations.upsert.clone(),
+            WriteIntent::Upsert => resource_type.operations.upsert.clone().or_else(|| {
+                if current.present {
+                    resource_type.operations.update.clone()
+                } else {
+                    resource_type.operations.create.clone()
+                }
+            }),
         };
         let Some(mut operation) = operation else {
             reports.push(report(&environment, &item, "failed", "write_intent"));
-            preparation_failed.insert((item.target.clone(), item.resource_type.clone()));
+            preparation_failed.insert(inventory_group(&item));
             continue;
         };
         if resource_type.concurrency_mode == crate::ConcurrencyMode::Guarded && current.present {
             let (Some(header), Some(guard)) = (operation.guard_header.clone(), current.guard)
             else {
                 reports.push(report(&environment, &item, "failed", "concurrency_guard"));
-                preparation_failed.insert((item.target.clone(), item.resource_type.clone()));
+                preparation_failed.insert(inventory_group(&item));
                 continue;
             };
             operation.headers.insert(header, guard);
@@ -284,6 +326,7 @@ pub fn push(
             item,
             target: target.clone(),
             app,
+            effective_resource_types: discovered.resource_types,
             resource_type,
             operation,
             auth,
@@ -298,7 +341,7 @@ pub fn push(
         let discovered = match discover(&app, target, &auth) {
             Ok(discovered) => discovered,
             Err(_) => {
-                preparation_failed.insert((marker.target.clone(), marker.resource_type.clone()));
+                preparation_failed.insert(marker_group(&marker));
                 reports.push(deletion_report(&environment, &marker, "failed"));
                 continue;
             }
@@ -330,6 +373,7 @@ pub fn push(
             marker,
             target: target.clone(),
             app,
+            effective_resource_types: discovered.resource_types,
             resource_type,
             read,
             delete,
@@ -338,10 +382,7 @@ pub fn push(
         };
         match verify_deletion(&prepared) {
             Err(_) => {
-                preparation_failed.insert((
-                    prepared.marker.target.clone(),
-                    prepared.marker.resource_type.clone(),
-                ));
+                preparation_failed.insert(marker_group(&prepared.marker));
                 reports.push(deletion_report(&environment, &prepared.marker, "failed"));
             }
             Ok(DeletionVerification::Present) => prepared_deletions.push(prepared),
@@ -350,10 +391,7 @@ pub fn push(
                 prepared_deletions.push(prepared);
             }
             Ok(DeletionVerification::Conflict) => {
-                preparation_failed.insert((
-                    prepared.marker.target.clone(),
-                    prepared.marker.resource_type.clone(),
-                ));
+                preparation_failed.insert(marker_group(&prepared.marker));
                 reports.push(deletion_report(
                     &environment,
                     &prepared.marker,
@@ -375,6 +413,7 @@ pub fn push(
             reports.push(PushResult {
                 environment: environment.clone(),
                 target: task.marker.target,
+                namespace: task.marker.namespace,
                 resource_type: task.marker.resource_type,
                 id: task.marker.id,
                 outcome: if task.remote_absent {
@@ -404,7 +443,7 @@ pub fn push(
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(project.max_requests)
         .build()?;
-    let mut groups: BTreeMap<(String, String), Vec<PreparedResource>> = BTreeMap::new();
+    let mut groups: BTreeMap<GroupKey, Vec<PreparedResource>> = BTreeMap::new();
     for task in prepared {
         groups.entry(task.group()).or_default().push(task);
     }
@@ -414,9 +453,9 @@ pub fn push(
         let blocked: Vec<_> = groups
             .keys()
             .filter(|key| {
-                group_dependencies(&groups[key])
+                dependency_groups(&groups[key])
                     .iter()
-                    .any(|dep| failed.contains(&(key.0.clone(), dep.clone())))
+                    .any(|dependency| failed.contains(dependency))
             })
             .cloned()
             .collect();
@@ -434,9 +473,8 @@ pub fn push(
         let ready: Vec<_> = groups
             .keys()
             .filter(|key| {
-                group_dependencies(&groups[key]).iter().all(|dep| {
-                    successful.contains(&(key.0.clone(), dep.clone()))
-                        || !groups.contains_key(&(key.0.clone(), dep.clone()))
+                dependency_groups(&groups[key]).iter().all(|dependency| {
+                    successful.contains(dependency) || !groups.contains_key(dependency)
                 })
             })
             .cloned()
@@ -458,7 +496,7 @@ pub fn push(
                 }
             }
         }
-        let results: Vec<((String, String), Vec<PushResult>)> = pool.install(|| {
+        let results: Vec<(GroupKey, Vec<PushResult>)> = pool.install(|| {
             jobs.into_par_iter()
                 .map(|job| match job {
                     ExecutionJob::One(key, task) => {
@@ -506,7 +544,7 @@ pub fn push(
                 })
                 .collect()
         });
-        let mut group_ok: BTreeMap<(String, String), bool> =
+        let mut group_ok: BTreeMap<GroupKey, bool> =
             ready.iter().cloned().map(|key| (key, true)).collect();
         for (key, job_reports) in results {
             for result in job_reports {
@@ -527,13 +565,10 @@ pub fn push(
             }
         }
     }
-    let mut deletion_groups: BTreeMap<(String, String), Vec<PreparedDeletion>> = BTreeMap::new();
+    let mut deletion_groups: BTreeMap<GroupKey, Vec<PreparedDeletion>> = BTreeMap::new();
     for task in prepared_deletions {
         deletion_groups
-            .entry((
-                task.marker.target.clone(),
-                task.marker.resource_type.clone(),
-            ))
+            .entry(marker_group(&task.marker))
             .or_default()
             .push(task);
     }
@@ -541,9 +576,9 @@ pub fn push(
         let blocked: Vec<_> = deletion_groups
             .keys()
             .filter(|key| {
-                deletion_dependencies(&deletion_groups[key])
+                deletion_dependency_groups(&deletion_groups[key])
                     .iter()
-                    .any(|dependency| failed.contains(&(key.0.clone(), dependency.clone())))
+                    .any(|dependency| failed.contains(dependency))
             })
             .cloned()
             .collect();
@@ -560,11 +595,10 @@ pub fn push(
         let ready: Vec<_> = deletion_groups
             .keys()
             .filter(|key| {
-                deletion_dependencies(&deletion_groups[key])
+                deletion_dependency_groups(&deletion_groups[key])
                     .iter()
                     .all(|dependency| {
-                        successful.contains(&(key.0.clone(), dependency.clone()))
-                            || !deletion_groups.contains_key(&(key.0.clone(), dependency.clone()))
+                        successful.contains(dependency) || !deletion_groups.contains_key(dependency)
                     })
             })
             .cloned()
@@ -621,7 +655,7 @@ fn preflight_transformations(
             .context("Target Baseline is unavailable; run `taku fetch`")?;
         let effective = from_baseline(&app, target, &baseline)?;
         let resource_type = &effective.resource_types[&item.resource_type];
-        if outbound(&item.value, resource_type).is_err() {
+        if outbound(&item.value, resource_type, None).is_err() {
             reports.push(report(
                 environment,
                 item,
@@ -692,19 +726,23 @@ fn execute_resource(
             &format!("{:?}", task.resource_type.concurrency_mode).to_ascii_lowercase(),
         ));
     }
-    let wire = outbound(&task.item.value, &task.resource_type)?;
+    let wire = outbound(&task.item.value, &task.resource_type, Some(&task.operation))?;
     let request = || {
         execute(
             &task.target,
             &task.app,
             &task.resource_type,
             &task.operation,
-            if task.item.pending {
-                None
-            } else {
-                Some(&task.item.id)
+            OperationInput {
+                namespace: task.item.namespace.as_deref(),
+                id: if task.item.pending {
+                    None
+                } else {
+                    Some(&task.item.id)
+                },
+                context: Some(&task.item.value),
+                body: Some(std::slice::from_ref(&wire)),
             },
-            Some(std::slice::from_ref(&wire)),
             &task.auth,
         )
     };
@@ -822,7 +860,7 @@ fn execute_many(
     }
     let wires: Vec<_> = pending
         .iter()
-        .map(|task| outbound(&task.item.value, &task.resource_type))
+        .map(|task| outbound(&task.item.value, &task.resource_type, Some(&task.operation)))
         .collect::<Result<_>>()?;
     let first = &pending[0];
     let request = || {
@@ -831,8 +869,12 @@ fn execute_many(
             &first.app,
             &first.resource_type,
             &first.operation,
-            None,
-            Some(&wires),
+            OperationInput {
+                namespace: first.item.namespace.as_deref(),
+                id: None,
+                context: Some(&first.item.value),
+                body: Some(&wires),
+            },
             &first.auth,
         )
     };
@@ -927,14 +969,28 @@ fn read_current(
     app: &ApplicationDefinition,
     resource_type: &ResourceType,
     auth: &SecretFields,
+    namespace: Option<&str>,
     id: &str,
+    desired: Option<&serde_json::Value>,
 ) -> Result<CurrentRemote> {
     let read = resource_type
         .operations
         .read
         .as_ref()
         .context("Write Intent or guarded concurrency requires a Read Operation")?;
-    match execute_retry_safe(target, app, resource_type, read, Some(id), None, auth)? {
+    match execute_retry_safe(
+        target,
+        app,
+        resource_type,
+        read,
+        OperationInput {
+            namespace,
+            id: Some(id),
+            context: desired,
+            body: None,
+        },
+        auth,
+    )? {
         RemoteResult::NotFound => Ok(CurrentRemote {
             present: false,
             value: None,
@@ -963,13 +1019,18 @@ fn read_current(
 }
 
 fn verify_deletion(task: &PreparedDeletion) -> Result<DeletionVerification> {
+    let parameters = marker_parameters(&task.marker);
     match execute_retry_safe(
         &task.target,
         &task.app,
         &task.resource_type,
         &task.read,
-        Some(&task.marker.id),
-        None,
+        OperationInput {
+            namespace: task.marker.namespace.as_deref(),
+            id: Some(&task.marker.id),
+            context: Some(&parameters),
+            body: None,
+        },
         &task.auth,
     )? {
         RemoteResult::NotFound => Ok(DeletionVerification::Absent),
@@ -1006,6 +1067,7 @@ fn execute_deletion(
         return Ok(PushResult {
             environment: environment.into(),
             target: task.marker.target,
+            namespace: task.marker.namespace,
             resource_type: task.marker.resource_type,
             id: task.marker.id,
             outcome: "resumed_success".into(),
@@ -1018,6 +1080,7 @@ fn execute_deletion(
         record_success(journal_path, journal, &key)?;
         "already_absent"
     } else {
+        let parameters = marker_parameters(&task.marker);
         let deleted = {
             let _guard = if task.delete.concurrency == ConcurrencyClass::Serial {
                 Some(serial.lock().unwrap())
@@ -1029,8 +1092,12 @@ fn execute_deletion(
                 &task.app,
                 &task.resource_type,
                 &task.delete,
-                Some(&task.marker.id),
-                None,
+                OperationInput {
+                    namespace: task.marker.namespace.as_deref(),
+                    id: Some(&task.marker.id),
+                    context: Some(&parameters),
+                    body: None,
+                },
                 &task.auth,
             )?
         };
@@ -1048,6 +1115,7 @@ fn execute_deletion(
     Ok(PushResult {
         environment: environment.into(),
         target: task.marker.target,
+        namespace: task.marker.namespace,
         resource_type: task.marker.resource_type,
         id: task.marker.id,
         outcome: outcome.into(),
@@ -1056,22 +1124,84 @@ fn execute_deletion(
     })
 }
 
-fn group_dependencies(tasks: &[PreparedResource]) -> Vec<String> {
-    tasks
-        .first()
-        .map(|task| task.resource_type.dependencies.clone())
-        .unwrap_or_default()
+fn marker_parameters(marker: &DeletionMarker) -> serde_json::Value {
+    serde_json::Value::Object(
+        marker
+            .parameters
+            .iter()
+            .map(|(name, value)| (name.clone(), serde_json::Value::String(value.clone())))
+            .collect(),
+    )
 }
-fn deletion_dependencies(tasks: &[PreparedDeletion]) -> Vec<String> {
-    tasks
-        .first()
-        .map(|task| task.resource_type.dependencies.clone())
-        .unwrap_or_default()
+
+fn inventory_group(item: &InventoryEntry) -> GroupKey {
+    (
+        item.target.clone(),
+        item.namespace.clone(),
+        item.resource_type.clone(),
+    )
+}
+
+fn marker_group(marker: &DeletionMarker) -> GroupKey {
+    (
+        marker.target.clone(),
+        marker.namespace.clone(),
+        marker.resource_type.clone(),
+    )
+}
+
+fn dependency_group(
+    target: &str,
+    namespace: Option<&str>,
+    resource_types: &BTreeMap<String, ResourceType>,
+    dependency: &str,
+) -> GroupKey {
+    let namespace = resource_types
+        .get(dependency)
+        .filter(|resource_type| resource_type.namespaced)
+        .and(namespace)
+        .map(str::to_owned);
+    (target.to_owned(), namespace, dependency.to_owned())
+}
+
+fn dependency_groups(tasks: &[PreparedResource]) -> Vec<GroupKey> {
+    tasks.first().map_or_else(Vec::new, |task| {
+        task.resource_type
+            .dependencies
+            .iter()
+            .map(|dependency| {
+                dependency_group(
+                    &task.item.target,
+                    task.item.namespace.as_deref(),
+                    &task.effective_resource_types,
+                    dependency,
+                )
+            })
+            .collect()
+    })
+}
+
+fn deletion_dependency_groups(tasks: &[PreparedDeletion]) -> Vec<GroupKey> {
+    tasks.first().map_or_else(Vec::new, |task| {
+        task.resource_type
+            .dependencies
+            .iter()
+            .map(|dependency| {
+                dependency_group(
+                    &task.marker.target,
+                    task.marker.namespace.as_deref(),
+                    &task.effective_resource_types,
+                    dependency,
+                )
+            })
+            .collect()
+    })
 }
 fn deletion_report(environment: &str, marker: &DeletionMarker, outcome: &str) -> PushResult {
     PushResult {
         environment: environment.into(),
         target: marker.target.clone(),
+        namespace: marker.namespace.clone(),
         resource_type: marker.resource_type.clone(),
         id: marker.id.clone(),
         outcome: outcome.into(),
@@ -1083,6 +1213,7 @@ fn report(environment: &str, item: &InventoryEntry, outcome: &str, safety: &str)
     PushResult {
         environment: environment.into(),
         target: item.target.clone(),
+        namespace: item.namespace.clone(),
         resource_type: item.resource_type.clone(),
         id: item.id.clone(),
         outcome: outcome.into(),
@@ -1092,12 +1223,20 @@ fn report(environment: &str, item: &InventoryEntry, outcome: &str, safety: &str)
 }
 fn sort_reports(reports: &mut [PushResult]) {
     reports.sort_by(|a, b| {
-        (&a.environment, &a.target, &a.resource_type, &a.id).cmp(&(
-            &b.environment,
-            &b.target,
-            &b.resource_type,
-            &b.id,
-        ))
+        (
+            &a.environment,
+            &a.target,
+            &a.namespace,
+            &a.resource_type,
+            &a.id,
+        )
+            .cmp(&(
+                &b.environment,
+                &b.target,
+                &b.namespace,
+                &b.resource_type,
+                &b.id,
+            ))
     });
 }
 fn stamp_reports(reports: &mut [PushResult], revision: &str) {

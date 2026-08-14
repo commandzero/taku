@@ -20,7 +20,7 @@ taku app add elasticsearch es --url https://localhost:9200
 taku app add kibana kb --url https://localhost:5601
 ```
 
-For a Multi Project, initialize with `--layout multi --environments dev,stage,prod`, then select a default with `taku context set dev`. Resource commands accept repeatable `--environment`, `--target`, `--type`, and `--id` selectors; `--all-environments` is always explicit.
+For a Multi Project, initialize with `--layout multi --environments dev,stage,prod`, then select a default with `taku context set dev`. Resource commands accept repeatable `--environment`, `--target`, `--namespace`, `--type`, and `--id` selectors; `--all-environments` is always explicit. A namespaced Resource Type requires an explicit namespace for remote listing, including `--namespace default`.
 
 The normal observation and reconciliation loop is:
 
@@ -51,7 +51,7 @@ Tracked Taku metadata lives under `.taku/`:
 └── baselines/<environment>/<target>.yml
 ```
 
-Context, Application Source cache, Observed State, and Push Journals are ignored. In a Single layout, Resources use `target/type/name.json`; in a Multi layout they use `environment/target/type/name.json`. The stable Resource ID is stored in the payload, never inferred from the filename.
+Context, Application Source cache, Observed State, and Push Journals are ignored. In a Single layout, non-namespaced Resources use `target/type/name.json`; in a Multi layout they use `environment/target/type/name.json`. Resource Types that opt into namespacing use `target/namespace/type/name.json` or `environment/target/namespace/type/name.json`, and represent the default Namespace with a literal `default` directory. The stable Resource ID is stored in the payload, never inferred from the filename. Namespace lifecycle is managed by an ordinary non-namespaced Resource Type defined by the Application, such as Kibana `spaces`.
 
 Project metadata defines Environments and their named Targets:
 
@@ -87,17 +87,17 @@ Provider precedence is explicit `--set field=value`, process environment, then t
 
 ## Live Elastic Stack tests
 
-Ignored integration tests exercise complete Resource lifecycles against Elasticsearch at `http://localhost:9200` and Kibana at `http://localhost:5601`, plus Kibana's NDJSON Saved Objects export. They read `ELASTIC_API_KEY` from the repository's explicit `.env` file without mutating the test process environment. The value may be either the raw encoded key or an `ApiKey `-prefixed authorization value.
+Ignored integration tests exercise complete Resource lifecycles against Elasticsearch at `http://localhost:9200` and Kibana at `http://localhost:5601`, plus Kibana's multipart-NDJSON Saved Objects import/export. They read `ELASTIC_API_KEY` from the repository's explicit `.env` file without mutating the test process environment. The value may be either the raw encoded key or an `ApiKey `-prefixed authorization value.
 
 ```console
 cargo test --test live_elastic -- --ignored --nocapture
 ```
 
-The lifecycle tests create uniquely named remote fixtures, manage them through the compiled `taku` CLI, and remove them through guarded Deletion Markers. A fallback cleanup guard also attempts deletion if an assertion fails. The export test is read-only. These tests remain skipped during ordinary `cargo test` runs.
+The lifecycle tests create uniquely named remote fixtures, manage them through the compiled `taku` CLI, and remove them through guarded Deletion Markers. A fallback cleanup guard also attempts deletion if an assertion fails. The export test is read-only. The full-corpus test uses the untracked sibling `taku-test-project` by default (or `TAKU_TEST_PROJECT`) and verifies all copied ESDiag component templates, index templates, pipelines, roles, spaces, saved objects, workflows, tools, and skills. These tests remain skipped during ordinary `cargo test` runs.
 
 ## Application definitions
 
-An Application is a strictly validated Target Profile and Resource Type Catalog. Each Resource Type declares identity, display-name policy, lifecycle Operations, actual HTTP methods, paths, headers and body templates, One/Many cardinality, independent request/response framing, transformations, write intent, retry safety, scheduling class, and dependencies. Many writes are bundled at runtime, including NDJSON payloads. HTTP verbs do not imply lifecycle semantics.
+An Application is a strictly validated Target Profile and Resource Type Catalog. Each Resource Type declares identity, optional namespacing, display-name policy, lifecycle Operations, actual HTTP methods, paths, headers and body templates, One/Many cardinality, independent request/response framing, transformations, write intent, retry safety, scheduling class, and dependencies. Many writes are bundled at runtime, including multipart NDJSON payloads. HTTP verbs do not imply lifecycle semantics.
 
 Update Mutation Mode is configured per Resource Type. Replace compares and owns the complete canonical document; Patch compares, pulls, and writes only the fields represented by the desired Resource. Target sensitive fields may tighten an Application's pre-persistence drops for a named Resource Type, but cannot remove identity or display-name state.
 

@@ -96,6 +96,18 @@ _Avoid_: Observed State Cache, version pin
 A category of remotely managed configuration bound to a Target Profile whose members share identity, lifecycle, and mutation semantics.
 _Avoid_: API endpoint, adapter
 
+**Namespace**:
+An explicitly named isolation boundary within a Target that scopes Resources of Namespaced Resource Types. The default Namespace is explicit whenever namespacing is enabled.
+_Avoid_: Environment, Target, implicit default
+
+**Namespace Resource**:
+An ordinary Resource whose lifecycle independently manages an application's Namespaces, such as a Kibana Space.
+_Avoid_: Namespace directory, special command
+
+**Namespaced Resource Type**:
+A Resource Type that opts into Namespace-scoped identity and storage. Its Resources always include a Namespace directory, including `default`; Resource Types that do not opt in retain the non-namespaced layout.
+_Avoid_: globally scoped Resource Type, optional path guessing
+
 **Resource Type Variant**:
 The Operations and Transformations selected for a Resource Type when a specific set of Target Facts applies.
 _Avoid_: Resource Type, application upgrade

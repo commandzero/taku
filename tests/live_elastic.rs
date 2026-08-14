@@ -55,10 +55,15 @@ fn unique_id(kind: &str) -> String {
 }
 
 fn run(project: &TempDir, authorization: &str, args: &[&str]) -> Value {
+    run_at(project.path(), authorization, args)
+}
+
+fn run_at(project: &std::path::Path, authorization: &str, args: &[&str]) -> Value {
     let output = Command::cargo_bin("taku")
         .unwrap()
-        .current_dir(project.path())
+        .current_dir(project)
         .env(AUTH_ENV, authorization)
+        .env("ELASTIC_AUTHORIZATION", authorization)
         .args(["--output", "json"])
         .args(args)
         .output()
@@ -365,7 +370,14 @@ fn lists_real_kibana_dashboard_exports_without_treating_export_details_as_a_reso
     let listed = run(
         &project,
         &authorization,
-        &["list", "--remote", "--type", "saved_objects"],
+        &[
+            "list",
+            "--remote",
+            "--namespace",
+            "default",
+            "--type",
+            "saved_objects",
+        ],
     );
 
     let resources = listed["result"].as_array().unwrap();
@@ -378,5 +390,88 @@ fn lists_real_kibana_dashboard_exports_without_treating_export_details_as_a_reso
         resources
             .iter()
             .all(|resource| resource.get("type").is_some())
+    );
+}
+
+#[test]
+#[ignore = "requires the ephemeral taku-test-project plus Elasticsearch and Kibana on localhost"]
+fn round_trips_the_complete_esdiag_resource_corpus() {
+    let authorization = authorization();
+    let project = std::env::var_os("TAKU_TEST_PROJECT")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .unwrap()
+                .join("taku-test-project")
+        });
+    assert!(
+        project.join(".git").exists(),
+        "ephemeral test project is missing"
+    );
+    assert!(
+        project
+            .join("esdiag-assets/elasticsearch/assets.yml")
+            .exists(),
+        "the copied ESDiag source corpus is missing"
+    );
+
+    let validated = run_at(&project, &authorization, &["validate"]);
+    assert_eq!(validated["result"]["valid"], true);
+
+    let inventory = run_at(&project, &authorization, &["list"]);
+    let resources = inventory["result"].as_array().unwrap();
+    assert_eq!(resources.len(), 130);
+    assert_eq!(
+        resources
+            .iter()
+            .filter(|resource| resource["type"] == "saved_objects")
+            .count(),
+        90
+    );
+    assert!(resources.iter().any(|resource| {
+        resource["target"] == "kb"
+            && resource["namespace"] == "esdiag"
+            && resource["type"] == "workflows"
+    }));
+    assert!(resources.iter().any(|resource| {
+        resource["target"] == "kb"
+            && resource.get("namespace").is_none()
+            && resource["type"] == "spaces"
+    }));
+
+    run_at(&project, &authorization, &["--target", "es", "fetch"]);
+    run_at(&project, &authorization, &["--target", "kb", "fetch"]);
+    run_at(&project, &authorization, &["pull", "--yes"]);
+
+    let status = run_at(&project, &authorization, &["status"]);
+    assert_eq!(status["result"].as_array().unwrap().len(), 130);
+    assert!(
+        status["result"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|resource| resource["state"] == "in_sync")
+    );
+
+    let push = run_at(
+        &project,
+        &authorization,
+        &[
+            "push",
+            "--dry-run",
+            "--uncommitted",
+            "allow",
+            "--untracked",
+            "allow",
+        ],
+    );
+    assert_eq!(push["result"].as_array().unwrap().len(), 130);
+    assert!(
+        push["result"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|resource| resource["outcome"] == "in_sync")
     );
 }

@@ -1,7 +1,7 @@
 schema_version: 1
 application:
   name: elasticsearch
-  version: "1.0.0"
+  version: "1.1.0"
 target_profile:
   headers:
     accept: application/json
@@ -35,3 +35,65 @@ target_profile:
         list: { method: GET, path: "/_ilm/policy", cardinality: many }
         update: { method: PUT, path: "/_ilm/policy/{id}", cardinality: one, retry_safe: true }
         delete: { method: DELETE, path: "/_ilm/policy/{id}", cardinality: one, retry_safe: true }
+    component_templates:
+      id: { pointer: /name, scope: universal }
+      display_name: { pointer: /name, strategy: name, unique: true }
+      write_intent: upsert
+      mutation_mode: replace
+      transformations:
+        - { kind: remove, pointer: /component_template/created_date_millis }
+        - { kind: remove, pointer: /component_template/modified_date_millis }
+      operations:
+        read: { method: GET, path: "/_component_template/{id}", cardinality: one, extract: "/component_templates/0", retry_safe: true, concurrency: parallel }
+        list: { method: GET, path: "/_component_template", cardinality: many, extract: "/component_templates", retry_safe: true, concurrency: parallel }
+        create:
+          method: PUT
+          path: "/_component_template/{id}?create=true"
+          cardinality: one
+          retry_safe: true
+          transformations: [{ kind: frame, pointer: /component_template }]
+        update:
+          method: PUT
+          path: "/_component_template/{id}"
+          cardinality: one
+          retry_safe: true
+          transformations: [{ kind: frame, pointer: /component_template }]
+        delete: { method: DELETE, path: "/_component_template/{id}", cardinality: one, retry_safe: true }
+    index_templates:
+      id: { pointer: /name, scope: universal }
+      display_name: { pointer: /name, strategy: name, unique: true }
+      write_intent: upsert
+      mutation_mode: replace
+      dependencies: [component_templates]
+      transformations:
+        - { kind: remove, pointer: /index_template/created_date_millis }
+        - { kind: remove, pointer: /index_template/modified_date_millis }
+      operations:
+        read: { method: GET, path: "/_index_template/{id}", cardinality: one, extract: "/index_templates/0", retry_safe: true, concurrency: parallel }
+        list: { method: GET, path: "/_index_template", cardinality: many, extract: "/index_templates", retry_safe: true, concurrency: parallel }
+        create:
+          method: PUT
+          path: "/_index_template/{id}?create=true"
+          cardinality: one
+          retry_safe: true
+          transformations: [{ kind: frame, pointer: /index_template }]
+        update:
+          method: PUT
+          path: "/_index_template/{id}"
+          cardinality: one
+          retry_safe: true
+          transformations: [{ kind: frame, pointer: /index_template }]
+        delete: { method: DELETE, path: "/_index_template/{id}", cardinality: one, retry_safe: true }
+    roles:
+      id: { pointer: /id, scope: universal }
+      display_name: { pointer: /id, strategy: name, unique: true }
+      write_intent: upsert
+      mutation_mode: replace
+      transformations:
+        - { kind: remove, pointer: /transient_metadata }
+        - { kind: omit, pointer: /id }
+      operations:
+        read: { method: GET, path: "/_security/role/{id}", cardinality: one, extract: "/{id}", retry_safe: true, concurrency: parallel }
+        list: { method: GET, path: "/_security/role", cardinality: many, retry_safe: true, concurrency: parallel }
+        upsert: { method: PUT, path: "/_security/role/{id}", cardinality: one, retry_safe: true, trustworthy_response: false }
+        delete: { method: DELETE, path: "/_security/role/{id}", cardinality: one, retry_safe: true }

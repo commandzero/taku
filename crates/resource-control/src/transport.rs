@@ -5,7 +5,7 @@ use redact::Secret;
 use reqwest::blocking::{Client, Response};
 use reqwest::{Method, StatusCode};
 use serde_json::{Map, Value};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::time::Duration;
 
 pub enum RemoteResult {
@@ -15,6 +15,14 @@ pub enum RemoteResult {
     Retryable,
     Failure(String),
     Uncertain,
+}
+
+#[derive(Clone, Copy, Default)]
+pub struct OperationInput<'a> {
+    pub namespace: Option<&'a str>,
+    pub id: Option<&'a str>,
+    pub context: Option<&'a Value>,
+    pub body: Option<&'a [Value]>,
 }
 pub const INTERNAL_GUARD_POINTER: &str = "/_taku_internal_guard";
 pub const INTERNAL_CURSOR_POINTER: &str = "/_taku_internal_cursor";
@@ -29,7 +37,8 @@ pub fn execute_probe(
         .get("url")
         .map(|value| value.expose_secret().as_str())
         .unwrap_or(&target.url);
-    let url = format!("{}{}", base_url.trim_end_matches('/'), operation.path);
+    let path = render_path(operation_path(operation, None), None, None, None);
+    let url = format!("{}{}", base_url.trim_end_matches('/'), path);
     let client = Client::builder().timeout(Duration::from_secs(30)).build()?;
     let method = Method::from_bytes(operation.method.as_bytes())
         .context("invalid configured HTTP method")?;
@@ -90,12 +99,24 @@ pub fn execute(
     app: &ApplicationDefinition,
     resource_type: &ResourceType,
     operation: &Operation,
-    id: Option<&str>,
-    body: Option<&[Value]>,
+    input: OperationInput<'_>,
     auth: &BTreeMap<String, Secret<String>>,
 ) -> Result<RemoteResult> {
-    let path = render_path(&operation.path, id, body.and_then(|v| v.first()));
-    let request_body = build_request_body(operation, id, body)?;
+    let path = render_path(
+        operation_path(operation, input.namespace),
+        input.namespace,
+        input.id,
+        input
+            .context
+            .or_else(|| input.body.and_then(|values| values.first())),
+    );
+    let request_body = build_request_body(
+        operation,
+        input.namespace,
+        input.id,
+        input.context,
+        input.body,
+    )?;
     let base_url = auth
         .get("url")
         .map(|value| value.expose_secret().as_str())
@@ -118,7 +139,8 @@ pub fn execute(
         request = request.header(name, value.expose_secret());
     }
     if let Some(values) = request_body.as_deref() {
-        request = if operation.request_framing.or(operation.framing) == Some(Framing::Ndjson) {
+        let framing = operation.request_framing.or(operation.framing);
+        request = if framing == Some(Framing::Ndjson) {
             let mut framed = String::new();
             for value in values {
                 framed.push_str(&serde_json::to_string(value)?);
@@ -127,6 +149,16 @@ pub fn execute(
             request
                 .body(framed)
                 .header("content-type", "application/x-ndjson")
+        } else if framing == Some(Framing::MultipartNdjson) {
+            let mut framed = String::new();
+            for value in values {
+                framed.push_str(&serde_json::to_string(value)?);
+                framed.push('\n');
+            }
+            let part = reqwest::blocking::multipart::Part::bytes(framed.into_bytes())
+                .file_name("export.ndjson")
+                .mime_str("application/x-ndjson")?;
+            request.multipart(reqwest::blocking::multipart::Form::new().part("file", part))
         } else if values.len() == 1 {
             request.json(&values[0])
         } else {
@@ -140,7 +172,7 @@ pub fn execute(
         }
         Err(_) => return Ok(RemoteResult::Failure("remote request failed".into())),
     };
-    map_response(response, operation, resource_type, id)
+    map_response(response, operation, resource_type, input.id)
         .context("Transformation Conflict while converting successful response")
 }
 
@@ -149,14 +181,13 @@ pub fn execute_retry_safe(
     app: &ApplicationDefinition,
     resource_type: &ResourceType,
     operation: &Operation,
-    id: Option<&str>,
-    body: Option<&[Value]>,
+    input: OperationInput<'_>,
     auth: &BTreeMap<String, Secret<String>>,
 ) -> Result<RemoteResult> {
     let mut attempts = 0;
     loop {
         attempts += 1;
-        let result = execute(target, app, resource_type, operation, id, body, auth)?;
+        let result = execute(target, app, resource_type, operation, input, auth)?;
         if matches!(result, RemoteResult::Retryable | RemoteResult::Uncertain)
             && operation.retry_safe
             && attempts < 3
@@ -169,17 +200,23 @@ pub fn execute_retry_safe(
 
 fn build_request_body(
     operation: &Operation,
+    namespace: Option<&str>,
     id: Option<&str>,
+    context: Option<&Value>,
     resources: Option<&[Value]>,
 ) -> Result<Option<Vec<Value>>> {
     let Some(template) = operation.body.as_ref() else {
         return Ok(resources.map(<[Value]>::to_vec));
     };
-    let mut body = render_body_template(template, id, resources.and_then(|values| values.first()));
-    if let Some(resources) = resources {
-        let pointer = operation.body_pointer.as_deref().context(
-            "Operation with both a configured body and Resource payloads requires body_pointer",
-        )?;
+    let mut body = render_body_template(
+        template,
+        namespace,
+        id,
+        context.or_else(|| resources.and_then(|values| values.first())),
+    );
+    if let Some(resources) = resources
+        && let Some(pointer) = operation.body_pointer.as_deref()
+    {
         let inserted = if operation.cardinality == crate::Cardinality::Many {
             Value::Array(resources.to_vec())
         } else {
@@ -193,28 +230,40 @@ fn build_request_body(
     Ok(Some(vec![body]))
 }
 
-fn render_body_template(template: &Value, id: Option<&str>, resource: Option<&Value>) -> Value {
+fn render_body_template(
+    template: &Value,
+    namespace: Option<&str>,
+    id: Option<&str>,
+    resource: Option<&Value>,
+) -> Value {
     match template {
         Value::String(value) => {
             let mut rendered = value.replace("{id}", id.unwrap_or(""));
-            if let Some(kind) = resource
-                .and_then(|value| value.get("type"))
-                .and_then(Value::as_str)
-            {
-                rendered = rendered.replace("{type}", kind);
+            rendered = rendered.replace("{namespace}", namespace.unwrap_or(""));
+            if let Some(fields) = resource.and_then(Value::as_object) {
+                for (name, value) in fields {
+                    if let Some(value) = value.as_str() {
+                        rendered = rendered.replace(&format!("{{{name}}}"), value);
+                    }
+                }
             }
             Value::String(rendered)
         }
         Value::Array(values) => Value::Array(
             values
                 .iter()
-                .map(|value| render_body_template(value, id, resource))
+                .map(|value| render_body_template(value, namespace, id, resource))
                 .collect(),
         ),
         Value::Object(values) => Value::Object(
             values
                 .iter()
-                .map(|(key, value)| (key.clone(), render_body_template(value, id, resource)))
+                .map(|(key, value)| {
+                    (
+                        key.clone(),
+                        render_body_template(value, namespace, id, resource),
+                    )
+                })
                 .collect(),
         ),
         value => value.clone(),
@@ -366,18 +415,14 @@ fn expand_many(
             value => out.push(value),
         }
     }
-    let mut ids = BTreeSet::new();
     let mut identified = Vec::new();
     for value in out {
-        let Some(id) = pointer_string(&value, &resource_type.id.pointer) else {
+        let Some(_id) = pointer_string(&value, &resource_type.id.pointer) else {
             if skip_unidentified {
                 continue;
             }
             bail!("remote Resource has no configured ID");
         };
-        if !ids.insert(id.clone()) {
-            bail!("remote operation returned duplicate Resource ID {id}");
-        }
         identified.push(value);
     }
     Ok(identified)
@@ -415,9 +460,21 @@ fn apply_inbound(value: &mut Value, resource_type: &ResourceType) -> Result<()> 
     Ok(())
 }
 
-pub fn outbound(value: &Value, resource_type: &ResourceType) -> Result<Value> {
+pub fn outbound(
+    value: &Value,
+    resource_type: &ResourceType,
+    operation: Option<&Operation>,
+) -> Result<Value> {
     let mut value = value.clone();
-    for transformation in resource_type.transformations.iter().rev() {
+    apply_outbound(&mut value, &resource_type.transformations)?;
+    if let Some(operation) = operation {
+        apply_outbound(&mut value, &operation.transformations)?;
+    }
+    Ok(value)
+}
+
+fn apply_outbound(value: &mut Value, transformations: &[crate::Transformation]) -> Result<()> {
+    for transformation in transformations.iter().rev() {
         match transformation {
             crate::Transformation::EmbeddedJson { pointer } => {
                 if let Some(document) = value
@@ -426,7 +483,7 @@ pub fn outbound(value: &Value, resource_type: &ResourceType) -> Result<Value> {
                     .cloned()
                 {
                     insert_pointer(
-                        &mut value,
+                        value,
                         pointer,
                         Value::String(serde_json::to_string(&document)?),
                     )?;
@@ -434,27 +491,48 @@ pub fn outbound(value: &Value, resource_type: &ResourceType) -> Result<Value> {
             }
             crate::Transformation::Extract { pointer } => {
                 let document = value.clone();
-                value = Value::Object(Map::new());
-                insert_pointer(&mut value, pointer, document)?;
+                *value = Value::Object(Map::new());
+                insert_pointer(value, pointer, document)?;
             }
             crate::Transformation::Frame { pointer } => {
-                value = value
+                *value = value
                     .pointer(pointer)
                     .cloned()
                     .context("outbound framing pointer did not match")?;
             }
-            crate::Transformation::Insert { pointer, .. } => remove_pointer(&mut value, pointer)?,
-            crate::Transformation::Omit { pointer } => remove_pointer(&mut value, pointer)?,
+            crate::Transformation::Insert { pointer, .. } => remove_pointer(value, pointer)?,
+            crate::Transformation::Omit { pointer } => remove_pointer(value, pointer)?,
             crate::Transformation::Remove { .. } => {}
         }
     }
-    Ok(value)
+    Ok(())
 }
 
-fn render_path(template: &str, id: Option<&str>, value: Option<&Value>) -> String {
+fn operation_path<'a>(operation: &'a Operation, namespace: Option<&str>) -> &'a str {
+    if namespace == Some("default") {
+        operation
+            .default_namespace_path
+            .as_deref()
+            .unwrap_or(&operation.path)
+    } else {
+        &operation.path
+    }
+}
+
+fn render_path(
+    template: &str,
+    namespace: Option<&str>,
+    id: Option<&str>,
+    value: Option<&Value>,
+) -> String {
     let mut path = template.replace("{id}", &urlencoding::encode(id.unwrap_or("")));
-    if let Some(kind) = value.and_then(|v| v.get("type")).and_then(Value::as_str) {
-        path = path.replace("{type}", &urlencoding::encode(kind));
+    path = path.replace("{namespace}", &urlencoding::encode(namespace.unwrap_or("")));
+    if let Some(fields) = value.and_then(Value::as_object) {
+        for (name, value) in fields {
+            if let Some(value) = value.as_str() {
+                path = path.replace(&format!("{{{name}}}"), &urlencoding::encode(value));
+            }
+        }
     }
     path
 }

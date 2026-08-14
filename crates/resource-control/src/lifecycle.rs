@@ -1,10 +1,13 @@
 use crate::application::load_installed;
 use crate::canonical::{
-    Selection, list_inventory, reject_symlink_components, resource_directory, safe_filename,
-    write_resource,
+    Selection, list_inventory, reject_symlink_components, resource_directories,
+    resource_directory_in_namespace, safe_filename, write_resource,
 };
 use crate::observe::{cache_path, load_observation, remote_list};
 use crate::project::current_environment;
+use crate::provider::resolve_auth;
+use crate::transport::{OperationInput, RemoteResult, execute_retry_safe};
+use crate::variants::discover;
 use crate::{IdScope, RepositoryLayout, SCHEMA_VERSION, git_root, load_project};
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
@@ -16,6 +19,8 @@ use std::path::Path;
 pub struct LifecycleResult {
     pub environment: String,
     pub target: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
     #[serde(rename = "type")]
     pub resource_type: String,
     pub id: String,
@@ -28,9 +33,13 @@ pub struct DeletionMarker {
     pub schema_version: u32,
     pub environment: String,
     pub target: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
     #[serde(rename = "type")]
     pub resource_type: String,
     pub id: String,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub parameters: BTreeMap<String, String>,
     pub guard: String,
     pub source_path: String,
 }
@@ -47,15 +56,59 @@ pub fn add_remote(
     let project = load_project(&root)?;
     let remote = remote_list(&root, selection, false, provider)?;
     let mut out = Vec::new();
-    for item in remote {
+    for mut item in remote {
         if item.tracked {
             continue;
         }
-        let app = load_installed(
-            &root,
-            &project.environments[&item.environment].targets[&item.target].application,
-        )?;
-        let rt = &app.target_profile.resource_types[&item.resource_type];
+        let target = &project.environments[&item.environment].targets[&item.target];
+        let app = load_installed(&root, &target.application)?;
+        let auth = resolve_auth(&root, &project, &item.environment, target, provider)?;
+        let discovered = discover(&app, target, &auth)?;
+        let rt = &discovered.resource_types[&item.resource_type];
+        if let Some(read) = &rt.operations.read {
+            item.value = match execute_retry_safe(
+                target,
+                &app,
+                rt,
+                read,
+                OperationInput {
+                    namespace: item.namespace.as_deref(),
+                    id: Some(&item.id),
+                    context: Some(&item.value),
+                    body: None,
+                },
+                &auth,
+            )? {
+                RemoteResult::Success(mut values) if values.len() == 1 => values.pop().unwrap(),
+                RemoteResult::NotFound => {
+                    bail!(
+                        "selected remote Resource {} disappeared during Add",
+                        item.id
+                    )
+                }
+                RemoteResult::Conflict => {
+                    bail!("selected remote Resource {} conflicted during Add", item.id)
+                }
+                RemoteResult::Retryable | RemoteResult::Uncertain => {
+                    bail!(
+                        "selected remote Resource {} could not be read safely",
+                        item.id
+                    )
+                }
+                RemoteResult::Failure(message) => {
+                    bail!(
+                        "selected remote Resource {} could not be read: {message}",
+                        item.id
+                    )
+                }
+                RemoteResult::Success(_) => {
+                    bail!(
+                        "selected remote Resource {} did not hydrate to one Resource",
+                        item.id
+                    )
+                }
+            };
+        }
         let name = crate::canonical::pointer_string(&item.value, &rt.display_name.pointer)
             .unwrap_or_else(|| item.id.clone());
         let display = match rt.display_name.strategy {
@@ -65,11 +118,12 @@ pub fn add_remote(
                 format!("{}-{}", name, crate::canonical::short_id(&item.id))
             }
         };
-        let path = resource_directory(
+        let path = resource_directory_in_namespace(
             &root,
             &project,
             &item.environment,
             &item.target,
+            item.namespace.as_deref(),
             &item.resource_type,
         )
         .join(format!("{}.json", safe_filename(&display)));
@@ -80,6 +134,7 @@ pub fn add_remote(
         out.push(LifecycleResult {
             environment: item.environment,
             target: item.target,
+            namespace: item.namespace,
             resource_type: item.resource_type,
             id: item.id,
             outcome: "added".into(),
@@ -104,6 +159,7 @@ pub fn remove(root: &Path, selection: &Selection) -> Result<Vec<LifecycleResult>
             &root,
             &environment,
             &item.target,
+            item.namespace.as_deref(),
             &item.resource_type,
         ))?;
         let observed = observation
@@ -120,8 +176,18 @@ pub fn remove(root: &Path, selection: &Selection) -> Result<Vec<LifecycleResult>
             schema_version: SCHEMA_VERSION,
             environment: environment.clone(),
             target: item.target.clone(),
+            namespace: item.namespace.clone(),
             resource_type: item.resource_type.clone(),
             id: item.id.clone(),
+            parameters: item
+                .value
+                .as_object()
+                .into_iter()
+                .flat_map(|value| value.iter())
+                .filter_map(|(key, value)| {
+                    value.as_str().map(|value| (key.clone(), value.to_owned()))
+                })
+                .collect(),
             guard,
             source_path: item.path.clone(),
         };
@@ -130,6 +196,7 @@ pub fn remove(root: &Path, selection: &Selection) -> Result<Vec<LifecycleResult>
         out.push(LifecycleResult {
             environment: environment.clone(),
             target: item.target,
+            namespace: item.namespace,
             resource_type: item.resource_type,
             id: item.id,
             outcome: "marked_for_deletion".into(),
@@ -148,6 +215,7 @@ pub fn forget(root: &Path, selection: &Selection) -> Result<Vec<LifecycleResult>
         out.push(LifecycleResult {
             environment: environment.clone(),
             target: item.target,
+            namespace: item.namespace,
             resource_type: item.resource_type,
             id: item.id,
             outcome: "forgotten".into(),
@@ -158,37 +226,57 @@ pub fn forget(root: &Path, selection: &Selection) -> Result<Vec<LifecycleResult>
             continue;
         }
         let app = load_installed(&root, &target.application)?;
-        for type_name in app.target_profile.resource_types.keys() {
+        for (type_name, resource_type) in &app.target_profile.resource_types {
             if !selection.types.is_empty() && !selection.types.contains(type_name) {
                 continue;
             }
-            let dir = resource_directory(&root, &project, &environment, target_name, type_name);
-            if dir.exists() {
+            for (namespace, dir) in resource_directories(
+                &root,
+                &project,
+                &environment,
+                target_name,
+                type_name,
+                resource_type.namespaced,
+            )? {
+                if !selection.namespaces.is_empty()
+                    && namespace
+                        .as_ref()
+                        .is_none_or(|value| !selection.namespaces.contains(value))
+                {
+                    continue;
+                }
                 reject_symlink_components(&root, &dir)?;
-            }
-            if let Ok(entries) = fs::read_dir(dir) {
-                for entry in entries {
-                    let path = entry?.path();
-                    if !path
-                        .file_name()
-                        .and_then(|v| v.to_str())
-                        .is_some_and(|v| v.ends_with(".delete.yml"))
-                    {
-                        continue;
+                if let Ok(entries) = fs::read_dir(dir) {
+                    for entry in entries {
+                        let path = entry?.path();
+                        if !path
+                            .file_name()
+                            .and_then(|v| v.to_str())
+                            .is_some_and(|v| v.ends_with(".delete.yml"))
+                        {
+                            continue;
+                        }
+                        let marker = load_deletion_marker(
+                            &root,
+                            &path,
+                            &environment,
+                            target_name,
+                            namespace.as_deref(),
+                            type_name,
+                        )?;
+                        if !selection.ids.is_empty() && !selection.ids.contains(&marker.id) {
+                            continue;
+                        }
+                        fs::remove_file(path)?;
+                        out.push(LifecycleResult {
+                            environment: environment.clone(),
+                            target: target_name.clone(),
+                            namespace: namespace.clone(),
+                            resource_type: type_name.clone(),
+                            id: marker.id,
+                            outcome: "forgotten".into(),
+                        });
                     }
-                    let marker =
-                        load_deletion_marker(&root, &path, &environment, target_name, type_name)?;
-                    if !selection.ids.is_empty() && !selection.ids.contains(&marker.id) {
-                        continue;
-                    }
-                    fs::remove_file(path)?;
-                    out.push(LifecycleResult {
-                        environment: environment.clone(),
-                        target: target_name.clone(),
-                        resource_type: type_name.clone(),
-                        id: marker.id,
-                        outcome: "forgotten".into(),
-                    });
                 }
             }
         }
@@ -209,31 +297,45 @@ pub fn deletion_markers(
             continue;
         }
         let app = load_installed(&root, &target.application)?;
-        for type_name in app.target_profile.resource_types.keys() {
+        for (type_name, resource_type) in &app.target_profile.resource_types {
             if !selection.types.is_empty() && !selection.types.contains(type_name) {
                 continue;
             }
-            let dir = resource_directory(&root, &project, &environment, target_name, type_name);
-            if dir.exists() {
+            for (namespace, dir) in resource_directories(
+                &root,
+                &project,
+                &environment,
+                target_name,
+                type_name,
+                resource_type.namespaced,
+            )? {
+                if !selection.namespaces.is_empty()
+                    && namespace
+                        .as_ref()
+                        .is_none_or(|value| !selection.namespaces.contains(value))
+                {
+                    continue;
+                }
                 reject_symlink_components(&root, &dir)?;
-            }
-            if let Ok(entries) = fs::read_dir(dir) {
-                for entry in entries {
-                    let path = entry?.path();
-                    if path
-                        .file_name()
-                        .and_then(|v| v.to_str())
-                        .is_some_and(|v| v.ends_with(".delete.yml"))
-                    {
-                        let marker = load_deletion_marker(
-                            &root,
-                            &path,
-                            &environment,
-                            target_name,
-                            type_name,
-                        )?;
-                        if selection.ids.is_empty() || selection.ids.contains(&marker.id) {
-                            out.push((path, marker));
+                if let Ok(entries) = fs::read_dir(dir) {
+                    for entry in entries {
+                        let path = entry?.path();
+                        if path
+                            .file_name()
+                            .and_then(|v| v.to_str())
+                            .is_some_and(|v| v.ends_with(".delete.yml"))
+                        {
+                            let marker = load_deletion_marker(
+                                &root,
+                                &path,
+                                &environment,
+                                target_name,
+                                namespace.as_deref(),
+                                type_name,
+                            )?;
+                            if selection.ids.is_empty() || selection.ids.contains(&marker.id) {
+                                out.push((path, marker));
+                            }
                         }
                     }
                 }
@@ -248,6 +350,7 @@ fn load_deletion_marker(
     path: &Path,
     environment: &str,
     target: &str,
+    namespace: Option<&str>,
     resource_type: &str,
 ) -> Result<DeletionMarker> {
     reject_symlink_components(root, path)?;
@@ -270,6 +373,7 @@ fn load_deletion_marker(
     }
     if marker.environment != environment
         || marker.target != target
+        || marker.namespace.as_deref() != namespace
         || marker.resource_type != resource_type
     {
         bail!("Deletion Marker binding does not match its Environment/Target/Resource Type tree");
@@ -292,6 +396,10 @@ pub struct PromotionResult {
     pub to_environment: String,
     pub from_target: String,
     pub to_target: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
+    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
+    pub resource_type: Option<String>,
     pub id: String,
     pub outcome: String,
 }
@@ -344,6 +452,8 @@ pub fn promote(
                 to_environment: destination.clone(),
                 from_target: from,
                 to_target: to,
+                namespace: None,
+                resource_type: None,
                 id: "".into(),
                 outcome: "skipped_unresolved".into(),
             });
@@ -356,6 +466,7 @@ pub fn promote(
         let selection = Selection {
             environment: Some(source.clone()),
             targets: vec![from.clone()],
+            namespaces: vec![],
             types: vec![],
             ids: vec![],
         };
@@ -368,15 +479,23 @@ pub fn promote(
             }
             let source_path = Path::new(&item.path);
             let filename = source_path.file_name().unwrap();
-            let destination_path =
-                resource_directory(&root, &project, &destination, &to, &item.resource_type)
-                    .join(filename);
+            let destination_path = resource_directory_in_namespace(
+                &root,
+                &project,
+                &destination,
+                &to,
+                item.namespace.as_deref(),
+                &item.resource_type,
+            )
+            .join(filename);
             write_resource(&destination_path, &item.value)?;
             out.push(PromotionResult {
                 from_environment: source.clone(),
                 to_environment: destination.clone(),
                 from_target: from.clone(),
                 to_target: to.clone(),
+                namespace: item.namespace,
+                resource_type: Some(item.resource_type),
                 id: item.id,
                 outcome: "promoted".into(),
             });
@@ -421,6 +540,7 @@ pub fn promote_projects(
     let selection = Selection {
         environment: None,
         targets: vec![from_target.into()],
+        namespaces: vec![],
         types: vec![],
         ids: vec![],
     };
@@ -433,11 +553,12 @@ pub fn promote_projects(
             );
         }
         let filename = Path::new(&item.path).file_name().unwrap();
-        let path = resource_directory(
+        let path = resource_directory_in_namespace(
             &destination_root,
             &destination_project,
             &destination_environment,
             to_target,
+            item.namespace.as_deref(),
             &item.resource_type,
         )
         .join(filename);
@@ -447,6 +568,8 @@ pub fn promote_projects(
             to_environment: destination_environment.clone(),
             from_target: from_target.into(),
             to_target: to_target.into(),
+            namespace: item.namespace,
+            resource_type: Some(item.resource_type),
             id: item.id,
             outcome: "promoted".into(),
         });

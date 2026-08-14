@@ -11,6 +11,7 @@ use std::path::{Component, Path, PathBuf};
 pub struct Selection {
     pub environment: Option<String>,
     pub targets: Vec<String>,
+    pub namespaces: Vec<String>,
     pub types: Vec<String>,
     pub ids: Vec<String>,
 }
@@ -19,6 +20,8 @@ pub struct Selection {
 pub struct InventoryEntry {
     pub environment: String,
     pub target: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
     #[serde(rename = "type")]
     pub resource_type: String,
     pub id: String,
@@ -34,6 +37,9 @@ pub struct InventoryEntry {
 }
 
 pub fn list_inventory(root: &Path, selection: &Selection) -> Result<Vec<InventoryEntry>> {
+    for namespace in &selection.namespaces {
+        validate_namespace(namespace)?;
+    }
     let root = git_root(root)?;
     let project = load_project(&root)?;
     let environment = current_environment(&root, &project, selection.environment.as_deref())?;
@@ -48,106 +54,127 @@ pub fn list_inventory(root: &Path, selection: &Selection) -> Result<Vec<Inventor
             if !selection.types.is_empty() && !selection.types.contains(type_name) {
                 continue;
             }
-            let directory =
-                resource_directory(&root, &project, &environment, target_name, type_name);
-            if !directory.exists() {
-                continue;
-            }
-            reject_symlink_components(&root, &directory)?;
-            for entry in fs::read_dir(&directory)? {
-                let entry = entry?;
-                let path = entry.path();
-                let metadata = fs::symlink_metadata(&path)?;
-                if metadata.file_type().is_symlink() {
-                    bail!(
-                        "symlinked Resource input is not allowed: {}",
-                        path.display()
-                    );
-                }
-                if !metadata.is_file() || is_deletion_marker(&path) {
+            let directories = resource_directories(
+                &root,
+                &project,
+                &environment,
+                target_name,
+                type_name,
+                resource_type.namespaced,
+            )?;
+            for (namespace, directory) in directories {
+                if !selection.namespaces.is_empty()
+                    && namespace
+                        .as_ref()
+                        .is_none_or(|value| !selection.namespaces.contains(value))
+                {
                     continue;
                 }
-                let encoded_name = path
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .context("Resource filename is not valid UTF-8")?;
-                let decoded = urlencoding::decode(encoded_name)
-                    .context("Resource filename contains invalid escapes")?;
-                if decoded.contains("..") || decoded.contains('/') || decoded.contains('\\') {
-                    bail!("Resource filename contains a traversal escape: {encoded_name}");
-                }
-                if !matches!(
-                    path.extension().and_then(|e| e.to_str()),
-                    Some("json" | "json5" | "yaml" | "yml")
-                ) {
-                    continue;
-                }
-                let value = parse_resource(&path)?;
-                let sensitive_fields = resource_type
-                    .sensitive_fields
-                    .iter()
-                    .chain(target.sensitive_fields.get(type_name).into_iter().flatten());
-                for pointer in sensitive_fields {
-                    if crate::model::sensitive_field_conflicts(resource_type, pointer) {
+                reject_symlink_components(&root, &directory)?;
+                for entry in fs::read_dir(&directory)? {
+                    let entry = entry?;
+                    let path = entry.path();
+                    let metadata = fs::symlink_metadata(&path)?;
+                    if metadata.file_type().is_symlink() {
                         bail!(
-                            "Sensitive Field {pointer} overlaps required canonical state for {type_name}"
-                        );
-                    }
-                    if value.pointer(pointer).is_some() {
-                        bail!(
-                            "Canonical Resource {} contains Sensitive Field {pointer}",
+                            "symlinked Resource input is not allowed: {}",
                             path.display()
                         );
                     }
+                    if !metadata.is_file() || is_deletion_marker(&path) {
+                        continue;
+                    }
+                    let encoded_name = path
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .context("Resource filename is not valid UTF-8")?;
+                    let decoded = urlencoding::decode(encoded_name)
+                        .context("Resource filename contains invalid escapes")?;
+                    if decoded.contains("..") || decoded.contains('/') || decoded.contains('\\') {
+                        bail!("Resource filename contains a traversal escape: {encoded_name}");
+                    }
+                    if !matches!(
+                        path.extension().and_then(|e| e.to_str()),
+                        Some("json" | "json5" | "yaml" | "yml")
+                    ) {
+                        continue;
+                    }
+                    let value = parse_resource(&path)?;
+                    let sensitive_fields = resource_type
+                        .sensitive_fields
+                        .iter()
+                        .chain(target.sensitive_fields.get(type_name).into_iter().flatten());
+                    for pointer in sensitive_fields {
+                        if crate::model::sensitive_field_conflicts(resource_type, pointer) {
+                            bail!(
+                                "Sensitive Field {pointer} overlaps required canonical state for {type_name}"
+                            );
+                        }
+                        if value.pointer(pointer).is_some() {
+                            bail!(
+                                "Canonical Resource {} contains Sensitive Field {pointer}",
+                                path.display()
+                            );
+                        }
+                    }
+                    let extracted_id = pointer_string(&value, &resource_type.id.pointer);
+                    let pending = extracted_id.is_none()
+                        && resource_type.id.scope == IdScope::Target
+                        && resource_type.write_intent == crate::WriteIntent::Create;
+                    let id = if pending {
+                        format!("pending:{}", path.strip_prefix(&root).unwrap().display())
+                    } else {
+                        extracted_id.with_context(|| {
+                            format!(
+                                "Resource {} has no string ID at {}",
+                                path.display(),
+                                resource_type.id.pointer
+                            )
+                        })?
+                    };
+                    if !selection.ids.is_empty() && !selection.ids.contains(&id) {
+                        continue;
+                    }
+                    let name = pointer_string(&value, &resource_type.display_name.pointer)
+                        .unwrap_or_else(|| id.clone());
+                    let display_name = match resource_type.display_name.strategy {
+                        DisplayNameStrategy::Id => id.clone(),
+                        DisplayNameStrategy::Name => name.clone(),
+                        DisplayNameStrategy::NameId => format!("{}-{}", name, short_id(&id)),
+                    };
+                    result.push(InventoryEntry {
+                        environment: environment.clone(),
+                        target: target_name.clone(),
+                        namespace: namespace.clone(),
+                        resource_type: type_name.clone(),
+                        id,
+                        pending,
+                        name,
+                        display_name,
+                        id_scope: resource_type.id.scope,
+                        path: path.strip_prefix(&root).unwrap().display().to_string(),
+                        value,
+                        display_name_unique: resource_type.display_name.unique,
+                    });
                 }
-                let extracted_id = pointer_string(&value, &resource_type.id.pointer);
-                let pending = extracted_id.is_none()
-                    && resource_type.id.scope == IdScope::Target
-                    && resource_type.write_intent == crate::WriteIntent::Create;
-                let id = if pending {
-                    format!("pending:{}", path.strip_prefix(&root).unwrap().display())
-                } else {
-                    extracted_id.with_context(|| {
-                        format!(
-                            "Resource {} has no string ID at {}",
-                            path.display(),
-                            resource_type.id.pointer
-                        )
-                    })?
-                };
-                if !selection.ids.is_empty() && !selection.ids.contains(&id) {
-                    continue;
-                }
-                let name = pointer_string(&value, &resource_type.display_name.pointer)
-                    .unwrap_or_else(|| id.clone());
-                let display_name = match resource_type.display_name.strategy {
-                    DisplayNameStrategy::Id => id.clone(),
-                    DisplayNameStrategy::Name => name.clone(),
-                    DisplayNameStrategy::NameId => format!("{}-{}", name, short_id(&id)),
-                };
-                result.push(InventoryEntry {
-                    environment: environment.clone(),
-                    target: target_name.clone(),
-                    resource_type: type_name.clone(),
-                    id,
-                    pending,
-                    name,
-                    display_name,
-                    id_scope: resource_type.id.scope,
-                    path: path.strip_prefix(&root).unwrap().display().to_string(),
-                    value,
-                    display_name_unique: resource_type.display_name.unique,
-                });
             }
         }
     }
     result.sort_by(|a, b| {
-        (&a.environment, &a.target, &a.resource_type, &a.id).cmp(&(
-            &b.environment,
-            &b.target,
-            &b.resource_type,
-            &b.id,
-        ))
+        (
+            &a.environment,
+            &a.target,
+            &a.namespace,
+            &a.resource_type,
+            &a.id,
+        )
+            .cmp(&(
+                &b.environment,
+                &b.target,
+                &b.namespace,
+                &b.resource_type,
+                &b.id,
+            ))
     });
     let mut names = std::collections::BTreeSet::new();
     for item in &result {
@@ -155,6 +182,7 @@ pub fn list_inventory(root: &Path, selection: &Selection) -> Result<Vec<Inventor
             && !names.insert((
                 &item.environment,
                 &item.target,
+                &item.namespace,
                 &item.resource_type,
                 &item.display_name,
             ))
@@ -163,6 +191,17 @@ pub fn list_inventory(root: &Path, selection: &Selection) -> Result<Vec<Inventor
         }
     }
     Ok(result)
+}
+
+fn validate_namespace(namespace: &str) -> Result<()> {
+    if namespace.is_empty()
+        || matches!(namespace, "." | "..")
+        || namespace.contains('/')
+        || namespace.contains('\\')
+    {
+        bail!("Namespace must be one non-empty path segment");
+    }
+    Ok(())
 }
 
 pub fn resource_directory(
@@ -176,6 +215,68 @@ pub fn resource_directory(
         RepositoryLayout::Single => root.join(target).join(resource_type),
         RepositoryLayout::Multi => root.join(environment).join(target).join(resource_type),
     }
+}
+
+pub fn resource_directory_in_namespace(
+    root: &Path,
+    project: &Project,
+    environment: &str,
+    target: &str,
+    namespace: Option<&str>,
+    resource_type: &str,
+) -> PathBuf {
+    let target_root = match project.layout {
+        RepositoryLayout::Single => root.join(target),
+        RepositoryLayout::Multi => root.join(environment).join(target),
+    };
+    match namespace {
+        Some(namespace) => target_root.join(namespace).join(resource_type),
+        None => target_root.join(resource_type),
+    }
+}
+
+pub fn resource_directories(
+    root: &Path,
+    project: &Project,
+    environment: &str,
+    target: &str,
+    resource_type: &str,
+    namespaced: bool,
+) -> Result<Vec<(Option<String>, PathBuf)>> {
+    if !namespaced {
+        let directory = resource_directory(root, project, environment, target, resource_type);
+        return Ok(directory
+            .is_dir()
+            .then_some((None, directory))
+            .into_iter()
+            .collect());
+    }
+
+    let target_root = match project.layout {
+        RepositoryLayout::Single => root.join(target),
+        RepositoryLayout::Multi => root.join(environment).join(target),
+    };
+    if !target_root.is_dir() {
+        return Ok(Vec::new());
+    }
+    let mut directories = Vec::new();
+    for entry in fs::read_dir(target_root)? {
+        let entry = entry?;
+        let metadata = entry.metadata()?;
+        if !metadata.is_dir() {
+            continue;
+        }
+        let namespace = entry
+            .file_name()
+            .into_string()
+            .map_err(|_| anyhow::anyhow!("Namespace directory is not valid UTF-8"))?;
+        let directory = entry.path().join(resource_type);
+        if directory.is_dir() {
+            directories.push((Some(namespace), directory));
+        }
+    }
+    directories.sort_by(|left, right| left.0.cmp(&right.0));
+    Ok(directories)
 }
 
 pub fn parse_resource(path: &Path) -> Result<Value> {

@@ -31,6 +31,8 @@ struct Cli {
     all_environments: bool,
     #[arg(long, global = true, action = clap::ArgAction::Append)]
     target: Vec<String>,
+    #[arg(long, global = true, action = clap::ArgAction::Append)]
+    namespace: Vec<String>,
     #[arg(long = "type", global = true, action = clap::ArgAction::Append)]
     resource_type: Vec<String>,
     #[arg(long, global = true, action = clap::ArgAction::Append)]
@@ -731,6 +733,7 @@ fn selections(cli: &Cli) -> Result<Vec<Selection>> {
         .map(|environment| Selection {
             environment,
             targets: cli.target.clone(),
+            namespaces: cli.namespace.clone(),
             types: cli.resource_type.clone(),
             ids: cli.id.clone(),
         })

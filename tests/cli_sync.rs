@@ -73,6 +73,17 @@ impl FakeTarget {
                         json!({"pipe-1": state.lock().unwrap().clone()}).to_string(),
                     )
                     .with_header(Header::from_bytes("content-type", "application/json").unwrap()),
+                    (&Method::Get, "/_ingest/pipeline/pipe-2") => Response::from_string(
+                        json!({
+                            "pipe-2": {
+                                "name": "Second",
+                                "description": "adopt me",
+                                "processors": []
+                            }
+                        })
+                        .to_string(),
+                    )
+                    .with_header(Header::from_bytes("content-type", "application/json").unwrap()),
                     (&Method::Get, "/version") => Response::from_string(
                         json!({"version":remote_version.lock().unwrap().clone()}).to_string(),
                     )

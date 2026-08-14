@@ -571,47 +571,62 @@ fn validate_resources_for(
     definition: &ApplicationDefinition,
 ) -> Result<()> {
     let project = load_project(root)?;
+    let Some(installed) = load_installed(root, name).ok() else {
+        return Ok(());
+    };
     for (environment, env) in &project.environments {
         for (target_name, target) in &env.targets {
             if target.application != name {
                 continue;
             }
-            let target_root = match project.layout {
-                crate::RepositoryLayout::Single => root.join(target_name),
-                crate::RepositoryLayout::Multi => root.join(environment).join(target_name),
-            };
-            if let Ok(type_entries) = fs::read_dir(&target_root) {
-                for type_entry in type_entries {
-                    let type_entry = type_entry?;
-                    if !type_entry.path().is_dir() {
-                        continue;
-                    }
-                    let type_name = type_entry.file_name().to_string_lossy().into_owned();
-                    let rt = definition
-                        .target_profile
-                        .resource_types
-                        .get(&type_name)
-                        .with_context(|| {
-                            format!("updated Application removes managed Resource Type {type_name}")
-                        })?;
-                    for entry in fs::read_dir(type_entry.path())? {
+            for (type_name, installed_type) in &installed.target_profile.resource_types {
+                let directories = crate::canonical::resource_directories(
+                    root,
+                    &project,
+                    environment,
+                    target_name,
+                    type_name,
+                    installed_type.namespaced,
+                )?;
+                if directories.is_empty() {
+                    continue;
+                }
+                let updated_type = definition
+                    .target_profile
+                    .resource_types
+                    .get(type_name)
+                    .with_context(|| {
+                        format!("updated Application removes managed Resource Type {type_name}")
+                    })?;
+                if updated_type.namespaced != installed_type.namespaced {
+                    bail!(
+                        "updated Application changes namespace layout for managed Resource Type {type_name}"
+                    );
+                }
+                for (_, directory) in directories {
+                    for entry in fs::read_dir(directory)? {
                         let path = entry?.path();
-                        if path
+                        if !path
                             .extension()
-                            .and_then(|e| e.to_str())
-                            .is_some_and(|e| matches!(e, "json" | "json5" | "yaml" | "yml"))
-                            && !path
+                            .and_then(|extension| extension.to_str())
+                            .is_some_and(|extension| {
+                                matches!(extension, "json" | "json5" | "yaml" | "yml")
+                            })
+                            || path
                                 .file_name()
-                                .and_then(|v| v.to_str())
-                                .is_some_and(|v| v.ends_with(".delete.yml"))
+                                .and_then(|value| value.to_str())
+                                .is_some_and(|value| value.ends_with(".delete.yml"))
                         {
-                            let value = crate::canonical::parse_resource(&path)?;
-                            if crate::canonical::pointer_string(&value, &rt.id.pointer).is_none() {
-                                bail!(
-                                    "Resource {} is incompatible with updated Application",
-                                    path.display()
-                                );
-                            }
+                            continue;
+                        }
+                        let value = crate::canonical::parse_resource(&path)?;
+                        if crate::canonical::pointer_string(&value, &updated_type.id.pointer)
+                            .is_none()
+                        {
+                            bail!(
+                                "Resource {} is incompatible with updated Application",
+                                path.display()
+                            );
                         }
                     }
                 }
@@ -710,12 +725,19 @@ pub fn parse_definition(expected_name: &str, bytes: &[u8]) -> Result<Application
                     .and_then(|operations| operations.update.as_ref())
                     .or(resource_type.operations.update.as_ref())
                     .is_some(),
-                crate::WriteIntent::Upsert => variant
-                    .operations
-                    .as_ref()
-                    .and_then(|operations| operations.upsert.as_ref())
-                    .or(resource_type.operations.upsert.as_ref())
-                    .is_some(),
+                crate::WriteIntent::Upsert => {
+                    let overlay = variant.operations.as_ref();
+                    let upsert = overlay
+                        .and_then(|operations| operations.upsert.as_ref())
+                        .or(resource_type.operations.upsert.as_ref());
+                    let create = overlay
+                        .and_then(|operations| operations.create.as_ref())
+                        .or(resource_type.operations.create.as_ref());
+                    let update = overlay
+                        .and_then(|operations| operations.update.as_ref())
+                        .or(resource_type.operations.update.as_ref());
+                    upsert.is_some() || (create.is_some() && update.is_some())
+                }
             };
             if !write_available {
                 bail!(
@@ -728,7 +750,11 @@ pub fn parse_definition(expected_name: &str, bytes: &[u8]) -> Result<Application
             && match resource_type.write_intent {
                 crate::WriteIntent::Create => resource_type.operations.create.is_none(),
                 crate::WriteIntent::Update => resource_type.operations.update.is_none(),
-                crate::WriteIntent::Upsert => resource_type.operations.upsert.is_none(),
+                crate::WriteIntent::Upsert => {
+                    resource_type.operations.upsert.is_none()
+                        && (resource_type.operations.create.is_none()
+                            || resource_type.operations.update.is_none())
+                }
             }
         {
             bail!("Resource Type {name} cannot enforce configured Write Intent");
@@ -764,11 +790,19 @@ fn validate_operation(operation: &crate::Operation, owner: &str) -> Result<()> {
     if !operation.path.starts_with('/') {
         bail!("{owner} Operation path must begin with /");
     }
+    if operation
+        .default_namespace_path
+        .as_ref()
+        .is_some_and(|path| !path.starts_with('/'))
+    {
+        bail!("{owner} default Namespace Operation path must begin with /");
+    }
     if let Some(pointer) = &operation.body_pointer
         && (operation.body.is_none() || !pointer.starts_with('/'))
     {
         bail!("{owner} Operation body_pointer requires a body and a JSON pointer");
     }
+    validate_transformations(&operation.transformations, owner)?;
     Ok(())
 }
 

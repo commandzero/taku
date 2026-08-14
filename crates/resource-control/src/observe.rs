@@ -3,8 +3,8 @@ use crate::canonical::{Selection, canonical_bytes, list_inventory, pointer_strin
 use crate::project::current_environment;
 use crate::provider::resolve_auth;
 use crate::transport::{
-    INTERNAL_CURSOR_POINTER, INTERNAL_GUARD_POINTER, RemoteResult, execute_retry_safe,
-    remove_pointer,
+    INTERNAL_CURSOR_POINTER, INTERNAL_GUARD_POINTER, OperationInput, RemoteResult,
+    execute_retry_safe, remove_pointer,
 };
 use crate::variants::{ResolvedVariants, baseline_from, baseline_path, discover, save_baseline};
 use crate::{SCHEMA_VERSION, git_root, load_project};
@@ -21,6 +21,8 @@ use std::path::{Path, PathBuf};
 pub struct FetchResult {
     pub environment: String,
     pub target: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
     #[serde(rename = "type")]
     pub resource_type: String,
     pub id: String,
@@ -31,6 +33,8 @@ pub struct FetchResult {
 pub struct RemoteEntry {
     pub environment: String,
     pub target: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
     #[serde(rename = "type")]
     pub resource_type: String,
     pub id: String,
@@ -78,6 +82,8 @@ pub fn fetch(
     let inventory = list_inventory(&root, selection)?;
     let mut reports = Vec::new();
     let mut resolved: BTreeMap<String, ResolvedVariants> = BTreeMap::new();
+    let mut bindings = BTreeMap::new();
+    let mut observation_files: BTreeMap<PathBuf, ObservationFile> = BTreeMap::new();
     for item in inventory {
         let target = &project.environments[&environment].targets[&item.target];
         let app = load_installed(&root, &target.application)?;
@@ -109,8 +115,12 @@ pub fn fetch(
                 &app,
                 resource_type,
                 operation,
-                Some(&item.id),
-                None,
+                OperationInput {
+                    namespace: item.namespace.as_deref(),
+                    id: Some(&item.id),
+                    context: Some(&item.value),
+                    body: None,
+                },
                 &auth,
             ) {
                 Ok(remote) => remote,
@@ -118,6 +128,7 @@ pub fn fetch(
                     reports.push(FetchResult {
                         environment: environment.clone(),
                         target: item.target,
+                        namespace: item.namespace,
                         resource_type: item.resource_type,
                         id: item.id,
                         outcome: "transformation_conflict".into(),
@@ -141,21 +152,37 @@ pub fn fetch(
             }
             RemoteResult::Success(_) => bail!("One Read Operation returned multiple Resources"),
         };
-        let path = cache_path(&root, &environment, &item.target, &item.resource_type);
-        let mut file = if path.exists() {
-            load_observation(&path)?
-        } else {
-            ObservationFile {
-                schema_version: SCHEMA_VERSION,
-                observed_at: Utc::now(),
-                binding: binding(&root, &project, &environment, &item.target, &app)?,
-                facts: BTreeMap::new(),
-                variants: BTreeMap::new(),
-                resources: BTreeMap::new(),
-            }
-        };
+        let path = cache_path(
+            &root,
+            &environment,
+            &item.target,
+            item.namespace.as_deref(),
+            &item.resource_type,
+        );
+        if !bindings.contains_key(&item.target) {
+            bindings.insert(
+                item.target.clone(),
+                binding(&root, &project, &environment, &item.target, &app)?,
+            );
+        }
+        if !observation_files.contains_key(&path) {
+            let file = if path.exists() {
+                load_observation(&path)?
+            } else {
+                ObservationFile {
+                    schema_version: SCHEMA_VERSION,
+                    observed_at: Utc::now(),
+                    binding: bindings[&item.target].clone(),
+                    facts: BTreeMap::new(),
+                    variants: BTreeMap::new(),
+                    resources: BTreeMap::new(),
+                }
+            };
+            observation_files.insert(path.clone(), file);
+        }
+        let file = observation_files.get_mut(&path).unwrap();
         file.observed_at = Utc::now();
-        file.binding = binding(&root, &project, &environment, &item.target, &app)?;
+        file.binding = bindings[&item.target].clone();
         file.facts = discovered.facts.clone();
         file.variants = discovered.selected.clone();
         let local_hash = hash(&canonical_bytes(&item.value)?);
@@ -177,10 +204,10 @@ pub fn fetch(
                 guard,
             },
         );
-        save_observation(&path, &file)?;
         reports.push(FetchResult {
             environment: environment.clone(),
             target: item.target,
+            namespace: item.namespace,
             resource_type: item.resource_type,
             id: item.id,
             outcome: outcome.into(),
@@ -209,13 +236,24 @@ pub fn fetch(
             .as_ref()
             .context("Deletion Marker Resource Type has no Read Operation")?;
         let auth = resolve_auth(&root, &project, &environment, target, cli_provider)?;
+        let marker_context = Value::Object(
+            marker
+                .parameters
+                .iter()
+                .map(|(name, value)| (name.clone(), Value::String(value.clone())))
+                .collect(),
+        );
         let remote = match execute_retry_safe(
             target,
             &app,
             resource_type,
             operation,
-            Some(&marker.id),
-            None,
+            OperationInput {
+                namespace: marker.namespace.as_deref(),
+                id: Some(&marker.id),
+                context: Some(&marker_context),
+                body: None,
+            },
             &auth,
         ) {
             Ok(remote) => remote,
@@ -223,6 +261,7 @@ pub fn fetch(
                 reports.push(FetchResult {
                     environment: environment.clone(),
                     target: marker.target,
+                    namespace: marker.namespace,
                     resource_type: marker.resource_type,
                     id: marker.id,
                     outcome: "transformation_conflict".into(),
@@ -247,21 +286,37 @@ pub fn fetch(
             }
             RemoteResult::Success(_) => bail!("One Read Operation returned multiple Resources"),
         };
-        let path = cache_path(&root, &environment, &marker.target, &marker.resource_type);
-        let mut file = if path.exists() {
-            load_observation(&path)?
-        } else {
-            ObservationFile {
-                schema_version: SCHEMA_VERSION,
-                observed_at: Utc::now(),
-                binding: binding(&root, &project, &environment, &marker.target, &app)?,
-                facts: BTreeMap::new(),
-                variants: BTreeMap::new(),
-                resources: BTreeMap::new(),
-            }
-        };
+        let path = cache_path(
+            &root,
+            &environment,
+            &marker.target,
+            marker.namespace.as_deref(),
+            &marker.resource_type,
+        );
+        if !bindings.contains_key(&marker.target) {
+            bindings.insert(
+                marker.target.clone(),
+                binding(&root, &project, &environment, &marker.target, &app)?,
+            );
+        }
+        if !observation_files.contains_key(&path) {
+            let file = if path.exists() {
+                load_observation(&path)?
+            } else {
+                ObservationFile {
+                    schema_version: SCHEMA_VERSION,
+                    observed_at: Utc::now(),
+                    binding: bindings[&marker.target].clone(),
+                    facts: BTreeMap::new(),
+                    variants: BTreeMap::new(),
+                    resources: BTreeMap::new(),
+                }
+            };
+            observation_files.insert(path.clone(), file);
+        }
+        let file = observation_files.get_mut(&path).unwrap();
         file.observed_at = Utc::now();
-        file.binding = binding(&root, &project, &environment, &marker.target, &app)?;
+        file.binding = bindings[&marker.target].clone();
         file.facts = discovered.facts.clone();
         file.variants = discovered.selected.clone();
         let guard = value.as_ref().map(|value| {
@@ -286,14 +341,17 @@ pub fn fetch(
                 guard,
             },
         );
-        save_observation(&path, &file)?;
         reports.push(FetchResult {
             environment: environment.clone(),
             target: marker.target,
+            namespace: marker.namespace,
             resource_type: marker.resource_type,
             id: marker.id,
             outcome: outcome.into(),
         });
+    }
+    for (path, file) in observation_files {
+        save_observation(&path, &file)?;
     }
     reports.sort_by(|a, b| {
         (&a.environment, &a.target, &a.resource_type, &a.id).cmp(&(
@@ -324,7 +382,14 @@ pub fn remote_list(
     let local = list_inventory(&root, selection)?;
     let local_ids: std::collections::BTreeSet<_> = local
         .iter()
-        .map(|i| (i.target.clone(), i.resource_type.clone(), i.id.clone()))
+        .map(|i| {
+            (
+                i.target.clone(),
+                i.namespace.clone(),
+                i.resource_type.clone(),
+                i.id.clone(),
+            )
+        })
         .collect();
     let env = &project.environments[&environment];
     let mut out = Vec::new();
@@ -347,64 +412,99 @@ pub fn remote_list(
             if operation.cardinality != crate::Cardinality::Many {
                 bail!("List Operation must have Many cardinality");
             }
-            let mut resources = Vec::new();
-            match &operation.pagination {
-                Some(crate::Pagination::PageSize {
-                    page_parameter,
-                    size_parameter,
-                    size,
-                    max_pages,
-                }) => {
-                    for page in 1..=*max_pages {
-                        let mut op = operation.clone();
-                        let separator = if op.path.contains('?') { '&' } else { '?' };
-                        op.path = format!(
-                            "{}{}{}={}&{}={}",
-                            op.path, separator, page_parameter, page, size_parameter, size
-                        );
-                        match execute_retry_safe(target, &app, rt, &op, None, None, &auth)? {
-                            RemoteResult::Success(values) => {
-                                let count = values.len();
-                                resources.extend(values);
-                                if count < *size {
-                                    break;
-                                }
-                                if page == *max_pages {
-                                    bail!("pagination exceeded configured max_pages");
-                                }
+            let namespaces: Vec<Option<&str>> = if rt.namespaced {
+                if selection.namespaces.is_empty() {
+                    bail!(
+                        "--namespace is required to list remote Resources of namespaced type {type_name}"
+                    );
+                }
+                selection
+                    .namespaces
+                    .iter()
+                    .map(|value| Some(value.as_str()))
+                    .collect()
+            } else {
+                if !selection.namespaces.is_empty() {
+                    continue;
+                }
+                vec![None]
+            };
+            for namespace in namespaces {
+                let mut resources = Vec::new();
+                match &operation.pagination {
+                    Some(crate::Pagination::PageSize {
+                        page_parameter,
+                        size_parameter,
+                        size,
+                        max_pages,
+                    }) => {
+                        for page in 1..=*max_pages {
+                            let mut op = operation.clone();
+                            append_query_parameter(&mut op.path, page_parameter, &page.to_string());
+                            append_query_parameter(&mut op.path, size_parameter, &size.to_string());
+                            if let Some(path) = &mut op.default_namespace_path {
+                                append_query_parameter(path, page_parameter, &page.to_string());
+                                append_query_parameter(path, size_parameter, &size.to_string());
                             }
-                            RemoteResult::NotFound => break,
-                            RemoteResult::Conflict => bail!("List Operation reported conflict"),
-                            RemoteResult::Retryable | RemoteResult::Uncertain => {
-                                bail!("List Operation failed transiently")
-                            }
-                            RemoteResult::Failure(message) => {
-                                bail!("List Operation failed: {message}")
+                            match execute_retry_safe(
+                                target,
+                                &app,
+                                rt,
+                                &op,
+                                OperationInput {
+                                    namespace,
+                                    ..OperationInput::default()
+                                },
+                                &auth,
+                            )? {
+                                RemoteResult::Success(values) => {
+                                    let count = values.len();
+                                    resources.extend(values);
+                                    if count < *size {
+                                        break;
+                                    }
+                                    if page == *max_pages {
+                                        bail!("pagination exceeded configured max_pages");
+                                    }
+                                }
+                                RemoteResult::NotFound => break,
+                                RemoteResult::Conflict => bail!("List Operation reported conflict"),
+                                RemoteResult::Retryable | RemoteResult::Uncertain => {
+                                    bail!("List Operation failed transiently")
+                                }
+                                RemoteResult::Failure(message) => {
+                                    bail!("List Operation failed: {message}")
+                                }
                             }
                         }
                     }
-                }
-                Some(crate::Pagination::Cursor {
-                    cursor_parameter,
-                    next_pointer: _,
-                    max_pages,
-                }) => {
-                    let mut cursor: Option<String> = None;
-                    let mut seen_cursors = std::collections::BTreeSet::new();
-                    for page in 0..*max_pages {
-                        let mut op = operation.clone();
-                        if let Some(value) = &cursor {
-                            let separator = if op.path.contains('?') { '&' } else { '?' };
-                            op.path = format!(
-                                "{}{}{}={}",
-                                op.path,
-                                separator,
-                                cursor_parameter,
-                                urlencoding::encode(value)
-                            );
-                        }
-                        let mut values =
-                            match execute_retry_safe(target, &app, rt, &op, None, None, &auth)? {
+                    Some(crate::Pagination::Cursor {
+                        cursor_parameter,
+                        next_pointer: _,
+                        max_pages,
+                    }) => {
+                        let mut cursor: Option<String> = None;
+                        let mut seen_cursors = std::collections::BTreeSet::new();
+                        for page in 0..*max_pages {
+                            let mut op = operation.clone();
+                            if let Some(value) = &cursor {
+                                let encoded = urlencoding::encode(value);
+                                append_query_parameter(&mut op.path, cursor_parameter, &encoded);
+                                if let Some(path) = &mut op.default_namespace_path {
+                                    append_query_parameter(path, cursor_parameter, &encoded);
+                                }
+                            }
+                            let mut values = match execute_retry_safe(
+                                target,
+                                &app,
+                                rt,
+                                &op,
+                                OperationInput {
+                                    namespace,
+                                    ..OperationInput::default()
+                                },
+                                &auth,
+                            )? {
                                 RemoteResult::Success(values) => values,
                                 RemoteResult::NotFound => break,
                                 RemoteResult::Conflict => bail!("List Operation reported conflict"),
@@ -415,76 +515,114 @@ pub fn remote_list(
                                     bail!("List Operation failed: {message}")
                                 }
                             };
-                        let next = values
-                            .last()
-                            .and_then(|value| pointer_string(value, INTERNAL_CURSOR_POINTER));
-                        for value in &mut values {
-                            remove_pointer(value, INTERNAL_CURSOR_POINTER)?;
-                        }
-                        resources.extend(values);
-                        if next.is_none() {
-                            break;
-                        }
-                        if !seen_cursors.insert(next.clone().unwrap()) {
-                            bail!("cursor pagination repeated a continuation cursor");
-                        }
-                        cursor = next;
-                        if page + 1 == *max_pages {
-                            bail!("pagination exceeded configured max_pages");
+                            let next = values
+                                .last()
+                                .and_then(|value| pointer_string(value, INTERNAL_CURSOR_POINTER));
+                            for value in &mut values {
+                                remove_pointer(value, INTERNAL_CURSOR_POINTER)?;
+                            }
+                            resources.extend(values);
+                            if next.is_none() {
+                                break;
+                            }
+                            if !seen_cursors.insert(next.clone().unwrap()) {
+                                bail!("cursor pagination repeated a continuation cursor");
+                            }
+                            cursor = next;
+                            if page + 1 == *max_pages {
+                                bail!("pagination exceeded configured max_pages");
+                            }
                         }
                     }
-                }
-                None => match execute_retry_safe(target, &app, rt, operation, None, None, &auth)? {
-                    RemoteResult::Success(values) => resources = values,
-                    RemoteResult::NotFound => {}
-                    RemoteResult::Conflict => bail!("List Operation reported conflict"),
-                    RemoteResult::Retryable | RemoteResult::Uncertain => {
-                        bail!("List Operation failed transiently")
+                    None => match execute_retry_safe(
+                        target,
+                        &app,
+                        rt,
+                        operation,
+                        OperationInput {
+                            namespace,
+                            ..OperationInput::default()
+                        },
+                        &auth,
+                    )? {
+                        RemoteResult::Success(values) => resources = values,
+                        RemoteResult::NotFound => {}
+                        RemoteResult::Conflict => bail!("List Operation reported conflict"),
+                        RemoteResult::Retryable | RemoteResult::Uncertain => {
+                            bail!("List Operation failed transiently")
+                        }
+                        RemoteResult::Failure(message) => bail!("List Operation failed: {message}"),
+                    },
+                };
+                let mut seen_ids = std::collections::BTreeSet::new();
+                for mut value in resources {
+                    remove_pointer(&mut value, INTERNAL_GUARD_POINTER)?;
+                    let id = pointer_string(&value, &rt.id.pointer)
+                        .context("remote Resource has no configured identity")?;
+                    if !selection.ids.is_empty() && !selection.ids.contains(&id) {
+                        continue;
                     }
-                    RemoteResult::Failure(message) => bail!("List Operation failed: {message}"),
-                },
-            };
-            let mut seen_ids = std::collections::BTreeSet::new();
-            for mut value in resources {
-                remove_pointer(&mut value, INTERNAL_GUARD_POINTER)?;
-                let id = pointer_string(&value, &rt.id.pointer)
-                    .context("remote Resource has no configured identity")?;
-                if !seen_ids.insert(id.clone()) {
-                    bail!("paginated List Operation returned duplicate Resource ID {id}");
+                    if !seen_ids.insert(id.clone()) {
+                        bail!("selected List Operation returned duplicate Resource ID {id}");
+                    }
+                    let tracked = local_ids.contains(&(
+                        target_name.clone(),
+                        namespace.map(str::to_owned),
+                        type_name.clone(),
+                        id.clone(),
+                    ));
+                    if untracked_only && tracked {
+                        continue;
+                    }
+                    let name = pointer_string(&value, &rt.display_name.pointer)
+                        .unwrap_or_else(|| id.clone());
+                    out.push(RemoteEntry {
+                        environment: environment.clone(),
+                        target: target_name.clone(),
+                        namespace: namespace.map(str::to_owned),
+                        resource_type: type_name.clone(),
+                        id,
+                        name,
+                        tracked,
+                        value,
+                    });
                 }
-                if !selection.ids.is_empty() && !selection.ids.contains(&id) {
-                    continue;
-                }
-                let tracked =
-                    local_ids.contains(&(target_name.clone(), type_name.clone(), id.clone()));
-                if untracked_only && tracked {
-                    continue;
-                }
-                let name =
-                    pointer_string(&value, &rt.display_name.pointer).unwrap_or_else(|| id.clone());
-                out.push(RemoteEntry {
-                    environment: environment.clone(),
-                    target: target_name.clone(),
-                    resource_type: type_name.clone(),
-                    id,
-                    name,
-                    tracked,
-                    value,
-                });
             }
         }
     }
     out.sort_by(|a, b| {
-        (&a.target, &a.resource_type, &a.id).cmp(&(&b.target, &b.resource_type, &b.id))
+        (&a.target, &a.namespace, &a.resource_type, &a.id).cmp(&(
+            &b.target,
+            &b.namespace,
+            &b.resource_type,
+            &b.id,
+        ))
     });
     Ok(out)
 }
 
-pub fn cache_path(root: &Path, environment: &str, target: &str, resource_type: &str) -> PathBuf {
-    root.join(".taku/cache")
-        .join(environment)
-        .join(target)
-        .join(format!("{resource_type}.yml"))
+fn append_query_parameter(path: &mut String, name: &str, value: &str) {
+    let separator = if path.contains('?') { '&' } else { '?' };
+    path.push(separator);
+    path.push_str(name);
+    path.push('=');
+    path.push_str(value);
+}
+
+pub fn cache_path(
+    root: &Path,
+    environment: &str,
+    target: &str,
+    namespace: Option<&str>,
+    resource_type: &str,
+) -> PathBuf {
+    let target_root = root.join(".taku/cache").join(environment).join(target);
+    match namespace {
+        Some(namespace) => target_root
+            .join(namespace)
+            .join(format!("{resource_type}.yml")),
+        None => target_root.join(format!("{resource_type}.yml")),
+    }
 }
 pub fn load_observation(path: &Path) -> Result<ObservationFile> {
     let file: ObservationFile = serde_yaml::from_str(

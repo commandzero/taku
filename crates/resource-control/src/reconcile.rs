@@ -8,13 +8,16 @@ use anyhow::{Context, Result, bail};
 use chrono::Utc;
 use serde::Serialize;
 use serde_json::Value;
+use std::collections::BTreeMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug, Serialize)]
 pub struct Comparison {
     pub environment: String,
     pub target: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
     #[serde(rename = "type")]
     pub resource_type: String,
     pub id: String,
@@ -26,6 +29,8 @@ pub struct Comparison {
 pub struct DiffEntry {
     pub environment: String,
     pub target: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
     #[serde(rename = "type")]
     pub resource_type: String,
     pub id: String,
@@ -38,6 +43,8 @@ pub struct DiffEntry {
 pub struct PullResult {
     pub environment: String,
     pub target: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
     #[serde(rename = "type")]
     pub resource_type: String,
     pub id: String,
@@ -48,6 +55,8 @@ pub struct PullResult {
 pub struct PushResult {
     pub environment: String,
     pub target: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
     #[serde(rename = "type")]
     pub resource_type: String,
     pub id: String,
@@ -61,19 +70,40 @@ pub fn compare(root: &Path, selection: &Selection) -> Result<Vec<Comparison>> {
     let project = load_project(&root)?;
     let environment = current_environment(&root, &project, selection.environment.as_deref())?;
     let mut result = Vec::new();
+    let mut applications = BTreeMap::new();
+    let mut bindings = BTreeMap::new();
+    let mut observations = BTreeMap::new();
     for item in list_inventory(&root, selection)? {
         let target = &project.environments[&environment].targets[&item.target];
-        let application = load_installed(&root, &target.application)?;
+        if !applications.contains_key(&item.target) {
+            applications.insert(
+                item.target.clone(),
+                load_installed(&root, &target.application)?,
+            );
+        }
+        let application = &applications[&item.target];
         let resource_type = &application.target_profile.resource_types[&item.resource_type];
-        let observation = load_observation(&cache_path(
+        let observation_path = cache_path(
             &root,
             &environment,
             &item.target,
+            item.namespace.as_deref(),
             &item.resource_type,
-        ))?;
-        if observation.binding
-            != binding(&root, &project, &environment, &item.target, &application)?
-        {
+        );
+        if !observations.contains_key(&observation_path) {
+            observations.insert(
+                observation_path.clone(),
+                load_observation(&observation_path)?,
+            );
+        }
+        if !bindings.contains_key(&item.target) {
+            bindings.insert(
+                item.target.clone(),
+                binding(&root, &project, &environment, &item.target, application)?,
+            );
+        }
+        let observation = &observations[&observation_path];
+        if observation.binding != bindings[&item.target] {
             bail!("Observed State is structurally invalid; run `taku fetch`");
         }
         let resource = observation
@@ -98,6 +128,7 @@ pub fn compare(root: &Path, selection: &Selection) -> Result<Vec<Comparison>> {
         result.push(Comparison {
             environment: environment.clone(),
             target: item.target,
+            namespace: item.namespace,
             resource_type: item.resource_type,
             id: item.id,
             state: state.into(),
@@ -112,19 +143,40 @@ pub fn diff(root: &Path, selection: &Selection) -> Result<Vec<DiffEntry>> {
     let project = load_project(&root)?;
     let environment = current_environment(&root, &project, selection.environment.as_deref())?;
     let mut result = Vec::new();
+    let mut applications = BTreeMap::new();
+    let mut bindings = BTreeMap::new();
+    let mut observations: BTreeMap<PathBuf, crate::observe::ObservationFile> = BTreeMap::new();
     for item in list_inventory(&root, selection)? {
         let target = &project.environments[&environment].targets[&item.target];
-        let application = load_installed(&root, &target.application)?;
+        if !applications.contains_key(&item.target) {
+            applications.insert(
+                item.target.clone(),
+                load_installed(&root, &target.application)?,
+            );
+        }
+        let application = &applications[&item.target];
         let resource_type = &application.target_profile.resource_types[&item.resource_type];
-        let observation = load_observation(&cache_path(
+        let observation_path = cache_path(
             &root,
             &environment,
             &item.target,
+            item.namespace.as_deref(),
             &item.resource_type,
-        ))?;
-        if observation.binding
-            != binding(&root, &project, &environment, &item.target, &application)?
-        {
+        );
+        if !observations.contains_key(&observation_path) {
+            observations.insert(
+                observation_path.clone(),
+                load_observation(&observation_path)?,
+            );
+        }
+        if !bindings.contains_key(&item.target) {
+            bindings.insert(
+                item.target.clone(),
+                binding(&root, &project, &environment, &item.target, application)?,
+            );
+        }
+        let observation = &observations[&observation_path];
+        if observation.binding != bindings[&item.target] {
             bail!("Observed State is structurally invalid; run `taku fetch`");
         }
         let resource = observation
@@ -146,6 +198,7 @@ pub fn diff(root: &Path, selection: &Selection) -> Result<Vec<DiffEntry>> {
             result.push(DiffEntry {
                 environment: environment.clone(),
                 target: item.target,
+                namespace: item.namespace,
                 resource_type: item.resource_type,
                 id: item.id,
                 state: state.into(),
@@ -174,7 +227,13 @@ pub fn pull(
         let target = &project.environments[&environment].targets[&item.target];
         let application = load_installed(&root, &target.application)?;
         let resource_type = &application.target_profile.resource_types[&item.resource_type];
-        let path = cache_path(&root, &environment, &item.target, &item.resource_type);
+        let path = cache_path(
+            &root,
+            &environment,
+            &item.target,
+            item.namespace.as_deref(),
+            &item.resource_type,
+        );
         if !observations.contains_key(&path) {
             observations.insert(path.clone(), load_observation(&path)?);
         }
@@ -256,6 +315,7 @@ pub fn pull(
         result.push(PullResult {
             environment: environment.clone(),
             target: item.target,
+            namespace: item.namespace,
             resource_type: item.resource_type,
             id: item.id,
             outcome: outcome.into(),

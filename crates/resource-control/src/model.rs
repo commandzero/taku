@@ -152,6 +152,8 @@ pub struct FactProbe {
 pub struct ResourceType {
     pub id: Identity,
     pub display_name: DisplayName,
+    #[serde(default)]
+    pub namespaced: bool,
     #[serde(default = "default_write_intent")]
     pub write_intent: WriteIntent,
     #[serde(default = "default_mutation_mode")]
@@ -262,9 +264,13 @@ pub struct Operations {
 pub struct Operation {
     pub method: String,
     pub path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub default_namespace_path: Option<String>,
     pub cardinality: Cardinality,
     #[serde(default)]
     pub headers: BTreeMap<String, String>,
+    #[serde(default)]
+    pub transformations: Vec<Transformation>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub extract: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -301,10 +307,11 @@ pub enum Cardinality {
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 pub enum Framing {
     Json,
     Ndjson,
+    MultipartNdjson,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]

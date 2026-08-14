@@ -1,11 +1,10 @@
 schema_version: 1
 application:
   name: kibana
-  version: "1.0.0"
+  version: "1.1.0"
 target_profile:
   headers:
     accept: application/json
-    content-type: application/json
     kbn-xsrf: taku
   fact_probes: []
   resource_types:
@@ -18,30 +17,168 @@ target_profile:
         list: { method: GET, path: "/api/spaces/space", cardinality: many }
         create: { method: POST, path: "/api/spaces/space", cardinality: one }
         update: { method: PUT, path: "/api/spaces/space/{id}", cardinality: one }
-        upsert: { method: PUT, path: "/api/spaces/space/{id}", cardinality: one }
         delete: { method: DELETE, path: "/api/spaces/space/{id}", cardinality: one, retry_safe: true }
     saved_objects:
       id: { pointer: /id, scope: universal }
       display_name: { pointer: /attributes/title, strategy: name_id }
+      namespaced: true
       write_intent: upsert
+      dependencies: [spaces]
       transformations:
+        - { kind: embedded_json, pointer: /attributes/panelsJSON }
+        - { kind: embedded_json, pointer: /attributes/fieldFormatMap }
+        - { kind: embedded_json, pointer: /attributes/controlGroupInput/ignoreParentSettingsJSON }
+        - { kind: embedded_json, pointer: /attributes/controlGroupInput/panelsJSON }
+        - { kind: embedded_json, pointer: /attributes/kibanaSavedObjectMeta/searchSourceJSON }
+        - { kind: embedded_json, pointer: /attributes/optionsJSON }
         - { kind: embedded_json, pointer: /attributes/visState }
+        - { kind: embedded_json, pointer: /attributes/fieldAttrs }
       operations:
         read:
           method: POST
-          path: "/api/saved_objects/_export"
+          path: "/s/{namespace}/api/saved_objects/_export"
+          default_namespace_path: "/api/saved_objects/_export"
           cardinality: many
           request_framing: json
           response_framing: ndjson
           skip_unidentified: true
-          body: { objects: [{ id: "{id}" }] }
+          body: { objects: [{ id: "{id}", type: "{type}" }] }
         list:
           method: POST
-          path: "/api/saved_objects/_export"
+          path: "/s/{namespace}/api/saved_objects/_export"
+          default_namespace_path: "/api/saved_objects/_export"
           cardinality: many
           request_framing: json
           response_framing: ndjson
           skip_unidentified: true
           body: { type: ["*"] }
-        upsert: { method: POST, path: "/api/saved_objects/_import?overwrite=true", cardinality: many, framing: ndjson }
-        delete: { method: DELETE, path: "/api/saved_objects/{type}/{id}", cardinality: one }
+        upsert:
+          method: POST
+          path: "/s/{namespace}/api/saved_objects/_import?overwrite=true"
+          default_namespace_path: "/api/saved_objects/_import?overwrite=true"
+          cardinality: many
+          request_framing: multipart_ndjson
+        delete:
+          method: DELETE
+          path: "/s/{namespace}/api/saved_objects/{type}/{id}"
+          default_namespace_path: "/api/saved_objects/{type}/{id}"
+          cardinality: one
+    workflows:
+      id: { pointer: /id, scope: universal }
+      display_name: { pointer: /name, strategy: name_id }
+      namespaced: true
+      write_intent: upsert
+      dependencies: [spaces]
+      transformations:
+        - { kind: remove, pointer: /createdAt }
+        - { kind: remove, pointer: /createdBy }
+        - { kind: remove, pointer: /lastUpdatedAt }
+        - { kind: remove, pointer: /lastUpdatedBy }
+        - { kind: remove, pointer: /valid }
+        - { kind: remove, pointer: /validationErrors }
+        - { kind: remove, pointer: /history }
+      operations:
+        read:
+          method: GET
+          path: "/s/{namespace}/api/workflows/workflow/{id}"
+          default_namespace_path: "/api/workflows/workflow/{id}"
+          cardinality: one
+          retry_safe: true
+          concurrency: parallel
+          headers: { x-elastic-internal-origin: Kibana }
+        list:
+          method: GET
+          path: "/s/{namespace}/api/workflows"
+          default_namespace_path: "/api/workflows"
+          cardinality: many
+          extract: /results
+          retry_safe: true
+          concurrency: parallel
+          headers: { x-elastic-internal-origin: Kibana }
+          pagination: { kind: page_size, page_parameter: page, size_parameter: size, size: 100, max_pages: 100 }
+        create:
+          method: POST
+          path: "/s/{namespace}/api/workflows/workflow"
+          default_namespace_path: "/api/workflows/workflow"
+          cardinality: one
+          headers: { x-elastic-internal-origin: Kibana }
+        update:
+          method: PUT
+          path: "/s/{namespace}/api/workflows/workflow/{id}"
+          default_namespace_path: "/api/workflows/workflow/{id}"
+          cardinality: one
+          headers: { x-elastic-internal-origin: Kibana }
+          transformations: [{ kind: omit, pointer: /id }]
+        delete:
+          method: DELETE
+          path: "/s/{namespace}/api/workflows/workflow/{id}"
+          default_namespace_path: "/api/workflows/workflow/{id}"
+          cardinality: one
+          retry_safe: true
+          headers: { x-elastic-internal-origin: Kibana }
+    tools:
+      id: { pointer: /id, scope: universal }
+      display_name: { pointer: /id, strategy: name, unique: true }
+      namespaced: true
+      write_intent: upsert
+      dependencies: [spaces, workflows]
+      transformations:
+        - { kind: remove, pointer: /readonly }
+        - { kind: remove, pointer: /schema }
+      operations:
+        read: { method: GET, path: "/s/{namespace}/api/agent_builder/tools/{id}", default_namespace_path: "/api/agent_builder/tools/{id}", cardinality: one, retry_safe: true, concurrency: parallel }
+        list: { method: GET, path: "/s/{namespace}/api/agent_builder/tools", default_namespace_path: "/api/agent_builder/tools", cardinality: many, extract: /results, retry_safe: true, concurrency: parallel }
+        create: { method: POST, path: "/s/{namespace}/api/agent_builder/tools", default_namespace_path: "/api/agent_builder/tools", cardinality: one }
+        update:
+          method: PUT
+          path: "/s/{namespace}/api/agent_builder/tools/{id}"
+          default_namespace_path: "/api/agent_builder/tools/{id}"
+          cardinality: one
+          transformations:
+            - { kind: omit, pointer: /id }
+            - { kind: omit, pointer: /type }
+        delete: { method: DELETE, path: "/s/{namespace}/api/agent_builder/tools/{id}", default_namespace_path: "/api/agent_builder/tools/{id}", cardinality: one, retry_safe: true }
+    skills:
+      id: { pointer: /id, scope: universal }
+      display_name: { pointer: /name, strategy: name_id }
+      namespaced: true
+      write_intent: upsert
+      dependencies: [spaces, tools]
+      transformations:
+        - { kind: remove, pointer: /readonly }
+        - { kind: remove, pointer: /schema }
+        - { kind: remove, pointer: /built_in }
+        - { kind: remove, pointer: /source }
+        - { kind: remove, pointer: /created_at }
+        - { kind: remove, pointer: /updated_at }
+      operations:
+        read: { method: GET, path: "/s/{namespace}/api/agent_builder/skills/{id}", default_namespace_path: "/api/agent_builder/skills/{id}", cardinality: one, retry_safe: true, concurrency: parallel }
+        list: { method: GET, path: "/s/{namespace}/api/agent_builder/skills", default_namespace_path: "/api/agent_builder/skills", cardinality: many, extract: /results, retry_safe: true, concurrency: parallel }
+        create: { method: POST, path: "/s/{namespace}/api/agent_builder/skills", default_namespace_path: "/api/agent_builder/skills", cardinality: one }
+        update:
+          method: PUT
+          path: "/s/{namespace}/api/agent_builder/skills/{id}"
+          default_namespace_path: "/api/agent_builder/skills/{id}"
+          cardinality: one
+          transformations: [{ kind: omit, pointer: /id }]
+        delete: { method: DELETE, path: "/s/{namespace}/api/agent_builder/skills/{id}", default_namespace_path: "/api/agent_builder/skills/{id}", cardinality: one, retry_safe: true }
+    agents:
+      id: { pointer: /id, scope: universal }
+      display_name: { pointer: /name, strategy: name_id }
+      namespaced: true
+      write_intent: upsert
+      dependencies: [spaces, tools, skills]
+      transformations:
+        - { kind: remove, pointer: /readonly }
+        - { kind: remove, pointer: /schema }
+      operations:
+        read: { method: GET, path: "/s/{namespace}/api/agent_builder/agents/{id}", default_namespace_path: "/api/agent_builder/agents/{id}", cardinality: one, retry_safe: true, concurrency: parallel }
+        list: { method: GET, path: "/s/{namespace}/api/agent_builder/agents", default_namespace_path: "/api/agent_builder/agents", cardinality: many, extract: /results, retry_safe: true, concurrency: parallel }
+        create: { method: POST, path: "/s/{namespace}/api/agent_builder/agents", default_namespace_path: "/api/agent_builder/agents", cardinality: one }
+        update:
+          method: PUT
+          path: "/s/{namespace}/api/agent_builder/agents/{id}"
+          default_namespace_path: "/api/agent_builder/agents/{id}"
+          cardinality: one
+          transformations: [{ kind: omit, pointer: /id }]
+        delete: { method: DELETE, path: "/s/{namespace}/api/agent_builder/agents/{id}", default_namespace_path: "/api/agent_builder/agents/{id}", cardinality: one, retry_safe: true }
