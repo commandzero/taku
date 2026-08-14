@@ -1,0 +1,5 @@
+# Vendor Resource Type Catalogs per Project
+
+Each Application's Target Profile and Resource Type Catalog will be copied by explicit `taku install` or `taku update` into `.taku/applications/<application>/resources.yml` with schema/version and source provenance, making the exact application behavior a reviewable part of the Project. Updates validate existing Resources and produce Git diffs; Fetch, Pull, and Push never auto-update Applications. Embedded and Git Application Sources distribute definitions, but installation always vendors and pins the selected definition in the Project.
+
+`taku install <application>...` vendors definitions only and creates no Target. `taku app add <application> [name]` creates an Environment-specific Target whose name defaults to the Application name. When its Application is not installed, interactive confirmation or non-interactive `--yes` authorizes Taku to install the current available version and add the Target atomically; no implicit source refresh occurs.
