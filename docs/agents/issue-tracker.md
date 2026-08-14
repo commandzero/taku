@@ -2,7 +2,7 @@
 
 Issues and specs for this repo live as GitHub issues in `commandzero/taku`. Use the `gh` CLI for all operations.
 
-The GitHub repository has not been created yet. Until a remote pointing to `commandzero/taku` is configured, pass `--repo commandzero/taku` to applicable `gh` commands.
+The private GitHub repository is `commandzero/taku`. The local checkout may not have a configured remote, so pass `--repo commandzero/taku` to applicable `gh` commands when inference is unavailable.
 
 ## Conventions
 

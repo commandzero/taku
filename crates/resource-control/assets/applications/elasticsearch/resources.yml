@@ -1,0 +1,33 @@
+schema_version: 1
+application:
+  name: elasticsearch
+  version: "1.0.0"
+target_profile:
+  headers:
+    accept: application/json
+    content-type: application/json
+  fact_probes: []
+  resource_types:
+    ingest_pipelines:
+      id: { pointer: /id, scope: universal }
+      display_name: { pointer: /name, strategy: name_id }
+      write_intent: upsert
+      mutation_mode: replace
+      sensitive_fields: [/_secret]
+      operations:
+        read: { method: GET, path: "/_ingest/pipeline/{id}", cardinality: one, extract: "/{id}" }
+        list: { method: GET, path: "/_ingest/pipeline", cardinality: many }
+        create: { method: PUT, path: "/_ingest/pipeline/{id}?create=true", cardinality: one, retry_safe: true }
+        update: { method: PUT, path: "/_ingest/pipeline/{id}", cardinality: one, retry_safe: true }
+        upsert: { method: PUT, path: "/_ingest/pipeline/{id}", cardinality: one, retry_safe: true, trustworthy_response: false }
+        delete: { method: DELETE, path: "/_ingest/pipeline/{id}", cardinality: one, retry_safe: true }
+    ilm_policies:
+      id: { pointer: /id, scope: universal }
+      display_name: { pointer: /name, strategy: name }
+      write_intent: update
+      mutation_mode: replace
+      operations:
+        read: { method: GET, path: "/_ilm/policy/{id}", cardinality: one, extract: "/{id}" }
+        list: { method: GET, path: "/_ilm/policy", cardinality: many }
+        update: { method: PUT, path: "/_ilm/policy/{id}", cardinality: one, retry_safe: true }
+        delete: { method: DELETE, path: "/_ilm/policy/{id}", cardinality: one, retry_safe: true }

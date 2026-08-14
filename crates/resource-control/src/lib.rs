@@ -1,0 +1,28 @@
+//! Generic resource-control engine used by the `taku` reference CLI.
+
+mod application;
+mod canonical;
+mod lifecycle;
+mod model;
+mod observe;
+mod project;
+mod provider;
+mod reconcile;
+mod scheduler;
+mod transport;
+mod variants;
+
+pub use application::{
+    ApplicationListing, InstallResult, RefreshResult, UpdateResult, install_applications,
+    install_applications_from, list_applications, refresh_source, update_applications,
+};
+pub use canonical::{InventoryEntry, Selection, list_inventory};
+pub use lifecycle::{
+    LifecycleResult, PromotionResult, add_remote, forget, promote, promote_projects, remove,
+};
+pub use model::*;
+pub use observe::{FetchResult, RemoteEntry, fetch, is_transformation_conflict, remote_list};
+pub use project::{add_target, git_root, initialize, load_project, rename_target, save_context};
+pub use reconcile::{Comparison, DiffEntry, PullResult, compare, diff, pull};
+pub use scheduler::{push, push_confirmation_required};
+pub use variants::{TargetBaseline, validate_project};

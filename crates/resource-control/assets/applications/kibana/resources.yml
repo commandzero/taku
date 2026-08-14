@@ -1,0 +1,45 @@
+schema_version: 1
+application:
+  name: kibana
+  version: "1.0.0"
+target_profile:
+  headers:
+    accept: application/json
+    content-type: application/json
+    kbn-xsrf: taku
+  fact_probes: []
+  resource_types:
+    spaces:
+      id: { pointer: /id, scope: universal }
+      display_name: { pointer: /name, strategy: name }
+      write_intent: upsert
+      operations:
+        read: { method: GET, path: "/api/spaces/space/{id}", cardinality: one }
+        list: { method: GET, path: "/api/spaces/space", cardinality: many }
+        create: { method: POST, path: "/api/spaces/space", cardinality: one }
+        update: { method: PUT, path: "/api/spaces/space/{id}", cardinality: one }
+        upsert: { method: PUT, path: "/api/spaces/space/{id}", cardinality: one }
+        delete: { method: DELETE, path: "/api/spaces/space/{id}", cardinality: one, retry_safe: true }
+    saved_objects:
+      id: { pointer: /id, scope: universal }
+      display_name: { pointer: /attributes/title, strategy: name_id }
+      write_intent: upsert
+      transformations:
+        - { kind: embedded_json, pointer: /attributes/visState }
+      operations:
+        read:
+          method: POST
+          path: "/api/saved_objects/_export"
+          cardinality: many
+          request_framing: json
+          response_framing: ndjson
+          body: { objects: [{ id: "{id}" }] }
+        list:
+          method: POST
+          path: "/api/saved_objects/_export"
+          cardinality: many
+          request_framing: json
+          response_framing: ndjson
+          body: { type: ["*"] }
+        upsert: { method: POST, path: "/api/saved_objects/_import?overwrite=true", cardinality: many, framing: ndjson }
+        delete: { method: DELETE, path: "/api/saved_objects/{type}/{id}", cardinality: one }
