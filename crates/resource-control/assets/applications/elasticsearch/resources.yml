@@ -14,6 +14,10 @@ target_profile:
       write_intent: upsert
       mutation_mode: replace
       sensitive_fields: [/_secret]
+      transformations:
+        - { kind: remove, pointer: /created_date_millis }
+        - { kind: remove, pointer: /modified_date_millis }
+        - { kind: omit, pointer: /id }
       operations:
         read: { method: GET, path: "/_ingest/pipeline/{id}", cardinality: one, extract: "/{id}" }
         list: { method: GET, path: "/_ingest/pipeline", cardinality: many }

@@ -33,6 +33,7 @@ target_profile:
           cardinality: many
           request_framing: json
           response_framing: ndjson
+          skip_unidentified: true
           body: { objects: [{ id: "{id}" }] }
         list:
           method: POST
@@ -40,6 +41,7 @@ target_profile:
           cardinality: many
           request_framing: json
           response_framing: ndjson
+          skip_unidentified: true
           body: { type: ["*"] }
         upsert: { method: POST, path: "/api/saved_objects/_import?overwrite=true", cardinality: many, framing: ndjson }
         delete: { method: DELETE, path: "/api/saved_objects/{type}/{id}", cardinality: one }

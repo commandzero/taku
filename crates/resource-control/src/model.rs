@@ -278,6 +278,8 @@ pub struct Operation {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub body_pointer: Option<String>,
     #[serde(default)]
+    pub skip_unidentified: bool,
+    #[serde(default)]
     pub outcomes: BTreeMap<u16, Outcome>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pagination: Option<Pagination>,
@@ -366,6 +368,9 @@ pub enum Transformation {
         pointer: String,
     },
     Remove {
+        pointer: String,
+    },
+    Omit {
         pointer: String,
     },
     Insert {

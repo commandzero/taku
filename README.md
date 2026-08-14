@@ -85,6 +85,16 @@ auth:
 
 Provider precedence is explicit `--set field=value`, process environment, then the configured dotenv file. Credential values never enter serializable reports, caches, Baselines, or Journals.
 
+## Live Elastic Stack tests
+
+Ignored integration tests exercise complete Resource lifecycles against Elasticsearch at `http://localhost:9200` and Kibana at `http://localhost:5601`, plus Kibana's NDJSON Saved Objects export. They read `ELASTIC_API_KEY` from the repository's explicit `.env` file without mutating the test process environment. The value may be either the raw encoded key or an `ApiKey `-prefixed authorization value.
+
+```console
+cargo test --test live_elastic -- --ignored --nocapture
+```
+
+The lifecycle tests create uniquely named remote fixtures, manage them through the compiled `taku` CLI, and remove them through guarded Deletion Markers. A fallback cleanup guard also attempts deletion if an assertion fails. The export test is read-only. These tests remain skipped during ordinary `cargo test` runs.
+
 ## Application definitions
 
 An Application is a strictly validated Target Profile and Resource Type Catalog. Each Resource Type declares identity, display-name policy, lifecycle Operations, actual HTTP methods, paths, headers and body templates, One/Many cardinality, independent request/response framing, transformations, write intent, retry safety, scheduling class, and dependencies. Many writes are bundled at runtime, including NDJSON payloads. HTTP verbs do not imply lifecycle semantics.

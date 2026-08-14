@@ -13,7 +13,9 @@ serde_yaml = "0.9"
 
 [dev-dependencies]
 assert_cmd = "2.0"
+dotenvy = "0.15.7"
 predicates = "3.1"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 tempfile = "3.20"
 tiny_http = "0.12"
 

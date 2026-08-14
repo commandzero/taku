@@ -32,7 +32,7 @@ impl Fake {
                 let mut body = String::new();
                 request.as_reader().read_to_string(&mut body).unwrap();
                 captured.lock().unwrap().push(body);
-                let response=match(request.method(),request.url()){(&Method::Post,"/api/saved_objects/_export")=>Response::from_string("{\"id\":\"obj-1\",\"type\":\"visualization\",\"attributes\":{\"title\":\"Chart\",\"visState\":\"{\\\"a\\\":1}\",\"yaml\":\"# keep\\nx: 1\\n\"}}\n").with_header(Header::from_bytes("content-type","application/x-ndjson").unwrap()),(&Method::Post,path)if path.starts_with("/api/saved_objects/_import")=>Response::from_string("{\"success\":true}"),_=>Response::from_string("not found").with_status_code(404)};
+                let response=match(request.method(),request.url()){(&Method::Post,"/api/saved_objects/_export")=>Response::from_string("{\"id\":\"obj-1\",\"type\":\"visualization\",\"attributes\":{\"title\":\"Chart\",\"visState\":\"{\\\"a\\\":1}\",\"yaml\":\"# keep\\nx: 1\\n\"}}\n{\"exportedCount\":1,\"missingRefCount\":0}\n").with_header(Header::from_bytes("content-type","application/x-ndjson").unwrap()),(&Method::Post,path)if path.starts_with("/api/saved_objects/_import")=>Response::from_string("{\"success\":true}"),_=>Response::from_string("not found").with_status_code(404)};
                 request.respond(response).unwrap();
             }
         });

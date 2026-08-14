@@ -32,7 +32,7 @@ impl FakeTarget {
         let server = Server::http("127.0.0.1:0").unwrap();
         let url = format!("http://{}", server.server_addr());
         let resource = Arc::new(Mutex::new(
-            json!({"id":"pipe-1","name":"Pipeline","description":"remote","processors":[],"version":"7","_secret":"NEVER-PERSIST"}),
+            json!({"id":"pipe-1","name":"Pipeline","description":"remote","processors":[],"version":"7","created_date_millis":1000,"modified_date_millis":2000,"_secret":"NEVER-PERSIST"}),
         ));
         let version = Arc::new(Mutex::new(String::from("1")));
         let requests = Arc::new(Mutex::new(Vec::new()));
@@ -833,6 +833,8 @@ fn fetch_status_pull_and_push_use_generic_operations_without_leaking_secrets() {
     )
     .unwrap();
     assert!(!cache.contains("NEVER-PERSIST"));
+    assert!(!cache.contains("created_date_millis"));
+    assert!(!cache.contains("modified_date_millis"));
     assert!(!cache.contains("SENTINEL-CREDENTIAL"));
     assert!(
         !String::from_utf8_lossy(&output(&project, &["fetch"]).stdout)
@@ -870,5 +872,8 @@ fn fetch_status_pull_and_push_use_generic_operations_without_leaking_secrets() {
     let put = requests.iter().find(|r| r.method == "PUT").unwrap();
     assert!(put.path.starts_with("/_ingest/pipeline/pipe-1"));
     assert!(put.body.contains("published"));
+    assert!(!put.body.contains("\"id\""));
+    assert!(!put.body.contains("created_date_millis"));
+    assert!(!put.body.contains("modified_date_millis"));
     assert!(!put.body.contains("NEVER-PERSIST"));
 }

@@ -777,6 +777,7 @@ fn validate_transformations(transformations: &[crate::Transformation], owner: &s
         let pointer = match transformation {
             crate::Transformation::Extract { pointer }
             | crate::Transformation::Remove { pointer }
+            | crate::Transformation::Omit { pointer }
             | crate::Transformation::Insert { pointer, .. }
             | crate::Transformation::EmbeddedJson { pointer }
             | crate::Transformation::Frame { pointer } => pointer,

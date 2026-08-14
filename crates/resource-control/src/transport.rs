@@ -271,7 +271,7 @@ fn map_response(
                 .context("configured response extraction did not match")?;
                 values = vec![extracted];
             }
-            values = expand_many(values, resource_type, id)?;
+            values = expand_many(values, resource_type, id, operation.skip_unidentified)?;
             for value in &mut values {
                 let guard = resource_type
                     .guard_pointer
@@ -335,9 +335,17 @@ fn expand_many(
     values: Vec<Value>,
     resource_type: &ResourceType,
     requested_id: Option<&str>,
+    skip_unidentified: bool,
 ) -> Result<Vec<Value>> {
     if requested_id.is_some() {
-        return Ok(values);
+        return Ok(if skip_unidentified {
+            values
+                .into_iter()
+                .filter(|value| pointer_string(value, &resource_type.id.pointer).is_some())
+                .collect()
+        } else {
+            values
+        });
     }
     let mut out = Vec::new();
     for value in values {
@@ -359,14 +367,20 @@ fn expand_many(
         }
     }
     let mut ids = BTreeSet::new();
-    for value in &out {
-        let id = pointer_string(value, &resource_type.id.pointer)
-            .context("remote Resource has no configured ID")?;
+    let mut identified = Vec::new();
+    for value in out {
+        let Some(id) = pointer_string(&value, &resource_type.id.pointer) else {
+            if skip_unidentified {
+                continue;
+            }
+            bail!("remote Resource has no configured ID");
+        };
         if !ids.insert(id.clone()) {
             bail!("remote operation returned duplicate Resource ID {id}");
         }
+        identified.push(value);
     }
-    Ok(out)
+    Ok(identified)
 }
 
 fn apply_inbound(value: &mut Value, resource_type: &ResourceType) -> Result<()> {
@@ -379,6 +393,7 @@ fn apply_inbound(value: &mut Value, resource_type: &ResourceType) -> Result<()> 
                     .context("Transformation extraction did not match")?;
             }
             crate::Transformation::Remove { pointer } => remove_pointer(value, pointer)?,
+            crate::Transformation::Omit { .. } => {}
             crate::Transformation::Insert {
                 pointer,
                 value: inserted,
@@ -429,6 +444,7 @@ pub fn outbound(value: &Value, resource_type: &ResourceType) -> Result<Value> {
                     .context("outbound framing pointer did not match")?;
             }
             crate::Transformation::Insert { pointer, .. } => remove_pointer(&mut value, pointer)?,
+            crate::Transformation::Omit { pointer } => remove_pointer(&mut value, pointer)?,
             crate::Transformation::Remove { .. } => {}
         }
     }
