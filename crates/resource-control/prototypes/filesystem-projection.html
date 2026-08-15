@@ -1,0 +1,584 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Taku filesystem projection prototype</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #17202a;
+      --muted: #65717d;
+      --paper: #f7f5ef;
+      --panel: #ffffff;
+      --line: #d9d6cc;
+      --accent: #176b5b;
+      --danger: #a23a2a;
+      --code: #12231f;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--paper);
+      color: var(--ink);
+      font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    main { max-width: 1180px; margin: 0 auto; padding: 44px 24px 80px; }
+    h1, h2, h3 { line-height: 1.15; }
+    h1 { font-size: clamp(2rem, 6vw, 4.6rem); letter-spacing: -0.055em; margin: 0; }
+    h2 { margin-top: 42px; }
+    p { max-width: 78ch; }
+    .lede { color: var(--muted); font-size: 1.1rem; }
+    .question { border-left: 4px solid var(--accent); padding: 4px 0 4px 18px; }
+    .flow {
+      margin: 24px 0;
+      padding: 16px 20px;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      font: 600 0.95rem/1.8 ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+    .controls, .steps, .tabs { display: flex; flex-wrap: wrap; gap: 8px; }
+    button, .file-label {
+      border: 1px solid var(--line);
+      background: var(--panel);
+      color: var(--ink);
+      border-radius: 6px;
+      padding: 9px 12px;
+      cursor: pointer;
+      font: inherit;
+    }
+    button:hover, .file-label:hover, button.active { border-color: var(--accent); color: var(--accent); }
+    button.primary { background: var(--accent); border-color: var(--accent); color: white; }
+    input[type=file] { position: absolute; width: 1px; height: 1px; opacity: 0; }
+    .status {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+      gap: 12px;
+      margin: 18px 0;
+    }
+    .metric, .panel, .walkthrough {
+      border: 1px solid var(--line);
+      background: var(--panel);
+      border-radius: 8px;
+      padding: 16px;
+    }
+    .metric strong { display: block; font-size: 1.05rem; }
+    .metric span { color: var(--muted); }
+    .metric.error strong { color: var(--danger); }
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+    @media (max-width: 800px) { .grid { grid-template-columns: 1fr; } }
+    pre {
+      max-height: 420px;
+      overflow: auto;
+      margin: 10px 0 0;
+      padding: 14px;
+      border-radius: 6px;
+      background: var(--code);
+      color: #e4f0eb;
+      font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+    .file-list { display: grid; gap: 8px; margin-top: 10px; }
+    details { border-top: 1px solid var(--line); padding-top: 8px; }
+    summary { cursor: pointer; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .walkthrough { margin-top: 10px; }
+    .walkthrough p { color: var(--muted); }
+    .hidden { display: none; }
+    .note { color: var(--muted); font-size: 0.9rem; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Split, merge, bundle, unbundle</h1>
+    <p class="lede">PROTOTYPE — throwaway logic for testing a declarative filesystem projection. It is not production Taku code.</p>
+    <div class="question">
+      <strong>Question:</strong> Can one small Resource Type configuration reversibly split a Kibana Skill JSON object into an Agent Skill directory and merge it back, while passing all unclaimed frontmatter values through automatically and remaining independent from collection bundling such as NDJSON?
+    </div>
+    <div class="flow">files ⇄ merge / split ⇄ Resource Objects ⇄ bundle / unbundle ⇄ operation payload</div>
+    <div class="panel">
+      <strong>Actual ESDiag corpus check:</strong> 24 files (one <code>SKILL.md</code> and 23 references) merged and split successfully. Every frontmatter value matched the Kibana JSON payload, the Resource Object round trip was exact, and every reference file remained byte-for-byte identical. <code>SKILL.md</code> remained semantically equal but its YAML frontmatter formatting was normalized.
+    </div>
+    <p class="note">Production direction: use <code>pulldown-cmark</code> with YAML metadata blocks enabled to locate the frontmatter and Markdown body, then decode the metadata text as one generic YAML mapping. The projection does not know individual frontmatter field names.</p>
+  </header>
+
+  <section>
+    <h2>Free play</h2>
+    <div class="controls" id="controls"></div>
+    <label class="file-label" for="directory-input">Load a local Skill directory</label>
+    <input id="directory-input" type="file" webkitdirectory multiple>
+    <p class="note">The local directory stays in browser memory. Select a directory containing <code>SKILL.md</code>.</p>
+  </section>
+
+  <section>
+    <h2>Current state</h2>
+    <div class="status" id="status"></div>
+    <div class="grid">
+      <article class="panel">
+        <h3>Canonical files</h3>
+        <div class="file-list" id="files"></div>
+      </article>
+      <article class="panel">
+        <h3>Resource Object</h3>
+        <pre id="object"></pre>
+      </article>
+      <article class="panel">
+        <h3>Operation payload</h3>
+        <pre id="payload"></pre>
+      </article>
+      <article class="panel">
+        <h3>Projection configuration</h3>
+        <pre id="configuration"></pre>
+      </article>
+    </div>
+  </section>
+
+  <section>
+    <h2>Guided walkthroughs</h2>
+    <div class="tabs" id="tabs"></div>
+    <div id="walkthroughs"></div>
+  </section>
+</main>
+
+<script>
+const ProjectionModel = (() => {
+  "use strict";
+
+  const configuration = {
+    kind: "directory",
+    unknown_files: "conflict",
+    document: {
+      path: "SKILL.md",
+      format: "markdown",
+      frontmatter: { format: "yaml", passthrough: true },
+      body: "/content"
+    },
+    collections: [{
+      pointer: "/referenced_content",
+      format: "text",
+      ordering: "path",
+      path: {
+        parent: "/relativePath",
+        stem: "/name",
+        extension: ".md",
+        parent_style: "dot_slash"
+      },
+      content: "/content"
+    }]
+  };
+
+  const sample = {
+    id: "agentic-diagnostic-assistant",
+    name: "Agentic Diagnostic Assistant",
+    description: "Analyze Elasticsearch diagnostic bundles and ESDiag dashboards.\nUse when a user asks about a specific diagnostic ID.\n",
+    tool_ids: ["user_diagnostic_id_fetcher"],
+    experimental: false,
+    owner: "diagnostics-team",
+    content: "\n# Agentic Diagnostic Assistant\n\nUse the references in `references/` to analyze a diagnostic bundle.\n",
+    referenced_content: [
+      { name: "allocation-overview", relativePath: "./references", content: "# Allocation Overview\n\nUse for shard balance and disk watermark analysis.\n" },
+      { name: "nodes-summary", relativePath: "./references", content: "# Nodes Summary\n\nUse for CPU, heap, disk, and shard distribution.\n" }
+    ]
+  };
+
+  const clone = value => structuredClone(value);
+  const normalize = value => {
+    if (Array.isArray(value)) return value.map(normalize);
+    if (value && typeof value === "object") {
+      return Object.fromEntries(Object.keys(value).sort().map(key => [key, normalize(value[key])]));
+    }
+    return value;
+  };
+  const equal = (left, right) => JSON.stringify(normalize(left)) === JSON.stringify(normalize(right));
+
+  function pointerGet(value, pointer) {
+    return pointer.split("/").slice(1).reduce((current, part) => current?.[part.replaceAll("~1", "/").replaceAll("~0", "~")], value);
+  }
+
+  function pointerSet(value, pointer, fieldValue) {
+    const parts = pointer.split("/").slice(1);
+    let current = value;
+    for (const part of parts.slice(0, -1)) current = current[part] ??= {};
+    current[parts.at(-1)] = fieldValue;
+  }
+
+  function pointerDelete(value, pointer) {
+    const parts = pointer.split("/").slice(1);
+    let current = value;
+    for (const part of parts.slice(0, -1)) {
+      current = current?.[part];
+      if (!current || typeof current !== "object") return;
+    }
+    if (current && typeof current === "object") delete current[parts.at(-1)];
+  }
+
+  function yamlScalar(value) {
+    if (value === null) return "null";
+    if (typeof value === "boolean" || typeof value === "number") return String(value);
+    if (value && typeof value === "object") return JSON.stringify(value);
+    return JSON.stringify(String(value));
+  }
+
+  function renderFrontmatter(frontmatter) {
+    const lines = ["---"];
+    for (const [name, value] of Object.entries(frontmatter)) {
+      if (Array.isArray(value)) {
+        lines.push(`${name}:`);
+        for (const item of value) lines.push(`  - ${yamlScalar(item)}`);
+      } else if (typeof value === "string" && value.includes("\n")) {
+        lines.push(`${name}: |`);
+        for (const line of value.replace(/\n$/, "").split("\n")) lines.push(`  ${line}`);
+      } else {
+        lines.push(`${name}: ${yamlScalar(value)}`);
+      }
+    }
+    return lines.join("\n") + "\n---\n";
+  }
+
+  function parseScalar(text) {
+    const trimmed = text.trim();
+    if (trimmed === "true") return true;
+    if (trimmed === "false") return false;
+    if (trimmed === "null") return null;
+    if (/^-?\d+(\.\d+)?$/.test(trimmed)) return Number(trimmed);
+    if (trimmed.startsWith('"') || trimmed.startsWith("{") || trimmed.startsWith("[")) return JSON.parse(trimmed);
+    return trimmed;
+  }
+
+  function parseFrontmatter(markdown) {
+    const match = markdown.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/);
+    if (!match) throw new Error("SKILL.md must contain leading YAML frontmatter");
+    const lines = match[1].split(/\r?\n/);
+    const fields = {};
+    for (let index = 0; index < lines.length; index += 1) {
+      if (!lines[index].trim() || lines[index].trimStart().startsWith("#")) continue;
+      const field = lines[index].match(/^([A-Za-z_][A-Za-z0-9_]*):(?:\s*(.*))?$/);
+      if (!field) throw new Error(`unsupported frontmatter line: ${lines[index]}`);
+      const [, name, rest = ""] = field;
+      if (rest === "|") {
+        const block = [];
+        while (lines[index + 1] !== undefined && (lines[index + 1].startsWith("  ") || !lines[index + 1].trim())) {
+          const line = lines[++index];
+          block.push(line.startsWith("  ") ? line.slice(2) : "");
+        }
+        fields[name] = block.join("\n") + "\n";
+      } else if (rest === "") {
+        const values = [];
+        while (lines[index + 1]?.match(/^\s*-\s/)) values.push(parseScalar(lines[++index].replace(/^\s*-\s/, "")));
+        fields[name] = values;
+      } else {
+        fields[name] = parseScalar(rest);
+      }
+    }
+    return { fields, body: match[2] };
+  }
+
+  function safeParent(raw) {
+    if (raw === "" || raw === "." || raw === "./") return "";
+    if (typeof raw !== "string" || raw.includes("\\") || raw.startsWith("/")) throw new Error(`unsafe relativePath: ${raw}`);
+    const normalized = raw.replace(/^\.\//, "").replace(/\/$/, "");
+    if (normalized.split("/").some(part => !part || part === "." || part === "..")) throw new Error(`unsafe relativePath: ${raw}`);
+    return normalized;
+  }
+
+  function safeStem(raw) {
+    if (typeof raw !== "string" || !raw || raw === "." || raw === ".." || raw.includes("/") || raw.includes("\\")) {
+      throw new Error(`unsafe file stem: ${raw}`);
+    }
+    return raw;
+  }
+
+  function putFile(files, seen, path, content) {
+    const collisionKey = path.normalize("NFC").toLocaleLowerCase("en-US");
+    if (seen.has(collisionKey)) throw new Error(`two values project to the same file: ${path}`);
+    seen.add(collisionKey);
+    files[path] = content;
+  }
+
+  function split(resource, config = configuration) {
+    const files = {};
+    const seen = new Set();
+    const frontmatterValues = clone(resource);
+    pointerDelete(frontmatterValues, config.document.body);
+    for (const collection of config.collections) pointerDelete(frontmatterValues, collection.pointer);
+    const frontmatter = renderFrontmatter(frontmatterValues);
+    putFile(files, seen, config.document.path, frontmatter + (pointerGet(resource, config.document.body) ?? ""));
+    for (const collection of config.collections) {
+      for (const item of pointerGet(resource, collection.pointer) ?? []) {
+        const parent = safeParent(pointerGet(item, collection.path.parent));
+        const stem = safeStem(pointerGet(item, collection.path.stem));
+        const path = [parent, `${stem}${collection.path.extension}`].filter(Boolean).join("/");
+        putFile(files, seen, path, pointerGet(item, collection.content) ?? "");
+      }
+    }
+    return files;
+  }
+
+  function merge(files, config = configuration) {
+    const main = files[config.document.path];
+    if (main === undefined) throw new Error(`missing ${config.document.path}`);
+    const parsed = parseFrontmatter(main);
+    const resource = clone(parsed.fields);
+    for (const pointer of [config.document.body, ...config.collections.map(collection => collection.pointer)]) {
+      if (pointerGet(resource, pointer) !== undefined) throw new Error(`frontmatter conflicts with projected field: ${pointer}`);
+    }
+    pointerSet(resource, config.document.body, parsed.body);
+
+    const collection = config.collections[0];
+    const values = [];
+    for (const [path, content] of Object.entries(files).sort(([left], [right]) => left.localeCompare(right))) {
+      if (path === config.document.path) continue;
+      if (!path.endsWith(collection.path.extension)) throw new Error(`unrecognized file: ${path}`);
+      const withoutExtension = path.slice(0, -collection.path.extension.length);
+      const slash = withoutExtension.lastIndexOf("/");
+      const parent = slash < 0 ? "" : safeParent(withoutExtension.slice(0, slash));
+      const stem = safeStem(withoutExtension.slice(slash + 1));
+      const item = {};
+      pointerSet(item, collection.path.parent, parent ? `./${parent}` : "");
+      pointerSet(item, collection.path.stem, stem);
+      pointerSet(item, collection.content, content);
+      values.push(item);
+    }
+    pointerSet(resource, collection.pointer, values);
+    return resource;
+  }
+
+  function bundle(resources) {
+    return resources.map(resource => JSON.stringify(resource)).join("\n") + "\n";
+  }
+
+  function canonicalize(resource, config = configuration) {
+    const result = clone(resource);
+    for (const collection of config.collections) {
+      const values = pointerGet(result, collection.pointer);
+      if (collection.ordering === "path" && Array.isArray(values)) {
+        values.sort((left, right) => {
+          const leftPath = `${safeParent(pointerGet(left, collection.path.parent))}/${safeStem(pointerGet(left, collection.path.stem))}`;
+          const rightPath = `${safeParent(pointerGet(right, collection.path.parent))}/${safeStem(pointerGet(right, collection.path.stem))}`;
+          return leftPath.localeCompare(rightPath);
+        });
+      }
+    }
+    return result;
+  }
+
+  function unbundle(payload) {
+    return payload.split(/\r?\n/).filter(Boolean).map(line => JSON.parse(line));
+  }
+
+  function initialState() {
+    return {
+      source: clone(sample), files: {}, merged: null, payload: "", unbundled: [],
+      lastAction: "Loaded the embedded ESDiag-shaped Skill", error: null, invariant: "not checked"
+    };
+  }
+
+  function attempt(state, label, operation) {
+    const next = clone(state);
+    next.lastAction = label;
+    next.error = null;
+    try { operation(next); } catch (error) { next.error = error.message; }
+    return next;
+  }
+
+  function reduce(state, action) {
+    if (action.type === "RESET") return initialState();
+    return attempt(state, action.label ?? action.type, next => {
+      if (action.type === "SPLIT") next.files = split(next.merged ?? next.source);
+      if (action.type === "MERGE") next.merged = merge(next.files);
+      if (action.type === "EDIT_BODY") {
+        if (!next.files[configuration.document.path]) next.files = split(next.source);
+        next.files[configuration.document.path] += "\n## Local Git edit\n\nThis paragraph exists only because a human edited the canonical files.\n";
+      }
+      if (action.type === "ADD_REFERENCE") {
+        if (!next.files[configuration.document.path]) next.files = split(next.source);
+        next.files["references/local-check.md"] = "# Local Check\n\nAdded as a normal file.\n";
+      }
+      if (action.type === "ADD_COMMENT") {
+        if (!next.files[configuration.document.path]) next.files = split(next.source);
+        next.files[configuration.document.path] = next.files[configuration.document.path].replace("---\n", "---\n# This human comment is not represented by the API\n");
+      }
+      if (action.type === "ADD_FRONTMATTER_VALUE") {
+        if (!next.files[configuration.document.path]) next.files = split(next.source);
+        next.files[configuration.document.path] = next.files[configuration.document.path].replace("---\n", "---\ncompatibility: \"kibana-9.4\"\n");
+      }
+      if (action.type === "ROUND_TRIP") {
+        const resource = next.merged ?? next.source;
+        next.files = split(resource);
+        next.merged = merge(next.files);
+        next.invariant = equal(canonicalize(resource), next.merged) ? "exact canonical round trip" : "values differ";
+      }
+      if (action.type === "REVERSE_REFERENCES") next.source.referenced_content.reverse();
+      if (action.type === "UNSAFE_PATH") {
+        next.source.referenced_content.push({ name: "escape", relativePath: "../outside", content: "must not write" });
+        next.files = split(next.source);
+      }
+      if (action.type === "COLLISION") {
+        next.source.referenced_content.push({ name: "Nodes-Summary", relativePath: "./references", content: "case collision" });
+        next.files = split(next.source);
+      }
+      if (action.type === "UNKNOWN_FILE") {
+        if (!next.files[configuration.document.path]) next.files = split(next.source);
+        next.files["scripts/check.sh"] = "#!/bin/sh\n";
+        next.merged = merge(next.files);
+      }
+      if (action.type === "BUNDLE") {
+        const first = next.merged ?? merge(Object.keys(next.files).length ? next.files : split(next.source));
+        const second = clone(first);
+        second.id += "-copy";
+        second.name += " Copy";
+        next.payload = bundle([first, second]);
+      }
+      if (action.type === "UNBUNDLE") next.unbundled = unbundle(next.payload);
+      if (action.type === "LOAD_FILES") {
+        next.files = clone(action.files);
+        next.merged = null;
+        next.source = null;
+      }
+    });
+  }
+
+  return { configuration, sample, split, merge, bundle, unbundle, canonicalize, initialState, reduce, equal };
+})();
+
+const configYaml = `filesystem_projection:
+  kind: directory
+  unknown_files: conflict
+  document:
+    path: SKILL.md
+    format: markdown
+    frontmatter:
+      format: yaml
+      passthrough: true
+    body: /content
+  collections:
+    - pointer: /referenced_content
+      format: text
+      ordering: path
+      path:
+        parent: /relativePath
+        stem: /name
+        extension: .md
+        parent_style: dot_slash
+      content: /content`;
+
+const actions = [
+  ["Split object to files", "SPLIT"],
+  ["Edit SKILL.md", "EDIT_BODY"],
+  ["Add reference file", "ADD_REFERENCE"],
+  ["Add frontmatter value", "ADD_FRONTMATTER_VALUE"],
+  ["Add frontmatter comment", "ADD_COMMENT"],
+  ["Merge files to object", "MERGE"],
+  ["Check exact round trip", "ROUND_TRIP"],
+  ["Reverse API reference order", "REVERSE_REFERENCES"],
+  ["Bundle two objects", "BUNDLE"],
+  ["Unbundle NDJSON", "UNBUNDLE"],
+  ["Try unsafe path", "UNSAFE_PATH"],
+  ["Try filename collision", "COLLISION"],
+  ["Try unknown file", "UNKNOWN_FILE"],
+  ["Reset", "RESET"]
+];
+
+const scenarios = [
+  {
+    name: "One object, many files",
+    description: "Prove that an API object becomes a recognizable Agent Skill directory and merges back without loss.",
+    steps: [["Reset", "RESET"], ["Split the API object", "SPLIT"], ["Merge the directory", "MERGE"], ["Verify the invariant", "ROUND_TRIP"]]
+  },
+  {
+    name: "Git-first edit",
+    description: "Edit ordinary Markdown, then reconstruct the JSON body Taku would send.",
+    steps: [["Reset", "RESET"], ["Split", "SPLIT"], ["Edit SKILL.md", "EDIT_BODY"], ["Add a reference", "ADD_REFERENCE"], ["Merge", "MERGE"]]
+  },
+  {
+    name: "Projection conflicts",
+    description: "Unsafe remote paths, case-folded collisions, and unrecognized local files must fail instead of being silently normalized or dropped.",
+    steps: [["Reset", "RESET"], ["Reject traversal", "UNSAFE_PATH"], ["Reset", "RESET"], ["Reject collision", "COLLISION"], ["Reset", "RESET"], ["Reject unknown file", "UNKNOWN_FILE"]]
+  },
+  {
+    name: "Frontmatter passthrough",
+    description: "The projection has no field list. Any frontmatter value not claimed by the Markdown body or file collection passes directly into the Resource Object and back.",
+    steps: [["Reset", "RESET"], ["Split", "SPLIT"], ["Add an unknown frontmatter value", "ADD_FRONTMATTER_VALUE"], ["Merge", "MERGE"], ["Split again", "SPLIT"]]
+  },
+  {
+    name: "Frontmatter fidelity",
+    description: "All YAML values pass through, but comments and lexical formatting have no equivalent in the API object. Merging accepts comments, while a later split necessarily renders normalized frontmatter.",
+    steps: [["Reset", "RESET"], ["Split", "SPLIT"], ["Add a YAML comment", "ADD_COMMENT"], ["Merge", "MERGE"], ["Split again", "SPLIT"]]
+  },
+  {
+    name: "Collection ordering",
+    description: "A directory has no array order. The projection declares path ordering, so a differently ordered API array converges to one stable canonical order.",
+    steps: [["Reset", "RESET"], ["Reverse API order", "REVERSE_REFERENCES"], ["Split", "SPLIT"], ["Merge in path order", "MERGE"], ["Verify canonical equality", "ROUND_TRIP"]]
+  },
+  {
+    name: "Compose with NDJSON",
+    description: "Splitting and merging remain one-Resource operations. Bundling and unbundling independently cross the collection boundary.",
+    steps: [["Reset", "RESET"], ["Split", "SPLIT"], ["Merge", "MERGE"], ["Bundle two objects", "BUNDLE"], ["Unbundle the payload", "UNBUNDLE"]]
+  }
+];
+
+let state = ProjectionModel.initialState();
+let activeScenario = 0;
+
+function dispatch(type, label, extra = {}) {
+  state = ProjectionModel.reduce(state, { type, label, ...extra });
+  render();
+}
+
+function render() {
+  const fileEntries = Object.entries(state.files);
+  document.querySelector("#status").innerHTML = [
+    ["Last action", state.lastAction],
+    ["Canonical files", String(fileEntries.length)],
+    ["Merged object", state.merged ? state.merged.id ?? "present" : "not present"],
+    ["Round trip", state.invariant],
+    ["Conflict", state.error ?? "none", state.error ? "error" : ""]
+  ].map(([name, value, klass = ""]) => `<div class="metric ${klass}"><strong>${escapeHtml(value)}</strong><span>${escapeHtml(name)}</span></div>`).join("");
+
+  document.querySelector("#files").innerHTML = fileEntries.length
+    ? fileEntries.sort(([a], [b]) => a.localeCompare(b)).map(([path, content], index) => `<details ${index === 0 ? "open" : ""}><summary>${escapeHtml(path)}</summary><pre>${escapeHtml(content)}</pre></details>`).join("")
+    : '<p class="note">No files yet. Split the Resource Object or load a directory.</p>';
+  document.querySelector("#object").textContent = JSON.stringify(state.merged ?? state.source ?? { note: "Merge the loaded files to construct an object" }, null, 2);
+  document.querySelector("#payload").textContent = state.payload || "No bundled operation payload yet.";
+  if (state.unbundled.length) document.querySelector("#payload").textContent += `\n\nUnbundled ${state.unbundled.length} Resource Objects: ${state.unbundled.map(value => value.id).join(", ")}`;
+  document.querySelector("#configuration").textContent = configYaml;
+
+  document.querySelectorAll("[data-scenario]").forEach((button, index) => button.classList.toggle("active", index === activeScenario));
+  document.querySelectorAll(".walkthrough").forEach((panel, index) => panel.classList.toggle("hidden", index !== activeScenario));
+}
+
+function escapeHtml(value) {
+  return String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
+}
+
+document.querySelector("#controls").innerHTML = actions.map(([label, type], index) => `<button class="${index === 0 ? "primary" : ""}" data-action="${type}">${label}</button>`).join("");
+document.querySelectorAll("[data-action]").forEach(button => button.addEventListener("click", () => dispatch(button.dataset.action, button.textContent)));
+
+document.querySelector("#tabs").innerHTML = scenarios.map((scenario, index) => `<button data-scenario="${index}">${scenario.name}</button>`).join("");
+document.querySelector("#walkthroughs").innerHTML = scenarios.map((scenario, scenarioIndex) => `
+  <article class="walkthrough ${scenarioIndex ? "hidden" : ""}">
+    <h3>${scenario.name}</h3>
+    <p>${scenario.description}</p>
+    <div class="steps">${scenario.steps.map(([label, type]) => `<button data-step="${type}">${label}</button>`).join("")}</div>
+  </article>`).join("");
+document.querySelectorAll("[data-scenario]").forEach(button => button.addEventListener("click", () => { activeScenario = Number(button.dataset.scenario); state = ProjectionModel.initialState(); render(); }));
+document.querySelectorAll("[data-step]").forEach(button => button.addEventListener("click", () => dispatch(button.dataset.step, button.textContent)));
+
+document.querySelector("#directory-input").addEventListener("change", async event => {
+  const selected = [...event.target.files];
+  const skill = selected.find(file => file.name === "SKILL.md");
+  if (!skill) return dispatch("LOAD_FILES", "Local directory rejected", { files: { "ERROR.txt": "No SKILL.md was selected" } });
+  const prefix = skill.webkitRelativePath.slice(0, -"SKILL.md".length);
+  const files = {};
+  for (const file of selected.filter(file => file.webkitRelativePath.startsWith(prefix))) {
+    files[file.webkitRelativePath.slice(prefix.length)] = await file.text();
+  }
+  dispatch("LOAD_FILES", `Loaded ${Object.keys(files).length} local files`, { files });
+});
+
+render();
+</script>
+</body>
+</html>

@@ -1,7 +1,7 @@
 use crate::application::load_installed;
 use crate::canonical::{
-    Selection, list_inventory, reject_symlink_components, resource_directories,
-    resource_directory_in_namespace, safe_filename, write_resource,
+    Selection, list_inventory, reject_symlink_components, remove_canonical_resource,
+    resource_directories, resource_directory_in_namespace, safe_filename, write_canonical_resource,
 };
 use crate::observe::{cache_path, load_observation, remote_list};
 use crate::project::current_environment;
@@ -118,19 +118,23 @@ pub fn add_remote(
                 format!("{}-{}", name, crate::canonical::short_id(&item.id))
             }
         };
-        let path = resource_directory_in_namespace(
+        let directory = resource_directory_in_namespace(
             &root,
             &project,
             &item.environment,
             &item.target,
             item.namespace.as_deref(),
             &item.resource_type,
-        )
-        .join(format!("{}.json", safe_filename(&display)));
+        );
+        let path = if rt.filesystem.is_some() {
+            directory.join(safe_filename(&display))
+        } else {
+            directory.join(format!("{}.json", safe_filename(&display)))
+        };
         if path.exists() {
             bail!("Resource destination already exists: {}", path.display());
         }
-        write_resource(&path, &item.value)?;
+        write_canonical_resource(&path, &item.value, rt)?;
         out.push(LifecycleResult {
             environment: item.environment,
             target: item.target,
@@ -192,7 +196,7 @@ pub fn remove(root: &Path, selection: &Selection) -> Result<Vec<LifecycleResult>
             source_path: item.path.clone(),
         };
         fs::write(&marker_path, serde_yaml::to_string(&marker)?)?;
-        fs::remove_file(&source)?;
+        remove_canonical_resource(&source)?;
         out.push(LifecycleResult {
             environment: environment.clone(),
             target: item.target,
@@ -211,7 +215,7 @@ pub fn forget(root: &Path, selection: &Selection) -> Result<Vec<LifecycleResult>
     let environment = current_environment(&root, &project, selection.environment.as_deref())?;
     let mut out = Vec::new();
     for item in list_inventory(&root, selection)? {
-        fs::remove_file(root.join(&item.path))?;
+        remove_canonical_resource(&root.join(&item.path))?;
         out.push(LifecycleResult {
             environment: environment.clone(),
             target: item.target,
@@ -463,6 +467,7 @@ pub fn promote(
         if source_target.application != destination_target.application {
             bail!("Promotion Targets {from} and {to} use incompatible Applications");
         }
+        let application = load_installed(&root, &destination_target.application)?;
         let selection = Selection {
             environment: Some(source.clone()),
             targets: vec![from.clone()],
@@ -488,7 +493,8 @@ pub fn promote(
                 &item.resource_type,
             )
             .join(filename);
-            write_resource(&destination_path, &item.value)?;
+            let resource_type = &application.target_profile.resource_types[&item.resource_type];
+            write_canonical_resource(&destination_path, &item.value, resource_type)?;
             out.push(PromotionResult {
                 from_environment: source.clone(),
                 to_environment: destination.clone(),
@@ -562,7 +568,8 @@ pub fn promote_projects(
             &item.resource_type,
         )
         .join(filename);
-        write_resource(&path, &item.value)?;
+        let resource_type = &destination_app.target_profile.resource_types[&item.resource_type];
+        write_canonical_resource(&path, &item.value, resource_type)?;
         out.push(PromotionResult {
             from_environment: source_environment.clone(),
             to_environment: destination_environment.clone(),

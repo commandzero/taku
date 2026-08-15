@@ -603,23 +603,45 @@ fn validate_resources_for(
                         "updated Application changes namespace layout for managed Resource Type {type_name}"
                     );
                 }
+                if serde_yaml::to_string(&updated_type.filesystem)?
+                    != serde_yaml::to_string(&installed_type.filesystem)?
+                {
+                    bail!(
+                        "updated Application changes filesystem projection for managed Resource Type {type_name}"
+                    );
+                }
                 for (_, directory) in directories {
                     for entry in fs::read_dir(directory)? {
                         let path = entry?.path();
-                        if !path
-                            .extension()
-                            .and_then(|extension| extension.to_str())
-                            .is_some_and(|extension| {
-                                matches!(extension, "json" | "json5" | "yaml" | "yml")
-                            })
-                            || path
-                                .file_name()
-                                .and_then(|value| value.to_str())
-                                .is_some_and(|value| value.ends_with(".delete.yml"))
-                        {
-                            continue;
+                        let metadata = fs::symlink_metadata(&path)?;
+                        if metadata.file_type().is_symlink() {
+                            bail!(
+                                "symlinked Resource input is not allowed: {}",
+                                path.display()
+                            );
                         }
-                        let value = crate::canonical::parse_resource(&path)?;
+                        let value = if let Some(projection) = &updated_type.filesystem {
+                            if !metadata.is_dir() {
+                                continue;
+                            }
+                            crate::projection::merge(&path, projection)?
+                        } else {
+                            if !metadata.is_file()
+                                || !path
+                                    .extension()
+                                    .and_then(|extension| extension.to_str())
+                                    .is_some_and(|extension| {
+                                        matches!(extension, "json" | "json5" | "yaml" | "yml")
+                                    })
+                                || path
+                                    .file_name()
+                                    .and_then(|value| value.to_str())
+                                    .is_some_and(|value| value.ends_with(".delete.yml"))
+                            {
+                                continue;
+                            }
+                            crate::canonical::parse_resource(&path)?
+                        };
                         if crate::canonical::pointer_string(&value, &updated_type.id.pointer)
                             .is_none()
                         {
@@ -663,6 +685,7 @@ pub fn parse_definition(expected_name: &str, bytes: &[u8]) -> Result<Application
         }
         validate_operations(&resource_type.operations, name)?;
         validate_transformations(&resource_type.transformations, name)?;
+        validate_filesystem(resource_type, name)?;
         for dependency in &resource_type.dependencies {
             if !definition
                 .target_profile
@@ -780,6 +803,58 @@ fn validate_operations(operations: &crate::Operations, owner: &str) -> Result<()
     .flatten()
     {
         validate_operation(operation, owner)?;
+    }
+    Ok(())
+}
+
+fn validate_filesystem(resource_type: &crate::ResourceType, owner: &str) -> Result<()> {
+    let Some(filesystem) = &resource_type.filesystem else {
+        return Ok(());
+    };
+    if filesystem.split != filesystem.merge {
+        bail!("Resource Type {owner} split and merge formats must match");
+    }
+    let frontmatter = filesystem
+        .frontmatter_markdown
+        .as_ref()
+        .context("frontmatter_markdown filesystem format requires its configuration")?;
+    let document = Path::new(&frontmatter.document);
+    if document.is_absolute()
+        || document.components().count() != 1
+        || frontmatter.document.is_empty()
+    {
+        bail!("Resource Type {owner} frontmatter document must be one relative path segment");
+    }
+    for (label, pointer) in [
+        ("body_pointer", &frontmatter.body_pointer),
+        (
+            "referenced_files.pointer",
+            &frontmatter.referenced_files.pointer,
+        ),
+        (
+            "referenced_files.path_pointer",
+            &frontmatter.referenced_files.path_pointer,
+        ),
+        (
+            "referenced_files.name_pointer",
+            &frontmatter.referenced_files.name_pointer,
+        ),
+        (
+            "referenced_files.content_pointer",
+            &frontmatter.referenced_files.content_pointer,
+        ),
+    ] {
+        if !pointer.starts_with('/') {
+            bail!("Resource Type {owner} {label} must be a JSON pointer");
+        }
+    }
+    let extension = &frontmatter.referenced_files.extension;
+    if extension.is_empty()
+        || extension.starts_with('.')
+        || extension.contains('/')
+        || extension.contains('\\')
+    {
+        bail!("Resource Type {owner} referenced file extension is invalid");
     }
     Ok(())
 }

@@ -1,7 +1,7 @@
 use crate::application::load_installed;
 use crate::canonical::{
     InventoryEntry, Selection, canonical_bytes, list_inventory, owned_value, pointer_string,
-    write_resource,
+    write_canonical_resource,
 };
 use crate::lifecycle::{DeletionMarker, deletion_markers};
 use crate::observe::{binding, cache_path, hash, load_observation, save_observation};
@@ -791,7 +791,11 @@ fn execute_resource(
                     "creation_conflict"
                 } else {
                     let _guard = persistence.lock().unwrap();
-                    write_resource(&root.join(&task.item.path), &values[0])?;
+                    write_canonical_resource(
+                        &root.join(&task.item.path),
+                        &values[0],
+                        &task.resource_type,
+                    )?;
                     let mut observation = load_observation(&task.observation_path)?;
                     observation.resources.remove(&task.item.id);
                     save_observation(&task.observation_path, &observation)?;

@@ -1,5 +1,8 @@
 use crate::application::load_installed;
-use crate::canonical::{Selection, canonical_bytes, list_inventory, owned_value, write_resource};
+use crate::canonical::{
+    Selection, canonical_bytes, list_inventory, owned_value, parse_resource,
+    remove_canonical_resource, write_canonical_resource,
+};
 use crate::observe::{binding, cache_path, hash, load_observation, save_observation};
 use crate::project::current_environment;
 use crate::variants::{baseline_from, baseline_path, save_baseline};
@@ -9,7 +12,6 @@ use chrono::Utc;
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::BTreeMap;
-use std::fs;
 use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug, Serialize)]
@@ -220,7 +222,7 @@ pub fn pull(
     let environment = current_environment(&root, &project, selection.environment.as_deref())?;
     let mut result = Vec::new();
     let mut observations = std::collections::BTreeMap::new();
-    let mut mutations: Vec<(std::path::PathBuf, Option<Value>)> = Vec::new();
+    let mut mutations: Vec<(std::path::PathBuf, Option<Value>, crate::ResourceType)> = Vec::new();
     let mut baselines = std::collections::BTreeMap::new();
     let mut has_conflict = false;
     for item in list_inventory(&root, selection)? {
@@ -254,7 +256,7 @@ pub fn pull(
                 .unwrap_or(MissingPolicy::Conflict)
             {
                 MissingPolicy::Delete => {
-                    mutations.push((root.join(&item.path), None));
+                    mutations.push((root.join(&item.path), None, resource_type.clone()));
                     "deleted"
                 }
                 MissingPolicy::Conflict => {
@@ -277,7 +279,11 @@ pub fn pull(
                     "local_only"
                 } else if !local_changed {
                     let remote_hash = hash(&canonical_bytes(&remote_at_current)?);
-                    mutations.push((root.join(&item.path), Some(remote_at_current.clone())));
+                    mutations.push((
+                        root.join(&item.path),
+                        Some(remote_at_current.clone()),
+                        resource_type.clone(),
+                    ));
                     resource.local_hash = remote_hash;
                     resource.local_value = Some(remote_at_current);
                     "pulled"
@@ -295,7 +301,7 @@ pub fn pull(
                 if current_hash == remote_hash {
                     "unchanged"
                 } else if current_hash == resource.local_hash {
-                    mutations.push((root.join(&item.path), Some(observed)));
+                    mutations.push((root.join(&item.path), Some(observed), resource_type.clone()));
                     resource.local_hash = remote_hash;
                     "pulled"
                 } else if remote_hash == resource.local_hash {
@@ -339,32 +345,40 @@ pub fn pull(
     Ok(result)
 }
 
-fn apply_pull_mutations(mutations: &[(std::path::PathBuf, Option<Value>)]) -> Result<()> {
-    let mut snapshots = Vec::new();
-    for (path, value) in mutations {
+fn apply_pull_mutations(
+    mutations: &[(std::path::PathBuf, Option<Value>, crate::ResourceType)],
+) -> Result<()> {
+    let mut snapshots: Vec<(std::path::PathBuf, Option<Value>, crate::ResourceType)> = Vec::new();
+    for (path, value, resource_type) in mutations {
         let before = if path.exists() {
-            Some(fs::read(path)?)
+            Some(if let Some(projection) = &resource_type.filesystem {
+                crate::projection::merge(path, projection)?
+            } else {
+                parse_resource(path)?
+            })
         } else {
             None
         };
         let applied = match value {
-            Some(value) => write_resource(path, value),
-            None => fs::remove_file(path).map_err(Into::into),
+            Some(value) => write_canonical_resource(path, value, resource_type),
+            None => remove_canonical_resource(path),
         };
         if let Err(error) = applied {
-            for (applied_path, contents) in snapshots.iter().rev() {
+            for (applied_path, contents, applied_type) in snapshots.iter().rev() {
                 match contents {
-                    Some(contents) => {
-                        let _ = fs::write(applied_path, contents);
+                    Some(value) => {
+                        let _ = write_canonical_resource(applied_path, value, applied_type);
                     }
                     None => {
-                        let _ = fs::remove_file(applied_path);
+                        if applied_path.exists() {
+                            let _ = remove_canonical_resource(applied_path);
+                        }
                     }
                 }
             }
             return Err(error);
         }
-        snapshots.push((path.clone(), before));
+        snapshots.push((path.clone(), before, resource_type.clone()));
     }
     Ok(())
 }

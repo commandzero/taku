@@ -77,6 +77,39 @@ fn run_at(project: &std::path::Path, authorization: &str, args: &[&str]) -> Valu
     serde_json::from_slice(&output.stdout).unwrap()
 }
 
+fn directory_files(root: &std::path::Path) -> std::collections::BTreeMap<String, Vec<u8>> {
+    fn visit(
+        root: &std::path::Path,
+        directory: &std::path::Path,
+        files: &mut std::collections::BTreeMap<String, Vec<u8>>,
+    ) {
+        for entry in std::fs::read_dir(directory).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                visit(root, &path, files);
+            } else {
+                files.insert(
+                    path.strip_prefix(root)
+                        .unwrap()
+                        .to_string_lossy()
+                        .into_owned(),
+                    std::fs::read(path).unwrap(),
+                );
+            }
+        }
+    }
+    let mut files = std::collections::BTreeMap::new();
+    visit(root, root, &mut files);
+    files
+}
+
+fn skill_parts(bytes: &[u8]) -> (serde_yaml::Value, String) {
+    let markdown = std::str::from_utf8(bytes).unwrap();
+    let rest = markdown.strip_prefix("---\n").unwrap();
+    let (frontmatter, body) = rest.split_once("\n---\n").unwrap();
+    (serde_yaml::from_str(frontmatter).unwrap(), body.to_owned())
+}
+
 fn project(application: &str, target: &str, url: &str, authorization: &str) -> TempDir {
     let project = tempfile::tempdir().unwrap();
     assert!(
@@ -415,6 +448,24 @@ fn round_trips_the_complete_esdiag_resource_corpus() {
             .exists(),
         "the copied ESDiag source corpus is missing"
     );
+    let skill_directory = project.join("kb/esdiag/skills/agentic-diagnostic-assistant");
+    if !skill_directory.join("SKILL.md").is_file() {
+        run_at(
+            &project,
+            &authorization,
+            &[
+                "add",
+                "--target",
+                "kb",
+                "--namespace",
+                "esdiag",
+                "--type",
+                "skills",
+                "--id",
+                "agentic-diagnostic-assistant",
+            ],
+        );
+    }
 
     let validated = run_at(&project, &authorization, &["validate"]);
     assert_eq!(validated["result"]["valid"], true);
@@ -439,10 +490,36 @@ fn round_trips_the_complete_esdiag_resource_corpus() {
             && resource.get("namespace").is_none()
             && resource["type"] == "spaces"
     }));
+    let skill = resources
+        .iter()
+        .find(|resource| {
+            resource["target"] == "kb"
+                && resource["namespace"] == "esdiag"
+                && resource["type"] == "skills"
+        })
+        .expect("the ESDiag Skill should be managed");
+    let skill_path = skill["path"].as_str().unwrap();
+    assert!(project.join(skill_path).join("SKILL.md").is_file());
 
     run_at(&project, &authorization, &["--target", "es", "fetch"]);
     run_at(&project, &authorization, &["--target", "kb", "fetch"]);
     run_at(&project, &authorization, &["pull", "--yes"]);
+
+    let source_skill =
+        project.join("esdiag-assets/kibana/esdiag/skills/agentic-diagnostic-assistant");
+    let mut source_files = directory_files(&source_skill);
+    let mut projected_files = directory_files(&project.join(skill_path));
+    let source_document = source_files.remove("SKILL.md").unwrap();
+    let projected_document = projected_files.remove("SKILL.md").unwrap();
+    assert_eq!(
+        source_files, projected_files,
+        "Kibana Skill referenced files must round trip exactly"
+    );
+    assert_eq!(
+        skill_parts(&source_document),
+        skill_parts(&projected_document),
+        "Kibana Skill frontmatter values and Markdown body must round trip"
+    );
 
     let status = run_at(&project, &authorization, &["status"]);
     assert_eq!(status["result"].as_array().unwrap().len(), 130);

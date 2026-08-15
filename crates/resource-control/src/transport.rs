@@ -1,5 +1,5 @@
 use crate::canonical::{pointer_string, sort_value};
-use crate::{ApplicationDefinition, Framing, Operation, Outcome, ResourceType, TargetConfig};
+use crate::{ApplicationDefinition, Operation, Outcome, PayloadFormat, ResourceType, TargetConfig};
 use anyhow::{Context, Result, bail};
 use redact::Secret;
 use reqwest::blocking::{Client, Response};
@@ -139,8 +139,8 @@ pub fn execute(
         request = request.header(name, value.expose_secret());
     }
     if let Some(values) = request_body.as_deref() {
-        let framing = operation.request_framing.or(operation.framing);
-        request = if framing == Some(Framing::Ndjson) {
+        let framing = operation.bundle.or(operation.framing);
+        request = if framing == Some(PayloadFormat::Ndjson) {
             let mut framed = String::new();
             for value in values {
                 framed.push_str(&serde_json::to_string(value)?);
@@ -149,7 +149,7 @@ pub fn execute(
             request
                 .body(framed)
                 .header("content-type", "application/x-ndjson")
-        } else if framing == Some(Framing::MultipartNdjson) {
+        } else if framing == Some(PayloadFormat::MultipartNdjson) {
             let mut framed = String::new();
             for value in values {
                 framed.push_str(&serde_json::to_string(value)?);
@@ -297,7 +297,7 @@ fn map_response(
             if bytes.is_empty() {
                 return Ok(RemoteResult::Success(Vec::new()));
             }
-            let mut values = parse_values(&bytes, operation.response_framing.or(operation.framing))
+            let mut values = parse_values(&bytes, operation.unbundle.or(operation.framing))
                 .map_err(|_| {
                     anyhow::anyhow!("successful remote response could not be parsed safely")
                 })?;
@@ -365,9 +365,9 @@ fn conventional_outcome(status: StatusCode) -> Outcome {
     }
 }
 
-fn parse_values(bytes: &[u8], framing: Option<Framing>) -> Result<Vec<Value>> {
+fn parse_values(bytes: &[u8], framing: Option<PayloadFormat>) -> Result<Vec<Value>> {
     let text = std::str::from_utf8(bytes).context("remote response is not UTF-8")?;
-    if framing == Some(Framing::Ndjson) {
+    if framing == Some(PayloadFormat::Ndjson) {
         let mut values = Vec::new();
         for line in text.lines().filter(|l| !l.trim().is_empty()) {
             values.push(json5::from_str(line).context("malformed NDJSON line")?);

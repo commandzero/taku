@@ -81,9 +81,23 @@ pub fn list_inventory(root: &Path, selection: &Selection) -> Result<Vec<Inventor
                             path.display()
                         );
                     }
-                    if !metadata.is_file() || is_deletion_marker(&path) {
-                        continue;
-                    }
+                    let value = if let Some(projection) = &resource_type.filesystem {
+                        if !metadata.is_dir() {
+                            continue;
+                        }
+                        crate::projection::merge(&path, projection)?
+                    } else {
+                        if !metadata.is_file() || is_deletion_marker(&path) {
+                            continue;
+                        }
+                        if !matches!(
+                            path.extension().and_then(|e| e.to_str()),
+                            Some("json" | "json5" | "yaml" | "yml")
+                        ) {
+                            continue;
+                        }
+                        parse_resource(&path)?
+                    };
                     let encoded_name = path
                         .file_name()
                         .and_then(|name| name.to_str())
@@ -93,13 +107,6 @@ pub fn list_inventory(root: &Path, selection: &Selection) -> Result<Vec<Inventor
                     if decoded.contains("..") || decoded.contains('/') || decoded.contains('\\') {
                         bail!("Resource filename contains a traversal escape: {encoded_name}");
                     }
-                    if !matches!(
-                        path.extension().and_then(|e| e.to_str()),
-                        Some("json" | "json5" | "yaml" | "yml")
-                    ) {
-                        continue;
-                    }
-                    let value = parse_resource(&path)?;
                     let sensitive_fields = resource_type
                         .sensitive_fields
                         .iter()
@@ -303,6 +310,36 @@ pub fn write_resource(path: &Path, value: &Value) -> Result<()> {
     let temporary = path.with_extension("taku.tmp");
     fs::write(&temporary, text)?;
     fs::rename(temporary, path)?;
+    Ok(())
+}
+
+pub(crate) fn write_canonical_resource(
+    path: &Path,
+    value: &Value,
+    resource_type: &crate::ResourceType,
+) -> Result<()> {
+    if let Some(projection) = &resource_type.filesystem {
+        crate::projection::split(path, projection, value)
+    } else {
+        write_resource(path, value)
+    }
+}
+
+pub(crate) fn remove_canonical_resource(path: &Path) -> Result<()> {
+    let metadata = fs::symlink_metadata(path)?;
+    if metadata.file_type().is_symlink() {
+        bail!("symlinked Resource cannot be removed: {}", path.display());
+    }
+    if metadata.is_dir() {
+        fs::remove_dir_all(path)?;
+    } else if metadata.is_file() {
+        fs::remove_file(path)?;
+    } else {
+        bail!(
+            "Resource is not a regular file or directory: {}",
+            path.display()
+        );
+    }
     Ok(())
 }
 

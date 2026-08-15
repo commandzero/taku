@@ -6,6 +6,7 @@ mod lifecycle;
 mod model;
 mod observe;
 mod project;
+mod projection;
 mod provider;
 mod reconcile;
 mod scheduler;

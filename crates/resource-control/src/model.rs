@@ -168,11 +168,46 @@ pub struct ResourceType {
     pub sensitive_fields: Vec<String>,
     #[serde(default)]
     pub transformations: Vec<Transformation>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub filesystem: Option<FilesystemProjection>,
     #[serde(default)]
     pub dependencies: Vec<String>,
     #[serde(default)]
     pub variants: Vec<ResourceVariant>,
     pub operations: Operations,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FilesystemProjection {
+    pub split: FilesystemFormat,
+    pub merge: FilesystemFormat,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub frontmatter_markdown: Option<FrontmatterMarkdown>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum FilesystemFormat {
+    FrontmatterMarkdown,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FrontmatterMarkdown {
+    pub document: String,
+    pub body_pointer: String,
+    pub referenced_files: ReferencedFiles,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReferencedFiles {
+    pub pointer: String,
+    pub path_pointer: String,
+    pub name_pointer: String,
+    pub content_pointer: String,
+    pub extension: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -273,12 +308,13 @@ pub struct Operation {
     pub transformations: Vec<Transformation>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub extract: Option<String>,
+    #[serde(alias = "request_framing", skip_serializing_if = "Option::is_none")]
+    pub bundle: Option<PayloadFormat>,
+    #[serde(alias = "response_framing", skip_serializing_if = "Option::is_none")]
+    pub unbundle: Option<PayloadFormat>,
+    /// Backward-compatible shorthand used by schema version 1 definitions.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub framing: Option<Framing>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub request_framing: Option<Framing>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub response_framing: Option<Framing>,
+    pub framing: Option<PayloadFormat>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub body: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -308,7 +344,7 @@ pub enum Cardinality {
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum Framing {
+pub enum PayloadFormat {
     Json,
     Ndjson,
     MultipartNdjson,

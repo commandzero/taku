@@ -51,7 +51,7 @@ Tracked Taku metadata lives under `.taku/`:
 └── baselines/<environment>/<target>.yml
 ```
 
-Context, Application Source cache, Observed State, and Push Journals are ignored. In a Single layout, non-namespaced Resources use `target/type/name.json`; in a Multi layout they use `environment/target/type/name.json`. Resource Types that opt into namespacing use `target/namespace/type/name.json` or `environment/target/namespace/type/name.json`, and represent the default Namespace with a literal `default` directory. The stable Resource ID is stored in the payload, never inferred from the filename. Namespace lifecycle is managed by an ordinary non-namespaced Resource Type defined by the Application, such as Kibana `spaces`.
+Context, Application Source cache, Observed State, and Push Journals are ignored. In a Single layout, non-namespaced Resources normally use `target/type/name.json`; in a Multi layout they normally use `environment/target/type/name.json`. Resource Types that opt into namespacing add an explicit Namespace segment, including a literal `default` directory. A Resource Type may instead configure a Filesystem Projection, making one Resource a directory tree such as `target/namespace/skills/skill-id/SKILL.md`. The stable Resource ID remains in the merged Resource Object and is never inferred from the filesystem path. Namespace lifecycle is managed by an ordinary non-namespaced Resource Type defined by the Application, such as Kibana `spaces`.
 
 Project metadata defines Environments and their named Targets:
 
@@ -97,7 +97,34 @@ The lifecycle tests create uniquely named remote fixtures, manage them through t
 
 ## Application definitions
 
-An Application is a strictly validated Target Profile and Resource Type Catalog. Each Resource Type declares identity, optional namespacing, display-name policy, lifecycle Operations, actual HTTP methods, paths, headers and body templates, One/Many cardinality, independent request/response framing, transformations, write intent, retry safety, scheduling class, and dependencies. Many writes are bundled at runtime, including multipart NDJSON payloads. HTTP verbs do not imply lifecycle semantics.
+An Application is a strictly validated Target Profile and Resource Type Catalog. Each Resource Type declares identity, optional namespacing, display-name policy, lifecycle Operations, actual HTTP methods, paths, headers and body templates, One/Many cardinality, independent Bundling and Unbundling, transformations, write intent, retry safety, scheduling class, and dependencies. Many writes are bundled at runtime, including multipart NDJSON payloads. HTTP verbs do not imply lifecycle semantics.
+
+Filesystem Projection is separate from operation encoding. `split` converts one Resource Object into its canonical file tree; `merge` reconstructs it. `bundle` converts one or more Resource Objects into a request payload; `unbundle` decodes a response payload. Kibana Skills use the built-in `frontmatter_markdown` projection, while Kibana Saved Objects use NDJSON Unbundling and multipart-NDJSON Bundling.
+
+```yaml
+skills:
+  id: { pointer: /id, scope: universal }
+  display_name: { pointer: /name, strategy: id, unique: true }
+  filesystem:
+    split: frontmatter_markdown
+    merge: frontmatter_markdown
+    frontmatter_markdown:
+      document: SKILL.md
+      body_pointer: /content
+      referenced_files:
+        pointer: /referenced_content
+        path_pointer: /relativePath
+        name_pointer: /name
+        content_pointer: /content
+        extension: md
+  operations:
+    list:
+      method: GET
+      path: /api/agent_builder/skills
+      cardinality: many
+```
+
+For `frontmatter_markdown`, every unclaimed YAML frontmatter value passes through to the Resource Object. The Markdown body and referenced files are the only extracted fields. Splitting serializes passthrough values back to frontmatter; comments and original YAML formatting are not part of the API round trip.
 
 Update Mutation Mode is configured per Resource Type. Replace compares and owns the complete canonical document; Patch compares, pulls, and writes only the fields represented by the desired Resource. Target sensitive fields may tighten an Application's pre-persistence drops for a named Resource Type, but cannot remove identity or display-name state.
 

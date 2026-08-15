@@ -1,7 +1,7 @@
 schema_version: 1
 application:
   name: kibana
-  version: "1.1.0"
+  version: "1.2.0"
 target_profile:
   headers:
     accept: application/json
@@ -39,8 +39,7 @@ target_profile:
           path: "/s/{namespace}/api/saved_objects/_export"
           default_namespace_path: "/api/saved_objects/_export"
           cardinality: many
-          request_framing: json
-          response_framing: ndjson
+          unbundle: ndjson
           skip_unidentified: true
           body: { objects: [{ id: "{id}", type: "{type}" }] }
         list:
@@ -48,8 +47,7 @@ target_profile:
           path: "/s/{namespace}/api/saved_objects/_export"
           default_namespace_path: "/api/saved_objects/_export"
           cardinality: many
-          request_framing: json
-          response_framing: ndjson
+          unbundle: ndjson
           skip_unidentified: true
           body: { type: ["*"] }
         upsert:
@@ -57,7 +55,7 @@ target_profile:
           path: "/s/{namespace}/api/saved_objects/_import?overwrite=true"
           default_namespace_path: "/api/saved_objects/_import?overwrite=true"
           cardinality: many
-          request_framing: multipart_ndjson
+          bundle: multipart_ndjson
         delete:
           method: DELETE
           path: "/s/{namespace}/api/saved_objects/{type}/{id}"
@@ -140,10 +138,22 @@ target_profile:
         delete: { method: DELETE, path: "/s/{namespace}/api/agent_builder/tools/{id}", default_namespace_path: "/api/agent_builder/tools/{id}", cardinality: one, retry_safe: true }
     skills:
       id: { pointer: /id, scope: universal }
-      display_name: { pointer: /name, strategy: name_id }
+      display_name: { pointer: /name, strategy: id, unique: true }
       namespaced: true
       write_intent: upsert
       dependencies: [spaces, tools]
+      filesystem:
+        split: frontmatter_markdown
+        merge: frontmatter_markdown
+        frontmatter_markdown:
+          document: SKILL.md
+          body_pointer: /content
+          referenced_files:
+            pointer: /referenced_content
+            path_pointer: /relativePath
+            name_pointer: /name
+            content_pointer: /content
+            extension: md
       transformations:
         - { kind: remove, pointer: /readonly }
         - { kind: remove, pointer: /schema }

@@ -157,12 +157,36 @@ A human-readable, potentially mutable label used to make a Resource easy to loca
 _Avoid_: Resource ID
 
 **Canonical Representation**:
-The deterministic, human-reviewable form of a Resource stored in the repository. It may differ from the representation required by a remote system.
+The deterministic, human-reviewable file or directory tree for one Resource stored in the repository. It may differ from the representation required by a remote system.
 _Avoid_: Wire Representation, raw response
 
 **Canonical Equality**:
 Semantic equality between Canonical Representations after configured Transformations. Formatting and object-key order are irrelevant, while arrays and preserved text remain ordered unless a Resource Type explicitly normalizes them.
 _Avoid_: Byte equality, wire equality
+
+**Filesystem Projection**:
+The reversible Resource Type mapping between one Resource Object and its Canonical Representation. Splitting projects the object to files, while Merging reconstructs the object from those files.
+_Avoid_: Operation framing, arbitrary filesystem transform
+
+**Resource Object**:
+The structured representation of one Resource between Filesystem Projection and operation encoding.
+_Avoid_: Resource collection, operation payload
+
+**Splitting**:
+The projection of one Resource Object into its configured Canonical Representation of one or more files.
+_Avoid_: Unbundling, export
+
+**Merging**:
+The reconstruction of one Resource Object from its configured Canonical Representation of one or more files.
+_Avoid_: Bundling, import
+
+**Bundling**:
+The encoding of a collection of Resource Objects into one operation payload, such as NDJSON.
+_Avoid_: Merging, serialization
+
+**Unbundling**:
+The decoding of one operation payload, such as NDJSON, into a collection of Resource Objects.
+_Avoid_: Splitting, deserialization
 
 **Wire Representation**:
 An API-specific encoding derived from one or more Canonical Representations at runtime, including multi-Resource encodings. It is not source-of-truth state.
