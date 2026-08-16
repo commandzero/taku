@@ -120,6 +120,7 @@ pub fn fetch(
                     id: Some(&item.id),
                     context: Some(&item.value),
                     body: None,
+                    mutation: false,
                 },
                 &auth,
             ) {
@@ -253,6 +254,7 @@ pub fn fetch(
                 id: Some(&marker.id),
                 context: Some(&marker_context),
                 body: None,
+                mutation: false,
             },
             &auth,
         ) {

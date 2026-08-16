@@ -23,6 +23,7 @@ pub struct OperationInput<'a> {
     pub id: Option<&'a str>,
     pub context: Option<&'a Value>,
     pub body: Option<&'a [Value]>,
+    pub mutation: bool,
 }
 pub const INTERNAL_GUARD_POINTER: &str = "/_taku_internal_guard";
 pub const INTERNAL_CURSOR_POINTER: &str = "/_taku_internal_cursor";
@@ -172,8 +173,14 @@ pub fn execute(
         }
         Err(_) => return Ok(RemoteResult::Failure("remote request failed".into())),
     };
-    map_response(response, operation, resource_type, input.id)
-        .context("Transformation Conflict while converting successful response")
+    map_response(
+        response,
+        operation,
+        resource_type,
+        input.id,
+        !input.mutation || operation.trustworthy_response,
+    )
+    .context("Transformation Conflict while converting successful response")
 }
 
 pub fn execute_retry_safe(
@@ -275,6 +282,7 @@ fn map_response(
     operation: &Operation,
     resource_type: &ResourceType,
     id: Option<&str>,
+    normalize_success: bool,
 ) -> Result<RemoteResult> {
     let status = response.status();
     let outcome = operation
@@ -291,6 +299,9 @@ fn map_response(
             status.as_u16()
         ))),
         Outcome::Success => {
+            if !normalize_success {
+                return Ok(RemoteResult::Success(Vec::new()));
+            }
             let bytes = response
                 .bytes()
                 .map_err(|_| anyhow::anyhow!("failed to read successful remote response"))?;
@@ -316,30 +327,55 @@ fn map_response(
                     id.and_then(|id| value.get(id)).cloned()
                 } else {
                     value.pointer(extract).cloned()
-                }
-                .context("configured response extraction did not match")?;
+                };
+                let Some(extracted) = extracted else {
+                    return match operation.extract_missing {
+                        Some(Outcome::NotFound) => Ok(RemoteResult::NotFound),
+                        Some(Outcome::Conflict) => Ok(RemoteResult::Conflict),
+                        Some(Outcome::Retryable) => Ok(RemoteResult::Retryable),
+                        Some(Outcome::Failure) => Ok(RemoteResult::Failure(
+                            "configured response extraction did not match".into(),
+                        )),
+                        Some(Outcome::Success) | None => {
+                            bail!("configured response extraction did not match")
+                        }
+                    };
+                };
                 values = vec![extracted];
             }
-            values = expand_many(values, resource_type, id, operation.skip_unidentified)?;
-            for value in &mut values {
+            values = expand_many(values, resource_type, id)?;
+            let mut normalized = Vec::with_capacity(values.len());
+            for mut value in values {
                 let guard = resource_type
                     .guard_pointer
                     .as_deref()
-                    .and_then(|pointer| pointer_string(value, pointer));
-                if let Some(id) = id
-                    && pointer_string(value, &resource_type.id.pointer).is_none()
-                {
-                    insert_pointer(value, &resource_type.id.pointer, Value::String(id.into()))?;
-                }
+                    .and_then(|pointer| pointer_string(&value, pointer));
                 for pointer in &resource_type.sensitive_fields {
-                    remove_pointer(value, pointer)?;
+                    remove_pointer(&mut value, pointer)?;
                 }
-                apply_inbound(value, resource_type)?;
+                apply_inbound(&mut value, resource_type)?;
+                if let Some(id) = id
+                    && pointer_string(&value, &resource_type.id.pointer).is_none()
+                    && !operation.skip_unidentified
+                {
+                    insert_pointer(
+                        &mut value,
+                        &resource_type.id.pointer,
+                        Value::String(id.into()),
+                    )?;
+                }
+                if pointer_string(&value, &resource_type.id.pointer).is_none() {
+                    if operation.skip_unidentified {
+                        continue;
+                    }
+                    bail!("remote Resource has no configured ID");
+                }
                 if let Some(guard) = guard {
-                    insert_pointer(value, INTERNAL_GUARD_POINTER, Value::String(guard))?;
+                    insert_pointer(&mut value, INTERNAL_GUARD_POINTER, Value::String(guard))?;
                 }
-                *value = sort_value(value);
+                normalized.push(sort_value(&value));
             }
+            values = normalized;
             if let Some(cursor) = next_cursor {
                 let last = values
                     .last_mut()
@@ -384,17 +420,9 @@ fn expand_many(
     values: Vec<Value>,
     resource_type: &ResourceType,
     requested_id: Option<&str>,
-    skip_unidentified: bool,
 ) -> Result<Vec<Value>> {
     if requested_id.is_some() {
-        return Ok(if skip_unidentified {
-            values
-                .into_iter()
-                .filter(|value| pointer_string(value, &resource_type.id.pointer).is_some())
-                .collect()
-        } else {
-            values
-        });
+        return Ok(values);
     }
     let mut out = Vec::new();
     for value in values {
@@ -415,17 +443,7 @@ fn expand_many(
             value => out.push(value),
         }
     }
-    let mut identified = Vec::new();
-    for value in out {
-        let Some(_id) = pointer_string(&value, &resource_type.id.pointer) else {
-            if skip_unidentified {
-                continue;
-            }
-            bail!("remote Resource has no configured ID");
-        };
-        identified.push(value);
-    }
-    Ok(identified)
+    Ok(out)
 }
 
 fn apply_inbound(value: &mut Value, resource_type: &ResourceType) -> Result<()> {
@@ -454,6 +472,25 @@ fn apply_inbound(value: &mut Value, resource_type: &ResourceType) -> Result<()> 
                 let document = value.clone();
                 *value = Value::Object(Map::new());
                 insert_pointer(value, pointer, document)?;
+            }
+            crate::Transformation::SingletonMap {
+                pointer,
+                key_pointer,
+                value_pointer,
+            } => {
+                let singleton = value
+                    .pointer(pointer)
+                    .and_then(Value::as_object)
+                    .context("Singleton Map input is not an object")?;
+                if singleton.len() != 1 {
+                    bail!("Singleton Map input must contain exactly one entry");
+                }
+                let (key, document) = singleton.iter().next().unwrap();
+                let key = key.clone();
+                let document = document.clone();
+                remove_pointer(value, pointer)?;
+                insert_pointer(value, key_pointer, Value::String(key))?;
+                insert_pointer(value, value_pointer, document)?;
             }
         }
     }
@@ -503,6 +540,23 @@ fn apply_outbound(value: &mut Value, transformations: &[crate::Transformation]) 
             crate::Transformation::Insert { pointer, .. } => remove_pointer(value, pointer)?,
             crate::Transformation::Omit { pointer } => remove_pointer(value, pointer)?,
             crate::Transformation::Remove { .. } => {}
+            crate::Transformation::SingletonMap {
+                pointer,
+                key_pointer,
+                value_pointer,
+            } => {
+                let key = pointer_string(value, key_pointer)
+                    .context("Singleton Map key is not a string")?;
+                let document = value
+                    .pointer(value_pointer)
+                    .cloned()
+                    .context("Singleton Map value is missing")?;
+                remove_pointer(value, key_pointer)?;
+                remove_pointer(value, value_pointer)?;
+                let mut singleton = Map::new();
+                singleton.insert(key, document);
+                insert_pointer(value, pointer, Value::Object(singleton))?;
+            }
         }
     }
     Ok(())

@@ -877,22 +877,44 @@ fn validate_operation(operation: &crate::Operation, owner: &str) -> Result<()> {
     {
         bail!("{owner} Operation body_pointer requires a body and a JSON pointer");
     }
+    if operation
+        .extract_missing
+        .is_some_and(|outcome| matches!(outcome, crate::Outcome::Success))
+    {
+        bail!("{owner} Operation extract_missing cannot map to success");
+    }
     validate_transformations(&operation.transformations, owner)?;
     Ok(())
 }
 
 fn validate_transformations(transformations: &[crate::Transformation], owner: &str) -> Result<()> {
     for transformation in transformations {
-        let pointer = match transformation {
+        let pointers: Vec<&str> = match transformation {
             crate::Transformation::Extract { pointer }
             | crate::Transformation::Remove { pointer }
             | crate::Transformation::Omit { pointer }
             | crate::Transformation::Insert { pointer, .. }
             | crate::Transformation::EmbeddedJson { pointer }
-            | crate::Transformation::Frame { pointer } => pointer,
+            | crate::Transformation::Frame { pointer } => vec![pointer],
+            crate::Transformation::SingletonMap {
+                pointer,
+                key_pointer,
+                value_pointer,
+            } => vec![pointer, key_pointer, value_pointer],
         };
-        if !pointer.starts_with('/') {
+        if pointers.iter().any(|pointer| !pointer.starts_with('/')) {
             bail!("{owner} Transformation has an invalid JSON pointer");
+        }
+        if let crate::Transformation::SingletonMap {
+            key_pointer,
+            value_pointer,
+            ..
+        } = transformation
+            && (key_pointer == value_pointer
+                || key_pointer.starts_with(&format!("{value_pointer}/"))
+                || value_pointer.starts_with(&format!("{key_pointer}/")))
+        {
+            bail!("{owner} Singleton Map output pointers overlap");
         }
     }
     Ok(())

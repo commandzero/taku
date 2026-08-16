@@ -1,7 +1,7 @@
 schema_version: 1
 application:
   name: kibana
-  version: "1.2.0"
+  version: "1.3.0"
 target_profile:
   headers:
     accept: application/json
@@ -172,12 +172,37 @@ target_profile:
           cardinality: one
           transformations: [{ kind: omit, pointer: /id }]
         delete: { method: DELETE, path: "/s/{namespace}/api/agent_builder/skills/{id}", default_namespace_path: "/api/agent_builder/skills/{id}", cardinality: one, retry_safe: true }
+    plugins:
+      id: { pointer: /id, scope: universal }
+      display_name: { pointer: /name, strategy: name, unique: true }
+      namespaced: true
+      write_intent: create
+      dependencies: [spaces]
+      transformations:
+        - { kind: remove, pointer: /created_at }
+        - { kind: remove, pointer: /updated_at }
+        - { kind: remove, pointer: /description }
+        - { kind: remove, pointer: /manifest }
+        - { kind: remove, pointer: /skill_ids }
+        - { kind: remove, pointer: /unmanaged_assets }
+        - { kind: remove, pointer: /version }
+      operations:
+        read: { method: GET, path: "/s/{namespace}/api/agent_builder/plugins/{id}", default_namespace_path: "/api/agent_builder/plugins/{id}", cardinality: one, retry_safe: true, concurrency: parallel }
+        list: { method: GET, path: "/s/{namespace}/api/agent_builder/plugins", default_namespace_path: "/api/agent_builder/plugins", cardinality: many, extract: /results, retry_safe: true, concurrency: parallel }
+        create:
+          method: POST
+          path: "/s/{namespace}/api/agent_builder/plugins/install"
+          default_namespace_path: "/api/agent_builder/plugins/install"
+          cardinality: one
+          trustworthy_response: true
+          body: { url: "{source_url}", plugin_name: "{name}" }
+        delete: { method: DELETE, path: "/s/{namespace}/api/agent_builder/plugins/{id}", default_namespace_path: "/api/agent_builder/plugins/{id}", cardinality: one, retry_safe: true }
     agents:
       id: { pointer: /id, scope: universal }
       display_name: { pointer: /name, strategy: name_id }
       namespaced: true
       write_intent: upsert
-      dependencies: [spaces, tools, skills]
+      dependencies: [spaces, tools, skills, plugins]
       transformations:
         - { kind: remove, pointer: /readonly }
         - { kind: remove, pointer: /schema }

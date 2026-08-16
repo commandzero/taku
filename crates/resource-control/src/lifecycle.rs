@@ -76,6 +76,7 @@ pub fn add_remote(
                     id: Some(&item.id),
                     context: Some(&item.value),
                     body: None,
+                    mutation: false,
                 },
                 &auth,
             )? {

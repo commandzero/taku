@@ -742,6 +742,7 @@ fn execute_resource(
                 },
                 context: Some(&task.item.value),
                 body: Some(std::slice::from_ref(&wire)),
+                mutation: true,
             },
             &task.auth,
         )
@@ -878,6 +879,7 @@ fn execute_many(
                 id: None,
                 context: Some(&first.item.value),
                 body: Some(&wires),
+                mutation: true,
             },
             &first.auth,
         )
@@ -992,6 +994,7 @@ fn read_current(
             id: Some(id),
             context: desired,
             body: None,
+            mutation: false,
         },
         auth,
     )? {
@@ -1034,6 +1037,7 @@ fn verify_deletion(task: &PreparedDeletion) -> Result<DeletionVerification> {
             id: Some(&task.marker.id),
             context: Some(&parameters),
             body: None,
+            mutation: false,
         },
         &task.auth,
     )? {
@@ -1101,6 +1105,7 @@ fn execute_deletion(
                     id: Some(&task.marker.id),
                     context: Some(&parameters),
                     body: None,
+                    mutation: true,
                 },
                 &task.auth,
             )?

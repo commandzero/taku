@@ -1,7 +1,7 @@
 schema_version: 1
 application:
   name: elasticsearch
-  version: "1.1.0"
+  version: "1.2.0"
 target_profile:
   headers:
     accept: application/json
@@ -27,13 +27,25 @@ target_profile:
         delete: { method: DELETE, path: "/_ingest/pipeline/{id}", cardinality: one, retry_safe: true }
     ilm_policies:
       id: { pointer: /id, scope: universal }
-      display_name: { pointer: /name, strategy: name }
+      display_name: { pointer: /id, strategy: name, unique: true }
       write_intent: update
       mutation_mode: replace
+      transformations:
+        - { kind: remove, pointer: /version }
+        - { kind: remove, pointer: /modified_date }
+        - { kind: remove, pointer: /modified_date_millis }
+        - { kind: remove, pointer: /in_use_by }
+        - { kind: omit, pointer: /id }
       operations:
-        read: { method: GET, path: "/_ilm/policy/{id}", cardinality: one, extract: "/{id}" }
-        list: { method: GET, path: "/_ilm/policy", cardinality: many }
-        update: { method: PUT, path: "/_ilm/policy/{id}", cardinality: one, retry_safe: true }
+        read: { method: GET, path: "/_ilm/policy/{id}", cardinality: one, extract: "/{id}", retry_safe: true, concurrency: parallel }
+        list: { method: GET, path: "/_ilm/policy", cardinality: many, retry_safe: true, concurrency: parallel }
+        update:
+          method: PUT
+          path: "/_ilm/policy/{id}"
+          cardinality: one
+          retry_safe: true
+          trustworthy_response: false
+          transformations: [{ kind: frame, pointer: /policy }]
         delete: { method: DELETE, path: "/_ilm/policy/{id}", cardinality: one, retry_safe: true }
     component_templates:
       id: { pointer: /name, scope: universal }
@@ -97,3 +109,117 @@ target_profile:
         list: { method: GET, path: "/_security/role", cardinality: many, retry_safe: true, concurrency: parallel }
         upsert: { method: PUT, path: "/_security/role/{id}", cardinality: one, retry_safe: true, trustworthy_response: false }
         delete: { method: DELETE, path: "/_security/role/{id}", cardinality: one, retry_safe: true }
+    snapshot_repositories:
+      id: { pointer: /id, scope: universal }
+      display_name: { pointer: /id, strategy: name, unique: true }
+      write_intent: upsert
+      mutation_mode: replace
+      transformations:
+        - { kind: remove, pointer: /uuid }
+        - { kind: remove, pointer: /generation }
+        - { kind: remove, pointer: /pending_generation }
+        - { kind: omit, pointer: /id }
+      operations:
+        read: { method: GET, path: "/_snapshot/{id}", cardinality: one, extract: "/{id}", retry_safe: true, concurrency: parallel }
+        list: { method: GET, path: "/_snapshot", cardinality: many, retry_safe: true, concurrency: parallel }
+        upsert: { method: PUT, path: "/_snapshot/{id}", cardinality: one, retry_safe: true, trustworthy_response: false }
+        delete: { method: DELETE, path: "/_snapshot/{id}", cardinality: one, retry_safe: true }
+    legacy_index_templates:
+      id: { pointer: /id, scope: universal }
+      display_name: { pointer: /id, strategy: name, unique: true }
+      write_intent: upsert
+      mutation_mode: replace
+      transformations:
+        - { kind: omit, pointer: /id }
+      operations:
+        read: { method: GET, path: "/_template/{id}", cardinality: one, extract: "/{id}", retry_safe: true, concurrency: parallel }
+        list: { method: GET, path: "/_template", cardinality: many, retry_safe: true, concurrency: parallel }
+        create: { method: PUT, path: "/_template/{id}?create=true", cardinality: one, retry_safe: true, trustworthy_response: false }
+        update: { method: PUT, path: "/_template/{id}", cardinality: one, retry_safe: true, trustworthy_response: false }
+        delete: { method: DELETE, path: "/_template/{id}", cardinality: one, retry_safe: true }
+    role_mappings:
+      id: { pointer: /id, scope: universal }
+      display_name: { pointer: /id, strategy: name, unique: true }
+      write_intent: upsert
+      mutation_mode: replace
+      transformations:
+        - { kind: omit, pointer: /id }
+      operations:
+        read: { method: GET, path: "/_security/role_mapping/{id}", cardinality: one, extract: "/{id}", retry_safe: true, concurrency: parallel }
+        list: { method: GET, path: "/_security/role_mapping", cardinality: many, retry_safe: true, concurrency: parallel }
+        upsert: { method: PUT, path: "/_security/role_mapping/{id}", cardinality: one, retry_safe: true, trustworthy_response: false }
+        delete: { method: DELETE, path: "/_security/role_mapping/{id}", cardinality: one, retry_safe: true }
+    slm_policies:
+      id: { pointer: /id, scope: universal }
+      display_name: { pointer: /id, strategy: name, unique: true }
+      write_intent: upsert
+      mutation_mode: replace
+      dependencies: [snapshot_repositories]
+      transformations:
+        - { kind: remove, pointer: /version }
+        - { kind: remove, pointer: /modified_date }
+        - { kind: remove, pointer: /modified_date_millis }
+        - { kind: remove, pointer: /next_execution }
+        - { kind: remove, pointer: /next_execution_millis }
+        - { kind: remove, pointer: /stats }
+        - { kind: remove, pointer: /in_progress }
+        - { kind: omit, pointer: /id }
+      operations:
+        read: { method: GET, path: "/_slm/policy/{id}", cardinality: one, extract: "/{id}", retry_safe: true, concurrency: parallel }
+        list: { method: GET, path: "/_slm/policy", cardinality: many, retry_safe: true, concurrency: parallel }
+        upsert:
+          method: PUT
+          path: "/_slm/policy/{id}"
+          cardinality: one
+          retry_safe: true
+          trustworthy_response: false
+          transformations: [{ kind: frame, pointer: /policy }]
+        delete: { method: DELETE, path: "/_slm/policy/{id}", cardinality: one, retry_safe: true }
+    ccr_auto_follow_patterns:
+      id: { pointer: /name, scope: universal }
+      display_name: { pointer: /name, strategy: name, unique: true }
+      write_intent: upsert
+      mutation_mode: replace
+      transformations:
+        - { kind: remove, pointer: /pattern/active }
+      operations:
+        read: { method: GET, path: "/_ccr/auto_follow/{id}", cardinality: one, extract: "/patterns/0", retry_safe: true, concurrency: parallel }
+        list: { method: GET, path: "/_ccr/auto_follow", cardinality: many, extract: "/patterns", retry_safe: true, concurrency: parallel }
+        upsert:
+          method: PUT
+          path: "/_ccr/auto_follow/{id}"
+          cardinality: one
+          retry_safe: true
+          trustworthy_response: false
+          transformations: [{ kind: frame, pointer: /pattern }]
+        delete: { method: DELETE, path: "/_ccr/auto_follow/{id}", cardinality: one, retry_safe: true }
+    cluster_settings:
+      id: { pointer: /id, scope: target }
+      display_name: { pointer: /id, strategy: name, unique: true }
+      write_intent: update
+      mutation_mode: replace
+      transformations:
+        - { kind: omit, pointer: /id }
+      operations:
+        read: { method: GET, path: "/_cluster/settings?flat_settings=true", cardinality: one, retry_safe: true }
+        update: { method: PUT, path: "/_cluster/settings", cardinality: one, retry_safe: true, trustworthy_response: false }
+    enrich_policies:
+      id: { pointer: /policy/name, scope: universal }
+      display_name: { pointer: /policy/name, strategy: name, unique: true }
+      write_intent: create
+      mutation_mode: replace
+      transformations:
+        - { kind: singleton_map, pointer: /config, key_pointer: /policy_type, value_pointer: /policy }
+        - { kind: remove, pointer: /policy/elasticsearch_version }
+        - { kind: omit, pointer: /policy/name }
+      operations:
+        read: { method: GET, path: "/_enrich/policy/{id}", cardinality: one, extract: "/policies/0", extract_missing: not_found, retry_safe: true, concurrency: parallel }
+        list: { method: GET, path: "/_enrich/policy", cardinality: many, extract: "/policies", retry_safe: true, concurrency: parallel }
+        create:
+          method: PUT
+          path: "/_enrich/policy/{id}"
+          cardinality: one
+          retry_safe: true
+          trustworthy_response: false
+          transformations: [{ kind: frame, pointer: /config }]
+        delete: { method: DELETE, path: "/_enrich/policy/{id}", cardinality: one, retry_safe: true }

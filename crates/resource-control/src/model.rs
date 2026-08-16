@@ -308,6 +308,8 @@ pub struct Operation {
     pub transformations: Vec<Transformation>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub extract: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extract_missing: Option<Outcome>,
     #[serde(alias = "request_framing", skip_serializing_if = "Option::is_none")]
     pub bundle: Option<PayloadFormat>,
     #[serde(alias = "response_framing", skip_serializing_if = "Option::is_none")]
@@ -426,6 +428,11 @@ pub enum Transformation {
     Frame {
         pointer: String,
     },
+    SingletonMap {
+        pointer: String,
+        key_pointer: String,
+        value_pointer: String,
+    },
 }
 
 pub(crate) fn sensitive_field_conflicts(resource_type: &ResourceType, pointer: &str) -> bool {
@@ -443,6 +450,13 @@ pub(crate) fn sensitive_field_conflicts(resource_type: &ResourceType, pointer: &
                     | Transformation::EmbeddedJson { pointer: required }
                     if pointer == required
                         || required.starts_with(&format!("{pointer}/"))
+            ) || matches!(
+                transformation,
+                Transformation::SingletonMap {
+                    key_pointer,
+                    value_pointer,
+                    ..
+                } if overlaps(key_pointer) || overlaps(value_pointer)
             )
         })
 }

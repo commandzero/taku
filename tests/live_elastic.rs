@@ -270,6 +270,330 @@ fn manages_an_elasticsearch_ingest_pipeline_through_its_real_api() {
 }
 
 #[test]
+#[ignore = "requires Elasticsearch on localhost:9200 and ELASTIC_API_KEY in .env"]
+fn reads_all_declarative_elasticsearch_resource_types_from_real_apis() {
+    let authorization = authorization();
+    let project = project("elasticsearch", "es", ELASTICSEARCH_URL, &authorization);
+
+    for resource_type in [
+        "snapshot_repositories",
+        "legacy_index_templates",
+        "role_mappings",
+        "slm_policies",
+        "ccr_auto_follow_patterns",
+        "enrich_policies",
+    ] {
+        let listed = run(
+            &project,
+            &authorization,
+            &["list", "--remote", "--type", resource_type],
+        );
+        assert!(listed["result"].is_array(), "{resource_type}");
+    }
+
+    let settings_directory = project.path().join("es/cluster_settings");
+    std::fs::create_dir_all(&settings_directory).unwrap();
+    std::fs::write(
+        settings_directory.join("cluster-settings.json"),
+        r#"{"id":"cluster-settings","persistent":{},"transient":{}}"#,
+    )
+    .unwrap();
+    let settings = run(
+        &project,
+        &authorization,
+        &[
+            "fetch",
+            "--type",
+            "cluster_settings",
+            "--id",
+            "cluster-settings",
+        ],
+    );
+    assert_eq!(settings["result"][0]["outcome"], "observed");
+}
+
+#[test]
+#[ignore = "requires Elasticsearch on localhost:9200 and ELASTIC_API_KEY in .env"]
+fn round_trips_a_legacy_index_template_through_its_real_api() {
+    let authorization = authorization();
+    let id = unique_id("legacy-template");
+    let client = Client::new();
+    let url = format!("{ELASTICSEARCH_URL}/_template/{id}");
+    let response = client
+        .put(&url)
+        .header(AUTHORIZATION, &authorization)
+        .json(&json!({
+            "index_patterns": [format!("{id}-*")],
+            "order": 1,
+            "settings": {"number_of_shards": 1}
+        }))
+        .send()
+        .unwrap();
+    assert!(response.status().is_success(), "fixture creation failed");
+    let fixture = RemoteFixture {
+        client,
+        authorization: authorization.clone(),
+        delete_url: url,
+        kibana: false,
+    };
+    let project = project("elasticsearch", "es", ELASTICSEARCH_URL, &authorization);
+
+    run(
+        &project,
+        &authorization,
+        &["add", "--type", "legacy_index_templates", "--id", &id],
+    );
+    run(
+        &project,
+        &authorization,
+        &["fetch", "--type", "legacy_index_templates", "--id", &id],
+    );
+    let resource = std::fs::read_dir(project.path().join("es/legacy_index_templates"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let mut value: Value =
+        serde_json::from_str(&std::fs::read_to_string(&resource).unwrap()).unwrap();
+    value["order"] = json!(2);
+    std::fs::write(&resource, serde_json::to_string_pretty(&value).unwrap()).unwrap();
+    run(
+        &project,
+        &authorization,
+        &[
+            "push",
+            "--type",
+            "legacy_index_templates",
+            "--id",
+            &id,
+            "--uncommitted",
+            "allow",
+            "--untracked",
+            "allow",
+        ],
+    );
+    run(
+        &project,
+        &authorization,
+        &["fetch", "--type", "legacy_index_templates", "--id", &id],
+    );
+    let status = run(
+        &project,
+        &authorization,
+        &["status", "--type", "legacy_index_templates", "--id", &id],
+    );
+    assert_eq!(status["result"][0]["state"], "in_sync");
+    run(
+        &project,
+        &authorization,
+        &["remove", "--type", "legacy_index_templates", "--id", &id],
+    );
+    let deleted = run(
+        &project,
+        &authorization,
+        &[
+            "push",
+            "--type",
+            "legacy_index_templates",
+            "--id",
+            &id,
+            "--uncommitted",
+            "allow",
+            "--untracked",
+            "allow",
+        ],
+    );
+    assert_eq!(deleted["result"][0]["outcome"], "deleted");
+
+    drop(fixture);
+}
+
+#[test]
+#[ignore = "requires Elasticsearch on localhost:9200 and ELASTIC_API_KEY in .env"]
+fn round_trips_a_role_mapping_through_its_real_api() {
+    let authorization = authorization();
+    let id = unique_id("role-mapping");
+    let client = Client::new();
+    let url = format!("{ELASTICSEARCH_URL}/_security/role_mapping/{id}");
+    let response = client
+        .put(&url)
+        .header(AUTHORIZATION, &authorization)
+        .json(&json!({
+            "enabled": true,
+            "roles": ["viewer"],
+            "rules": {"field": {"username": "taku-live-*"}},
+            "metadata": {"test": true}
+        }))
+        .send()
+        .unwrap();
+    assert!(response.status().is_success(), "fixture creation failed");
+    let fixture = RemoteFixture {
+        client,
+        authorization: authorization.clone(),
+        delete_url: url,
+        kibana: false,
+    };
+    let project = project("elasticsearch", "es", ELASTICSEARCH_URL, &authorization);
+
+    run(
+        &project,
+        &authorization,
+        &["add", "--type", "role_mappings", "--id", &id],
+    );
+    run(
+        &project,
+        &authorization,
+        &["fetch", "--type", "role_mappings", "--id", &id],
+    );
+    let resource = std::fs::read_dir(project.path().join("es/role_mappings"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let mut value: Value =
+        serde_json::from_str(&std::fs::read_to_string(&resource).unwrap()).unwrap();
+    value["roles"] = json!(["monitoring_user"]);
+    std::fs::write(&resource, serde_json::to_string_pretty(&value).unwrap()).unwrap();
+    run(
+        &project,
+        &authorization,
+        &[
+            "push",
+            "--type",
+            "role_mappings",
+            "--id",
+            &id,
+            "--uncommitted",
+            "allow",
+            "--untracked",
+            "allow",
+        ],
+    );
+    run(
+        &project,
+        &authorization,
+        &["fetch", "--type", "role_mappings", "--id", &id],
+    );
+    let status = run(
+        &project,
+        &authorization,
+        &["status", "--type", "role_mappings", "--id", &id],
+    );
+    assert_eq!(status["result"][0]["state"], "in_sync");
+    run(
+        &project,
+        &authorization,
+        &["remove", "--type", "role_mappings", "--id", &id],
+    );
+    let deleted = run(
+        &project,
+        &authorization,
+        &[
+            "push",
+            "--type",
+            "role_mappings",
+            "--id",
+            &id,
+            "--uncommitted",
+            "allow",
+            "--untracked",
+            "allow",
+        ],
+    );
+    assert_eq!(deleted["result"][0]["outcome"], "deleted");
+
+    drop(fixture);
+}
+
+#[test]
+#[ignore = "requires Elasticsearch on localhost:9200 and ELASTIC_API_KEY in .env"]
+fn creates_and_deletes_an_enrich_policy_through_its_real_api() {
+    let authorization = authorization();
+    let id = unique_id("enrich-policy");
+    let project = project("elasticsearch", "es", ELASTICSEARCH_URL, &authorization);
+    let directory = project.path().join("es/enrich_policies");
+    std::fs::create_dir_all(&directory).unwrap();
+    std::fs::write(
+        directory.join(format!("{id}.json")),
+        serde_json::to_string_pretty(&json!({
+            "policy_type": "match",
+            "policy": {
+                "name": id,
+                "indices": ["taku-live-enrich-source-*"],
+                "match_field": "email",
+                "enrich_fields": ["full_name"]
+            }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    run(
+        &project,
+        &authorization,
+        &["fetch", "--type", "enrich_policies", "--id", &id],
+    );
+    let created = run(
+        &project,
+        &authorization,
+        &[
+            "push",
+            "--type",
+            "enrich_policies",
+            "--id",
+            &id,
+            "--uncommitted",
+            "allow",
+            "--untracked",
+            "allow",
+        ],
+    );
+    assert_eq!(created["result"][0]["outcome"], "success");
+    let client = Client::new();
+    let fixture = RemoteFixture {
+        client,
+        authorization: authorization.clone(),
+        delete_url: format!("{ELASTICSEARCH_URL}/_enrich/policy/{id}"),
+        kibana: false,
+    };
+    run(
+        &project,
+        &authorization,
+        &["fetch", "--type", "enrich_policies", "--id", &id],
+    );
+    let status = run(
+        &project,
+        &authorization,
+        &["status", "--type", "enrich_policies", "--id", &id],
+    );
+    assert_eq!(status["result"][0]["state"], "in_sync");
+    run(
+        &project,
+        &authorization,
+        &["remove", "--type", "enrich_policies", "--id", &id],
+    );
+    let deleted = run(
+        &project,
+        &authorization,
+        &[
+            "push",
+            "--type",
+            "enrich_policies",
+            "--id",
+            &id,
+            "--uncommitted",
+            "allow",
+            "--untracked",
+            "allow",
+        ],
+    );
+    assert_eq!(deleted["result"][0]["outcome"], "deleted");
+
+    drop(fixture);
+}
+
+#[test]
 #[ignore = "requires Kibana on localhost:5601 and ELASTIC_API_KEY in .env"]
 fn manages_a_kibana_space_through_its_real_api() {
     let authorization = authorization();
@@ -424,6 +748,28 @@ fn lists_real_kibana_dashboard_exports_without_treating_export_details_as_a_reso
             .iter()
             .all(|resource| resource.get("type").is_some())
     );
+}
+
+#[test]
+#[ignore = "requires Kibana 9.4+ with Agent Builder on localhost:5601 and ELASTIC_API_KEY in .env"]
+fn lists_agent_builder_plugins_through_the_real_kibana_api() {
+    let authorization = authorization();
+    let project = project("kibana", "kb", KIBANA_URL, &authorization);
+
+    let listed = run(
+        &project,
+        &authorization,
+        &[
+            "list",
+            "--remote",
+            "--namespace",
+            "default",
+            "--type",
+            "plugins",
+        ],
+    );
+
+    assert!(listed["result"].is_array());
 }
 
 #[test]
