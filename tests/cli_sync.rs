@@ -333,7 +333,7 @@ fn remote_list_add_remove_and_forget_preserve_partial_inventory_safety() {
     assert!(
         project
             .path()
-            .join("es/ingest_pipelines/Second-a6e2ae0e.json")
+            .join("es/ingest_pipelines/Second-pipe-2.json")
             .is_file()
     );
 

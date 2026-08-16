@@ -110,7 +110,7 @@ pub fn add_remote(
                 }
             };
         }
-        let name = crate::canonical::pointer_string(&item.value, &rt.display_name.pointer)
+        let name = crate::canonical::display_name_value(&item.value, &rt.display_name)
             .unwrap_or_else(|| item.id.clone());
         let display = match rt.display_name.strategy {
             crate::DisplayNameStrategy::Id => item.id.clone(),

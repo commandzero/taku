@@ -576,7 +576,7 @@ pub fn remote_list(
                     if untracked_only && tracked {
                         continue;
                     }
-                    let name = pointer_string(&value, &rt.display_name.pointer)
+                    let name = crate::canonical::display_name_value(&value, &rt.display_name)
                         .unwrap_or_else(|| id.clone());
                     out.push(RemoteEntry {
                         environment: environment.clone(),

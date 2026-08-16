@@ -1,6 +1,8 @@
 use crate::application::load_installed;
 use crate::project::current_environment;
-use crate::{DisplayNameStrategy, IdScope, Project, RepositoryLayout, git_root, load_project};
+use crate::{
+    DisplayName, DisplayNameStrategy, IdScope, Project, RepositoryLayout, git_root, load_project,
+};
 use anyhow::{Context, Result, bail};
 use serde::Serialize;
 use serde_json::Value;
@@ -142,7 +144,7 @@ pub fn list_inventory(root: &Path, selection: &Selection) -> Result<Vec<Inventor
                     if !selection.ids.is_empty() && !selection.ids.contains(&id) {
                         continue;
                     }
-                    let name = pointer_string(&value, &resource_type.display_name.pointer)
+                    let name = display_name_value(&value, &resource_type.display_name)
                         .unwrap_or_else(|| id.clone());
                     let display_name = match resource_type.display_name.strategy {
                         DisplayNameStrategy::Id => id.clone(),
@@ -354,6 +356,12 @@ pub fn pointer_string(value: &Value, pointer: &str) -> Option<String> {
     }
 }
 
+pub fn display_name_value(value: &Value, display_name: &DisplayName) -> Option<String> {
+    display_name
+        .pointers()
+        .find_map(|pointer| pointer_string(value, pointer))
+}
+
 pub fn canonical_bytes(value: &Value) -> Result<Vec<u8>> {
     Ok(serde_json::to_vec(&sort_value(value))?)
 }
@@ -408,6 +416,17 @@ pub fn safe_filename(value: &str) -> String {
 }
 
 pub fn short_id(id: &str) -> String {
+    let suffix: String = id
+        .chars()
+        .rev()
+        .take(8)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    if !suffix.is_empty() && safe_filename(&suffix) == suffix {
+        return suffix;
+    }
     hex::encode(sha2::Sha256::digest(id.as_bytes()))[..8].into()
 }
 

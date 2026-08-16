@@ -1,7 +1,7 @@
 schema_version: 1
 application:
   name: kibana
-  version: "1.3.0"
+  version: "1.4.0"
 target_profile:
   headers:
     accept: application/json
@@ -20,7 +20,7 @@ target_profile:
         delete: { method: DELETE, path: "/api/spaces/space/{id}", cardinality: one, retry_safe: true }
     saved_objects:
       id: { pointer: /id, scope: universal }
-      display_name: { pointer: /attributes/title, strategy: name_id }
+      display_name: { pointers: [/attributes/title, /attributes/name], strategy: name_id }
       namespaced: true
       write_intent: upsert
       dependencies: [spaces]

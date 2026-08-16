@@ -680,6 +680,18 @@ pub fn parse_definition(expected_name: &str, bytes: &[u8]) -> Result<Application
         if !resource_type.id.pointer.starts_with('/') {
             bail!("Resource Type {name} has an invalid identity pointer");
         }
+        if resource_type.display_name.pointer.is_some()
+            && !resource_type.display_name.pointers.is_empty()
+        {
+            bail!("Resource Type {name} Display Name cannot define both pointer and pointers");
+        }
+        if resource_type
+            .display_name
+            .pointers()
+            .any(|pointer| !pointer.starts_with('/'))
+        {
+            bail!("Resource Type {name} has an invalid Display Name pointer");
+        }
         if resource_type.operations.read.is_none() && resource_type.operations.list.is_none() {
             bail!("Resource Type {name} has no observation Operation");
         }

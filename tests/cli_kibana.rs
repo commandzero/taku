@@ -329,7 +329,7 @@ impl Fake {
                     .unwrap_or_default();
                 captured.lock().unwrap().push(body.clone());
                 captured_content_types.lock().unwrap().push(content_type);
-                let response=match(request.method(),request.url()){(&Method::Post,"/api/saved_objects/_export"|"/s/esdiag/api/saved_objects/_export")=>Response::from_string(if body.contains("\"objects\""){"{\"id\":\"obj-1\",\"type\":\"visualization\",\"attributes\":{\"title\":\"Chart\",\"visState\":\"{\\\"a\\\":1}\",\"yaml\":\"# keep\\nx: 1\\n\"}}\n{\"exportedCount\":1,\"missingRefCount\":0}\n"}else{"{\"id\":\"9.4.2\",\"type\":\"config\",\"attributes\":{}}\n{\"id\":\"9.4.2\",\"type\":\"config-global\",\"attributes\":{}}\n{\"id\":\"obj-1\",\"type\":\"visualization\",\"sort\":[1],\"attributes\":{\"title\":\"Chart\",\"visState\":\"{\\\"a\\\":1}\",\"yaml\":\"# keep\\nx: 1\\n\"}}\n{\"exportedCount\":3,\"missingRefCount\":0}\n"}).with_header(Header::from_bytes("content-type","application/x-ndjson").unwrap()),(&Method::Post,path)if path.starts_with("/api/saved_objects/_import")||path.starts_with("/s/esdiag/api/saved_objects/_import")=>Response::from_string("{\"success\":true}"),_=>Response::from_string("not found").with_status_code(404)};
+                let response=match(request.method(),request.url()){(&Method::Post,"/api/saved_objects/_export"|"/s/esdiag/api/saved_objects/_export")=>Response::from_string(if body.contains("5e05b9ee-3e49-4efd-8a16-94de208ebb83"){"{\"attributes\":{\"color\":\"#48EFCF\",\"description\":\"Elastic Stack Diagnostics (ESDiag)\",\"name\":\"ESDiag\"},\"id\":\"5e05b9ee-3e49-4efd-8a16-94de208ebb83\",\"references\":[],\"type\":\"tag\"}\n{\"exportedCount\":1,\"missingRefCount\":0}\n"}else if body.contains("\"objects\""){"{\"id\":\"obj-1\",\"type\":\"visualization\",\"attributes\":{\"title\":\"Chart\",\"visState\":\"{\\\"a\\\":1}\",\"yaml\":\"# keep\\nx: 1\\n\"}}\n{\"exportedCount\":1,\"missingRefCount\":0}\n"}else{"{\"id\":\"9.4.2\",\"type\":\"config\",\"attributes\":{}}\n{\"id\":\"9.4.2\",\"type\":\"config-global\",\"attributes\":{}}\n{\"id\":\"obj-1\",\"type\":\"visualization\",\"sort\":[1],\"attributes\":{\"title\":\"Chart\",\"visState\":\"{\\\"a\\\":1}\",\"yaml\":\"# keep\\nx: 1\\n\"}}\n{\"attributes\":{\"color\":\"#48EFCF\",\"description\":\"Elastic Stack Diagnostics (ESDiag)\",\"name\":\"ESDiag\"},\"id\":\"5e05b9ee-3e49-4efd-8a16-94de208ebb83\",\"references\":[],\"type\":\"tag\"}\n{\"exportedCount\":4,\"missingRefCount\":0}\n"}).with_header(Header::from_bytes("content-type","application/x-ndjson").unwrap()),(&Method::Post,path)if path.starts_with("/api/saved_objects/_import")||path.starts_with("/s/esdiag/api/saved_objects/_import")=>Response::from_string("{\"success\":true}"),_=>Response::from_string("not found").with_status_code(404)};
                 request.respond(response).unwrap();
             }
         });
@@ -445,7 +445,7 @@ fn kibana_ndjson_is_unbundled_to_canonical_resources_and_rebuilt_only_for_push()
     );
     let path = project
         .path()
-        .join("kb/esdiag/saved_objects/Chart-e7a05abc.json");
+        .join("kb/esdiag/saved_objects/Chart-obj-1.json");
     let canonical = std::fs::read_to_string(&path).unwrap();
     assert!(canonical.contains("\"visState\": {"));
     assert!(canonical.contains("# keep\\nx: 1"));
@@ -534,6 +534,49 @@ fn kibana_ndjson_is_unbundled_to_canonical_resources_and_rebuilt_only_for_push()
         bodies
             .iter()
             .any(|body| body.contains("\"objects\"") && body.contains("obj-1"))
+    );
+}
+
+#[test]
+fn saved_object_filenames_use_the_first_available_display_name_pointer() {
+    let fake = Fake::start();
+    let project = tempfile::tempdir().unwrap();
+    assert!(
+        StdCommand::new("git")
+            .args(["init", "-q"])
+            .current_dir(project.path())
+            .status()
+            .unwrap()
+            .success()
+    );
+    run(
+        &project,
+        &["init", "--layout", "single", "--environment", "dev"],
+    );
+    run(&project, &["install", "kibana"]);
+    run(
+        &project,
+        &["app", "add", "kibana", "kb", "--url", &fake.url],
+    );
+
+    run(
+        &project,
+        &[
+            "add",
+            "--type",
+            "saved_objects",
+            "--namespace",
+            "esdiag",
+            "--id",
+            "5e05b9ee-3e49-4efd-8a16-94de208ebb83",
+        ],
+    );
+
+    assert!(
+        project
+            .path()
+            .join("kb/esdiag/saved_objects/ESDiag-208ebb83.json")
+            .is_file()
     );
 }
 

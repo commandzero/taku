@@ -227,14 +227,23 @@ pub enum IdScope {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct DisplayName {
-    #[serde(default = "default_name_pointer")]
-    pub pointer: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pointer: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pointers: Vec<String>,
     pub strategy: DisplayNameStrategy,
     #[serde(default)]
     pub unique: bool,
 }
-fn default_name_pointer() -> String {
-    "/name".into()
+
+impl DisplayName {
+    pub fn pointers(&self) -> impl Iterator<Item = &str> {
+        self.pointers.iter().map(String::as_str).chain(
+            self.pointers
+                .is_empty()
+                .then(|| self.pointer.as_deref().unwrap_or("/name")),
+        )
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
@@ -442,7 +451,7 @@ pub(crate) fn sensitive_field_conflicts(resource_type: &ResourceType, pointer: &
             || pointer.starts_with(&format!("{required}/"))
     };
     overlaps(&resource_type.id.pointer)
-        || overlaps(&resource_type.display_name.pointer)
+        || resource_type.display_name.pointers().any(&overlaps)
         || resource_type.transformations.iter().any(|transformation| {
             matches!(
                 transformation,
