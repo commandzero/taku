@@ -20,6 +20,14 @@ _Avoid_: Overlay, auto-detected layout
 An installable, reusable definition containing one Target Profile and its Resource Type Catalog. It is vendored into a Project and instantiated by Environment-specific Targets whose names default to the Application name.
 _Avoid_: Target, remote application instance
 
+**Application Version**:
+The remote product version supported by an Application Definition.
+_Avoid_: Application Definition Version, schema version
+
+**Application Definition Version**:
+The release identifier for the content of an Application Definition and its Resource Type Catalog.
+_Avoid_: Application Version, schema version
+
 **Application Installation**:
 The definition-only vendoring of one or more Applications by `taku install`, without creating Targets. `taku app add` may perform the same installation atomically on first use after explicit confirmation or authorization.
 _Avoid_: Target addition, remote installation

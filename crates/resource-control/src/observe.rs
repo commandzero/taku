@@ -444,10 +444,6 @@ pub fn remote_list(
                             let mut op = operation.clone();
                             append_query_parameter(&mut op.path, page_parameter, &page.to_string());
                             append_query_parameter(&mut op.path, size_parameter, &size.to_string());
-                            if let Some(path) = &mut op.default_namespace_path {
-                                append_query_parameter(path, page_parameter, &page.to_string());
-                                append_query_parameter(path, size_parameter, &size.to_string());
-                            }
                             match execute_retry_safe(
                                 target,
                                 &app,
@@ -492,9 +488,6 @@ pub fn remote_list(
                             if let Some(value) = &cursor {
                                 let encoded = urlencoding::encode(value);
                                 append_query_parameter(&mut op.path, cursor_parameter, &encoded);
-                                if let Some(path) = &mut op.default_namespace_path {
-                                    append_query_parameter(path, cursor_parameter, &encoded);
-                                }
                             }
                             let mut values = match execute_retry_safe(
                                 target,

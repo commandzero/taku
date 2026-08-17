@@ -87,6 +87,7 @@ fn setup(fake: &Fake) -> TempDir {
             .path()
             .join(".taku/applications/elasticsearch/resources.yml"),
         r#"schema_version: 1
+version: pagination-definition
 application: { name: elasticsearch, version: pagination-test }
 target_profile:
   headers: {}

@@ -146,19 +146,19 @@ pub fn execute(
         request = request.header(name, value.expose_secret());
     }
     if let Some(values) = request_body.as_deref() {
-        let format = operation
+        let format = operation.bundle.as_ref().map(|bundle| bundle.format);
+        let body = encode_payload(values, format)?;
+        request = if let Some(multipart) = operation
             .bundle
             .as_ref()
-            .map(crate::Bundle::format)
-            .or(operation.framing);
-        let body = encode_payload(values, format)?;
-        request = if let Some(multipart) =
-            operation.bundle.as_ref().and_then(crate::Bundle::multipart)
+            .and_then(|bundle| bundle.multipart.as_ref())
         {
             let part = reqwest::blocking::multipart::Part::bytes(body)
-                .file_name(multipart.filename)
+                .file_name(multipart.filename.clone())
                 .mime_str(&multipart.content_type)?;
-            request.multipart(reqwest::blocking::multipart::Form::new().part(multipart.name, part))
+            request.multipart(
+                reqwest::blocking::multipart::Form::new().part(multipart.name.clone(), part),
+            )
         } else if format == Some(PayloadFormat::Ndjson) {
             request
                 .body(body)
@@ -326,10 +326,9 @@ fn map_response(
             if bytes.is_empty() {
                 return Ok(RemoteResult::Success(Vec::new()));
             }
-            let mut values = parse_values(&bytes, operation.unbundle.or(operation.framing))
-                .map_err(|_| {
-                    anyhow::anyhow!("successful remote response could not be parsed safely")
-                })?;
+            let mut values = parse_values(&bytes, operation.unbundle).map_err(|_| {
+                anyhow::anyhow!("successful remote response could not be parsed safely")
+            })?;
             let next_cursor = match &operation.pagination {
                 Some(crate::Pagination::Cursor { next_pointer, .. }) => values
                     .first()
@@ -419,9 +418,9 @@ fn conventional_outcome(status: StatusCode) -> Outcome {
     }
 }
 
-fn parse_values(bytes: &[u8], framing: Option<PayloadFormat>) -> Result<Vec<Value>> {
+fn parse_values(bytes: &[u8], format: Option<PayloadFormat>) -> Result<Vec<Value>> {
     let text = std::str::from_utf8(bytes).context("remote response is not UTF-8")?;
-    if framing == Some(PayloadFormat::Ndjson) {
+    if format == Some(PayloadFormat::Ndjson) {
         let mut values = Vec::new();
         for line in text.lines().filter(|l| !l.trim().is_empty()) {
             values.push(json5::from_str(line).context("malformed NDJSON line")?);
@@ -582,12 +581,7 @@ fn apply_outbound(value: &mut Value, transformations: &[crate::Transformation]) 
 
 fn operation_path<'a>(operation: &'a Operation, namespace: Option<&str>) -> Cow<'a, str> {
     if namespace == Some("default") {
-        Cow::Borrowed(
-            operation
-                .default_namespace_path
-                .as_deref()
-                .unwrap_or(&operation.path),
-        )
+        Cow::Borrowed(&operation.path)
     } else if namespace.is_some()
         && let Some(wrapper) = &operation.namespace
     {

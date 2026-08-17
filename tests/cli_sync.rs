@@ -129,6 +129,7 @@ fn changed_target_facts_that_select_a_new_variant_block_push_until_pull_reconcil
     let target = FakeTarget::start();
     let project = setup(&target);
     let definition = r#"schema_version: 1
+version: "variant-definition"
 application: { name: elasticsearch, version: "variant-test" }
 target_profile:
   headers: { content-type: application/json }
@@ -186,6 +187,7 @@ fn target_scoped_pending_create_becomes_identified_only_after_trustworthy_succes
     let target = FakeTarget::start();
     let project = setup(&target);
     let definition = r#"schema_version: 1
+version: "test-definition"
 application: { name: elasticsearch, version: "test" }
 target_profile:
   headers: { content-type: application/json }
@@ -488,6 +490,7 @@ fn guarded_concurrency_uses_a_response_token_without_persisting_the_response_onl
     let target = FakeTarget::start();
     let project = setup(&target);
     let definition = r#"schema_version: 1
+version: guard-definition
 application: { name: elasticsearch, version: guard-test }
 target_profile:
   headers: { content-type: application/json }

@@ -60,10 +60,16 @@ fn lists_and_installs_embedded_applications_without_adding_targets() {
     let listed = json(&project, &["app"]);
     assert_eq!(listed["result"][0]["name"], "elasticsearch");
     assert_eq!(listed["result"][1]["name"], "kibana");
+    assert_eq!(listed["result"][0]["version"], "9.4.0");
+    assert_eq!(listed["result"][0]["definition_version"], "1.2.0");
+    assert_eq!(listed["result"][1]["version"], "9.4.0");
+    assert_eq!(listed["result"][1]["definition_version"], "1.5.0");
     assert_eq!(listed["result"][0]["installed"], false);
 
     let installed = json(&project, &["install", "elasticsearch", "kibana"]);
     assert_eq!(installed["result"][0]["source"], "embedded");
+    assert_eq!(installed["result"][0]["version"], "9.4.0");
+    assert_eq!(installed["result"][0]["definition_version"], "1.2.0");
     assert!(
         project
             .path()

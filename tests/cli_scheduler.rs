@@ -206,7 +206,7 @@ fn setup(fake: &Fake, include_heavy: bool, include_dependent: bool) -> TempDir {
         );
     }
     let definition = format!(
-        "schema_version: 1\napplication: {{ name: elasticsearch, version: scheduler-test }}\ntarget_profile:\n  headers: {{ content-type: application/json }}\n  fact_probes: []\n  resource_types:\n{resource_types}"
+        "schema_version: 1\nversion: scheduler-definition\napplication: {{ name: elasticsearch, version: scheduler-test }}\ntarget_profile:\n  headers: {{ content-type: application/json }}\n  fact_probes: []\n  resource_types:\n{resource_types}"
     );
     std::fs::write(
         project

@@ -73,10 +73,11 @@ fn run_failure(project: &TempDir, args: &[&str]) -> std::process::Output {
     assert!(output.status.code().is_some_and(|code| code != 0));
     output
 }
-fn definition(name: &str, version: &str) -> String {
+fn definition(name: &str, definition_version: &str) -> String {
     format!(
         r#"schema_version: 1
-application: {{ name: {name}, version: "{version}" }}
+version: "{definition_version}"
+application: {{ name: {name}, version: "test-application" }}
 target_profile:
   headers: {{}}
   fact_probes: []
@@ -134,15 +135,14 @@ fn refresh_install_and_update_use_an_explicit_git_source_without_implicit_refres
     commit(source.path(), "v2");
     let before = std::fs::read_to_string(&installed_path).unwrap();
     let listed = run(&project, &["app"]);
-    assert_eq!(
-        listed["result"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|item| item["name"] == "custom")
-            .unwrap()["version"],
-        "1.0.0"
-    );
+    let custom = listed["result"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["name"] == "custom")
+        .unwrap();
+    assert_eq!(custom["version"], "test-application");
+    assert_eq!(custom["definition_version"], "1.0.0");
     assert_eq!(std::fs::read_to_string(&installed_path).unwrap(), before);
     run(&project, &["app", "refresh"]);
     run(&project, &["update", "custom"]);

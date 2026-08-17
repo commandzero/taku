@@ -99,6 +99,16 @@ The lifecycle tests create uniquely named remote fixtures, manage them through t
 
 An Application is a strictly validated Target Profile and Resource Type Catalog. Each Resource Type declares identity, optional namespacing, display-name policy, lifecycle Operations, actual HTTP methods, paths, headers and body templates, One/Many cardinality, independent Bundling and Unbundling, transformations, write intent, retry safety, scheduling class, and dependencies. Many writes are bundled at runtime, including multipart NDJSON payloads. HTTP verbs do not imply lifecycle semantics.
 
+Application definitions distinguish the file-format `schema_version`, the definition's own top-level `version`, and the supported remote product version under `application.version`:
+
+```yaml
+schema_version: 1
+version: "1.2.0"
+application:
+  name: elasticsearch
+  version: "9.4.0"
+```
+
 A display-name policy may define one `pointer` or an ordered `pointers` fallback list. The first pointer with a scalar value supplies the human-readable filename component; if none match, Taku falls back to the Resource ID. The `name_id` strategy appends up to the last eight characters of the Resource ID when that suffix is filename-safe, with an eight-character hash fallback for other IDs.
 
 Filesystem Projection is separate from operation encoding. `split` converts one Resource Object into its canonical file tree; `merge` reconstructs it. `bundle.format` converts one or more Resource Objects into a request payload; an optional `bundle.multipart` configuration wraps that payload in a named multipart form part. `unbundle` decodes a response payload. Kibana Skills use the built-in `frontmatter_markdown` projection, while Kibana Saved Objects use NDJSON Unbundling and an explicitly configured multipart NDJSON Bundle.

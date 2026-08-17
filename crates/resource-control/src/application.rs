@@ -20,6 +20,7 @@ struct EmbeddedApplications;
 pub struct ApplicationListing {
     pub name: String,
     pub version: String,
+    pub definition_version: String,
     pub installed: bool,
     pub selected_source: String,
     pub shadowed_sources: Vec<String>,
@@ -29,6 +30,7 @@ pub struct ApplicationListing {
 pub struct InstallResult {
     pub name: String,
     pub version: String,
+    pub definition_version: String,
     pub source: String,
     pub checksum: String,
 }
@@ -42,6 +44,7 @@ pub struct RefreshResult {
 pub struct UpdateResult {
     pub name: String,
     pub version: String,
+    pub definition_version: String,
     pub source: String,
     pub outcome: String,
     pub checksum: String,
@@ -147,6 +150,7 @@ pub fn list_applications(root: &Path) -> Result<Vec<ApplicationListing>> {
             Ok(ApplicationListing {
                 name,
                 version: definition.application.version,
+                definition_version: definition.version,
                 installed,
                 selected_source,
                 shadowed_sources,
@@ -206,7 +210,8 @@ pub fn install_applications_from(
         )?;
         results.push(InstallResult {
             name: name.clone(),
-            version: definition.application.version,
+            version: definition.application.version.clone(),
+            definition_version: definition.version.clone(),
             source,
             checksum,
         });
@@ -381,7 +386,8 @@ pub fn update_applications(
                 fs::rename(temporary, destination)?;
                 out.push(UpdateResult {
                     name,
-                    version: definition.application.version,
+                    version: definition.application.version.clone(),
+                    definition_version: definition.version.clone(),
                     source,
                     outcome: "updated".into(),
                     checksum,
@@ -390,6 +396,7 @@ pub fn update_applications(
                 out.push(UpdateResult {
                     name,
                     version: "".into(),
+                    definition_version: "".into(),
                     source: "".into(),
                     outcome: "skipped_absent".into(),
                     checksum: "".into(),
@@ -673,6 +680,12 @@ pub fn parse_definition(expected_name: &str, bytes: &[u8]) -> Result<Application
             definition.application.name
         );
     }
+    if definition.application.version.is_empty() {
+        bail!("Application {expected_name} has no supported application version");
+    }
+    if definition.version.is_empty() {
+        bail!("Application {expected_name} has an empty definition version");
+    }
     if definition.target_profile.resource_types.is_empty() {
         bail!("Application {expected_name} has no Resource Types");
     }
@@ -877,16 +890,6 @@ fn validate_operation(operation: &crate::Operation, owner: &str) -> Result<()> {
     if !operation.path.starts_with('/') {
         bail!("{owner} Operation path must begin with /");
     }
-    if operation
-        .default_namespace_path
-        .as_ref()
-        .is_some_and(|path| !path.starts_with('/'))
-    {
-        bail!("{owner} default Namespace Operation path must begin with /");
-    }
-    if operation.namespace.is_some() && operation.default_namespace_path.is_some() {
-        bail!("{owner} Operation cannot define both namespace wrappers and default_namespace_path");
-    }
     if let Some(namespace) = &operation.namespace {
         if namespace.prefix.is_none() && namespace.suffix.is_none() {
             bail!("{owner} Operation namespace must define a prefix or suffix");
@@ -925,16 +928,10 @@ fn validate_operation(operation: &crate::Operation, owner: &str) -> Result<()> {
     {
         bail!("{owner} Operation extract_missing cannot map to success");
     }
-    if matches!(
-        operation.bundle.as_ref(),
-        Some(crate::Bundle::Config(crate::BundleConfig {
-            format: crate::PayloadFormat::MultipartNdjson,
-            ..
-        }))
-    ) {
-        bail!("{owner} Operation must configure multipart separately from bundle format");
-    }
-    if let Some(multipart) = operation.bundle.as_ref().and_then(crate::Bundle::multipart)
+    if let Some(multipart) = operation
+        .bundle
+        .as_ref()
+        .and_then(|bundle| bundle.multipart.as_ref())
         && (multipart.name.is_empty()
             || multipart.filename.is_empty()
             || multipart.content_type.is_empty())

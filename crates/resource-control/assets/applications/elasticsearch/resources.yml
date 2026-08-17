@@ -1,7 +1,8 @@
 schema_version: 1
+version: "1.2.0"
 application:
   name: elasticsearch
-  version: "1.2.0"
+  version: "9.4.0"
 target_profile:
   headers:
     accept: application/json

@@ -134,7 +134,7 @@ fn cross_project_promotion_requires_exact_installed_application_compatibility() 
         .join(".taku/applications/elasticsearch/resources.yml");
     let mut definition: serde_yaml::Value =
         serde_yaml::from_str(&std::fs::read_to_string(&installed).unwrap()).unwrap();
-    definition["application"]["version"] = serde_yaml::Value::String("different".into());
+    definition["version"] = serde_yaml::Value::String("different".into());
     std::fs::write(&installed, serde_yaml::to_string(&definition).unwrap()).unwrap();
 
     let output = Command::cargo_bin("taku")

@@ -104,6 +104,7 @@ pub struct InitResult {
 #[serde(deny_unknown_fields)]
 pub struct ApplicationDefinition {
     pub schema_version: u32,
+    pub version: String,
     pub application: ApplicationIdentity,
     pub target_profile: TargetProfile,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -310,9 +311,6 @@ pub struct Operation {
     pub path: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub namespace: Option<NamespacePath>,
-    /// Backward-compatible path used by older schema version 1 definitions.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub default_namespace_path: Option<String>,
     pub cardinality: Cardinality,
     #[serde(default)]
     pub headers: BTreeMap<String, String>,
@@ -322,13 +320,10 @@ pub struct Operation {
     pub extract: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub extract_missing: Option<Outcome>,
-    #[serde(alias = "request_framing", skip_serializing_if = "Option::is_none")]
-    pub bundle: Option<Bundle>,
-    #[serde(alias = "response_framing", skip_serializing_if = "Option::is_none")]
-    pub unbundle: Option<PayloadFormat>,
-    /// Backward-compatible shorthand used by schema version 1 definitions.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub framing: Option<PayloadFormat>,
+    pub bundle: Option<Bundle>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unbundle: Option<PayloadFormat>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub body: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -372,45 +367,11 @@ pub enum Cardinality {
 pub enum PayloadFormat {
     Json,
     Ndjson,
-    MultipartNdjson,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(untagged)]
-pub enum Bundle {
-    Config(BundleConfig),
-    Legacy(PayloadFormat),
-}
-
-impl Bundle {
-    pub fn format(&self) -> PayloadFormat {
-        match self {
-            Self::Config(BundleConfig {
-                format: PayloadFormat::MultipartNdjson,
-                ..
-            })
-            | Self::Legacy(PayloadFormat::MultipartNdjson) => PayloadFormat::Ndjson,
-            Self::Config(config) => config.format,
-            Self::Legacy(format) => *format,
-        }
-    }
-
-    pub fn multipart(&self) -> Option<Multipart> {
-        match self {
-            Self::Config(config) => config.multipart.clone(),
-            Self::Legacy(PayloadFormat::MultipartNdjson) => Some(Multipart {
-                name: "file".into(),
-                filename: "export.ndjson".into(),
-                content_type: "application/x-ndjson".into(),
-            }),
-            Self::Legacy(_) => None,
-        }
-    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct BundleConfig {
+pub struct Bundle {
     pub format: PayloadFormat,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub multipart: Option<Multipart>,
@@ -425,8 +386,8 @@ pub struct Multipart {
 }
 
 #[cfg(test)]
-mod bundle_tests {
-    use super::{Bundle, Operation, PayloadFormat};
+mod configuration_tests {
+    use super::{ApplicationDefinition, Operation, PayloadFormat};
 
     #[test]
     fn parses_explicit_multipart_bundle_and_query() {
@@ -447,8 +408,8 @@ bundle:
         .unwrap();
 
         let bundle = operation.bundle.unwrap();
-        assert_eq!(bundle.format(), PayloadFormat::Ndjson);
-        let multipart = bundle.multipart().unwrap();
+        assert_eq!(bundle.format, PayloadFormat::Ndjson);
+        let multipart = bundle.multipart.unwrap();
         assert_eq!(multipart.name, "file");
         assert_eq!(multipart.filename, "saved_objects.ndjson");
         assert_eq!(multipart.content_type, "application/x-ndjson");
@@ -456,23 +417,25 @@ bundle:
     }
 
     #[test]
-    fn parses_legacy_multipart_ndjson_bundle() {
-        let operation: Operation = serde_yaml::from_str(
-            r#"
-method: POST
-path: /import
-cardinality: many
-bundle: multipart_ndjson
-"#,
-        )
-        .unwrap();
+    fn rejects_removed_operation_shapes() {
+        for removed in [
+            "bundle: multipart_ndjson",
+            "default_namespace_path: /default",
+            "framing: ndjson",
+        ] {
+            let yaml = format!("method: POST\npath: /import\ncardinality: many\n{removed}\n");
+            assert!(serde_yaml::from_str::<Operation>(&yaml).is_err());
+        }
+    }
 
-        let bundle = operation.bundle.unwrap();
-        assert!(matches!(bundle, Bundle::Legacy(_)));
-        assert_eq!(bundle.format(), PayloadFormat::Ndjson);
-        let multipart = bundle.multipart().unwrap();
-        assert_eq!(multipart.name, "file");
-        assert_eq!(multipart.filename, "export.ndjson");
+    #[test]
+    fn requires_an_application_definition_version() {
+        let yaml = r#"
+schema_version: 1
+application: { name: example, version: "1.0.0" }
+target_profile: { resource_types: {} }
+"#;
+        assert!(serde_yaml::from_str::<ApplicationDefinition>(yaml).is_err());
     }
 }
 
