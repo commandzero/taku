@@ -5,6 +5,7 @@ use redact::Secret;
 use reqwest::blocking::{Client, Response};
 use reqwest::{Method, StatusCode};
 use serde_json::{Map, Value};
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::time::Duration;
 
@@ -38,7 +39,8 @@ pub fn execute_probe(
         .get("url")
         .map(|value| value.expose_secret().as_str())
         .unwrap_or(&target.url);
-    let path = render_path(operation_path(operation, None), None, None, None);
+    let operation_path = operation_path(operation, None);
+    let path = render_path(&operation_path, None, None, None);
     let url = format!("{}{}", base_url.trim_end_matches('/'), path);
     let client = Client::builder().timeout(Duration::from_secs(30)).build()?;
     let method = Method::from_bytes(operation.method.as_bytes())
@@ -103,8 +105,9 @@ pub fn execute(
     input: OperationInput<'_>,
     auth: &BTreeMap<String, Secret<String>>,
 ) -> Result<RemoteResult> {
+    let operation_path = operation_path(operation, input.namespace);
     let path = render_path(
-        operation_path(operation, input.namespace),
+        &operation_path,
         input.namespace,
         input.id,
         input
@@ -127,6 +130,9 @@ pub fn execute(
     let method = Method::from_bytes(operation.method.as_bytes())
         .context("invalid configured HTTP method")?;
     let mut request = client.request(method, &url);
+    if !operation.query.is_empty() {
+        request = request.query(&operation.query);
+    }
     for (name, value) in &app.target_profile.headers {
         request = request.header(name, value);
     }
@@ -140,26 +146,23 @@ pub fn execute(
         request = request.header(name, value.expose_secret());
     }
     if let Some(values) = request_body.as_deref() {
-        let framing = operation.bundle.or(operation.framing);
-        request = if framing == Some(PayloadFormat::Ndjson) {
-            let mut framed = String::new();
-            for value in values {
-                framed.push_str(&serde_json::to_string(value)?);
-                framed.push('\n');
-            }
+        let format = operation
+            .bundle
+            .as_ref()
+            .map(crate::Bundle::format)
+            .or(operation.framing);
+        let body = encode_payload(values, format)?;
+        request = if let Some(multipart) =
+            operation.bundle.as_ref().and_then(crate::Bundle::multipart)
+        {
+            let part = reqwest::blocking::multipart::Part::bytes(body)
+                .file_name(multipart.filename)
+                .mime_str(&multipart.content_type)?;
+            request.multipart(reqwest::blocking::multipart::Form::new().part(multipart.name, part))
+        } else if format == Some(PayloadFormat::Ndjson) {
             request
-                .body(framed)
+                .body(body)
                 .header("content-type", "application/x-ndjson")
-        } else if framing == Some(PayloadFormat::MultipartNdjson) {
-            let mut framed = String::new();
-            for value in values {
-                framed.push_str(&serde_json::to_string(value)?);
-                framed.push('\n');
-            }
-            let part = reqwest::blocking::multipart::Part::bytes(framed.into_bytes())
-                .file_name("export.ndjson")
-                .mime_str("application/x-ndjson")?;
-            request.multipart(reqwest::blocking::multipart::Form::new().part("file", part))
         } else if values.len() == 1 {
             request.json(&values[0])
         } else {
@@ -181,6 +184,21 @@ pub fn execute(
         !input.mutation || operation.trustworthy_response,
     )
     .context("Transformation Conflict while converting successful response")
+}
+
+fn encode_payload(values: &[Value], format: Option<PayloadFormat>) -> Result<Vec<u8>> {
+    if format == Some(PayloadFormat::Ndjson) {
+        let mut framed = Vec::new();
+        for value in values {
+            serde_json::to_writer(&mut framed, value)?;
+            framed.push(b'\n');
+        }
+        Ok(framed)
+    } else if values.len() == 1 {
+        Ok(serde_json::to_vec(&values[0])?)
+    } else {
+        Ok(serde_json::to_vec(values)?)
+    }
 }
 
 pub fn execute_retry_safe(
@@ -562,14 +580,25 @@ fn apply_outbound(value: &mut Value, transformations: &[crate::Transformation]) 
     Ok(())
 }
 
-fn operation_path<'a>(operation: &'a Operation, namespace: Option<&str>) -> &'a str {
+fn operation_path<'a>(operation: &'a Operation, namespace: Option<&str>) -> Cow<'a, str> {
     if namespace == Some("default") {
-        operation
-            .default_namespace_path
-            .as_deref()
-            .unwrap_or(&operation.path)
+        Cow::Borrowed(
+            operation
+                .default_namespace_path
+                .as_deref()
+                .unwrap_or(&operation.path),
+        )
+    } else if namespace.is_some()
+        && let Some(wrapper) = &operation.namespace
+    {
+        Cow::Owned(format!(
+            "{}{}{}",
+            wrapper.prefix.as_deref().unwrap_or_default(),
+            operation.path,
+            wrapper.suffix.as_deref().unwrap_or_default()
+        ))
     } else {
-        &operation.path
+        Cow::Borrowed(&operation.path)
     }
 }
 
@@ -639,4 +668,31 @@ pub fn remove_pointer(root: &mut Value, pointer: &str) -> Result<()> {
         map.remove(&last.replace("~1", "/").replace("~0", "~"));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod namespace_path_tests {
+    use super::{operation_path, render_path};
+    use crate::Operation;
+
+    #[test]
+    fn namespace_suffix_wraps_only_named_namespaces() {
+        let operation: Operation = serde_yaml::from_str(
+            r#"
+method: GET
+path: /api/widgets
+namespace: { suffix: "/namespaces/{namespace}" }
+cardinality: many
+"#,
+        )
+        .unwrap();
+
+        let named = operation_path(&operation, Some("blue team"));
+        assert_eq!(
+            render_path(&named, Some("blue team"), None, None),
+            "/api/widgets/namespaces/blue%20team"
+        );
+        assert_eq!(operation_path(&operation, Some("default")), "/api/widgets");
+        assert_eq!(operation_path(&operation, None), "/api/widgets");
+    }
 }

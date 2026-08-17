@@ -14,6 +14,7 @@ struct Fake {
     url: String,
     bodies: Arc<Mutex<Vec<String>>>,
     content_types: Arc<Mutex<Vec<String>>>,
+    urls: Arc<Mutex<Vec<String>>>,
     stop: Arc<AtomicBool>,
     thread: Option<thread::JoinHandle<()>>,
 }
@@ -310,9 +311,14 @@ impl Fake {
         let url = format!("http://{}", server.server_addr());
         let bodies = Arc::new(Mutex::new(Vec::new()));
         let content_types = Arc::new(Mutex::new(Vec::new()));
+        let urls = Arc::new(Mutex::new(Vec::new()));
         let stop = Arc::new(AtomicBool::new(false));
-        let (captured, captured_content_types, ending) =
-            (bodies.clone(), content_types.clone(), stop.clone());
+        let (captured, captured_content_types, captured_urls, ending) = (
+            bodies.clone(),
+            content_types.clone(),
+            urls.clone(),
+            stop.clone(),
+        );
         let thread = thread::spawn(move || {
             while !ending.load(Ordering::Relaxed) {
                 let Some(mut request) = server.recv_timeout(Duration::from_millis(50)).unwrap()
@@ -329,6 +335,7 @@ impl Fake {
                     .unwrap_or_default();
                 captured.lock().unwrap().push(body.clone());
                 captured_content_types.lock().unwrap().push(content_type);
+                captured_urls.lock().unwrap().push(request.url().to_owned());
                 let response=match(request.method(),request.url()){(&Method::Post,"/api/saved_objects/_export"|"/s/esdiag/api/saved_objects/_export")=>Response::from_string(if body.contains("5e05b9ee-3e49-4efd-8a16-94de208ebb83"){"{\"attributes\":{\"color\":\"#48EFCF\",\"description\":\"Elastic Stack Diagnostics (ESDiag)\",\"name\":\"ESDiag\"},\"id\":\"5e05b9ee-3e49-4efd-8a16-94de208ebb83\",\"references\":[],\"type\":\"tag\"}\n{\"exportedCount\":1,\"missingRefCount\":0}\n"}else if body.contains("\"objects\""){"{\"id\":\"obj-1\",\"type\":\"visualization\",\"attributes\":{\"title\":\"Chart\",\"visState\":\"{\\\"a\\\":1}\",\"yaml\":\"# keep\\nx: 1\\n\"}}\n{\"exportedCount\":1,\"missingRefCount\":0}\n"}else{"{\"id\":\"9.4.2\",\"type\":\"config\",\"attributes\":{}}\n{\"id\":\"9.4.2\",\"type\":\"config-global\",\"attributes\":{}}\n{\"id\":\"obj-1\",\"type\":\"visualization\",\"sort\":[1],\"attributes\":{\"title\":\"Chart\",\"visState\":\"{\\\"a\\\":1}\",\"yaml\":\"# keep\\nx: 1\\n\"}}\n{\"attributes\":{\"color\":\"#48EFCF\",\"description\":\"Elastic Stack Diagnostics (ESDiag)\",\"name\":\"ESDiag\"},\"id\":\"5e05b9ee-3e49-4efd-8a16-94de208ebb83\",\"references\":[],\"type\":\"tag\"}\n{\"exportedCount\":4,\"missingRefCount\":0}\n"}).with_header(Header::from_bytes("content-type","application/x-ndjson").unwrap()),(&Method::Post,path)if path.starts_with("/api/saved_objects/_import")||path.starts_with("/s/esdiag/api/saved_objects/_import")=>Response::from_string("{\"success\":true}"),_=>Response::from_string("not found").with_status_code(404)};
                 request.respond(response).unwrap();
             }
@@ -337,6 +344,7 @@ impl Fake {
             url,
             bodies,
             content_types,
+            urls,
             stop,
             thread: Some(thread),
         }
@@ -521,7 +529,14 @@ fn kibana_ndjson_is_unbundled_to_canonical_resources_and_rebuilt_only_for_push()
             .starts_with("multipart/form-data; boundary=")
     );
     assert!(import.contains("name=\"file\""));
-    assert!(import.contains("filename=\"export.ndjson\""));
+    assert!(import.contains("filename=\"saved_objects.ndjson\""));
+    assert!(
+        fake.urls
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|url| url == "/s/esdiag/api/saved_objects/_import?overwrite=true")
+    );
     assert!(import.contains("\\\"a\\\":3"));
     assert_eq!(
         bodies
@@ -1107,19 +1122,6 @@ fn namespace_selectors_render_named_and_default_operation_paths() {
         &["app", "add", "kibana", "kb", "--url", &fake.url],
     );
 
-    let definition_path = project
-        .path()
-        .join(".taku/applications/kibana/resources.yml");
-    let mut definition: serde_yaml::Value =
-        serde_yaml::from_str(&std::fs::read_to_string(&definition_path).unwrap()).unwrap();
-    let saved_objects = &mut definition["target_profile"]["resource_types"]["saved_objects"];
-    saved_objects["namespaced"] = serde_yaml::Value::Bool(true);
-    saved_objects["operations"]["list"]["path"] =
-        serde_yaml::Value::String("/s/{namespace}/api/saved_objects/_export".into());
-    saved_objects["operations"]["list"]["default_namespace_path"] =
-        serde_yaml::Value::String("/api/saved_objects/_export".into());
-    std::fs::write(definition_path, serde_yaml::to_string(&definition).unwrap()).unwrap();
-
     let named = run(
         &project,
         &[
@@ -1154,6 +1156,12 @@ fn namespace_selectors_render_named_and_default_operation_paths() {
 
     let bodies = fake.bodies.lock().unwrap();
     assert_eq!(bodies.len(), 2);
+    let urls = fake.urls.lock().unwrap();
+    assert!(
+        urls.iter()
+            .any(|url| url == "/s/esdiag/api/saved_objects/_export")
+    );
+    assert!(urls.iter().any(|url| url == "/api/saved_objects/_export"));
 }
 
 #[test]
@@ -1192,14 +1200,14 @@ fn selected_write_operation_applies_its_own_outbound_transformations() {
         "operations": {
             "read": {
                 "method": "GET",
-                "path": "/s/{namespace}/api/workflows/workflow/{id}",
-                "default_namespace_path": "/api/workflows/workflow/{id}",
+                "path": "/api/workflows/workflow/{id}",
+                "namespace": {"prefix": "/s/{namespace}"},
                 "cardinality": "one"
             },
             "list": {
                 "method": "GET",
-                "path": "/s/{namespace}/api/workflows",
-                "default_namespace_path": "/api/workflows",
+                "path": "/api/workflows",
+                "namespace": {"prefix": "/s/{namespace}"},
                 "cardinality": "many",
                 "extract": "/results",
                 "pagination": {
@@ -1212,14 +1220,14 @@ fn selected_write_operation_applies_its_own_outbound_transformations() {
             },
             "create": {
                 "method": "POST",
-                "path": "/s/{namespace}/api/workflows/workflow",
-                "default_namespace_path": "/api/workflows/workflow",
+                "path": "/api/workflows/workflow",
+                "namespace": {"prefix": "/s/{namespace}"},
                 "cardinality": "one"
             },
             "update": {
                 "method": "PUT",
-                "path": "/s/{namespace}/api/workflows/workflow/{id}",
-                "default_namespace_path": "/api/workflows/workflow/{id}",
+                "path": "/api/workflows/workflow/{id}",
+                "namespace": {"prefix": "/s/{namespace}"},
                 "cardinality": "one",
                 "transformations": [{"kind": "omit", "pointer": "/id"}]
             }

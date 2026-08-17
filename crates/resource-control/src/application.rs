@@ -884,6 +884,36 @@ fn validate_operation(operation: &crate::Operation, owner: &str) -> Result<()> {
     {
         bail!("{owner} default Namespace Operation path must begin with /");
     }
+    if operation.namespace.is_some() && operation.default_namespace_path.is_some() {
+        bail!("{owner} Operation cannot define both namespace wrappers and default_namespace_path");
+    }
+    if let Some(namespace) = &operation.namespace {
+        if namespace.prefix.is_none() && namespace.suffix.is_none() {
+            bail!("{owner} Operation namespace must define a prefix or suffix");
+        }
+        if namespace
+            .prefix
+            .as_ref()
+            .is_some_and(|prefix| !prefix.starts_with('/'))
+        {
+            bail!("{owner} Operation namespace prefix must begin with /");
+        }
+        if namespace
+            .suffix
+            .as_ref()
+            .is_some_and(|suffix| !suffix.starts_with('/'))
+        {
+            bail!("{owner} Operation namespace suffix must begin with /");
+        }
+        if !namespace
+            .prefix
+            .iter()
+            .chain(namespace.suffix.iter())
+            .any(|part| part.contains("{namespace}"))
+        {
+            bail!("{owner} Operation namespace prefix or suffix must contain {{namespace}}");
+        }
+    }
     if let Some(pointer) = &operation.body_pointer
         && (operation.body.is_none() || !pointer.starts_with('/'))
     {
@@ -894,6 +924,22 @@ fn validate_operation(operation: &crate::Operation, owner: &str) -> Result<()> {
         .is_some_and(|outcome| matches!(outcome, crate::Outcome::Success))
     {
         bail!("{owner} Operation extract_missing cannot map to success");
+    }
+    if matches!(
+        operation.bundle.as_ref(),
+        Some(crate::Bundle::Config(crate::BundleConfig {
+            format: crate::PayloadFormat::MultipartNdjson,
+            ..
+        }))
+    ) {
+        bail!("{owner} Operation must configure multipart separately from bundle format");
+    }
+    if let Some(multipart) = operation.bundle.as_ref().and_then(crate::Bundle::multipart)
+        && (multipart.name.is_empty()
+            || multipart.filename.is_empty()
+            || multipart.content_type.is_empty())
+    {
+        bail!("{owner} Operation multipart bundle fields cannot be empty");
     }
     validate_transformations(&operation.transformations, owner)?;
     Ok(())

@@ -101,7 +101,7 @@ An Application is a strictly validated Target Profile and Resource Type Catalog.
 
 A display-name policy may define one `pointer` or an ordered `pointers` fallback list. The first pointer with a scalar value supplies the human-readable filename component; if none match, Taku falls back to the Resource ID. The `name_id` strategy appends up to the last eight characters of the Resource ID when that suffix is filename-safe, with an eight-character hash fallback for other IDs.
 
-Filesystem Projection is separate from operation encoding. `split` converts one Resource Object into its canonical file tree; `merge` reconstructs it. `bundle` converts one or more Resource Objects into a request payload; `unbundle` decodes a response payload. Kibana Skills use the built-in `frontmatter_markdown` projection, while Kibana Saved Objects use NDJSON Unbundling and multipart-NDJSON Bundling.
+Filesystem Projection is separate from operation encoding. `split` converts one Resource Object into its canonical file tree; `merge` reconstructs it. `bundle.format` converts one or more Resource Objects into a request payload; an optional `bundle.multipart` configuration wraps that payload in a named multipart form part. `unbundle` decodes a response payload. Kibana Skills use the built-in `frontmatter_markdown` projection, while Kibana Saved Objects use NDJSON Unbundling and an explicitly configured multipart NDJSON Bundle.
 
 ```yaml
 skills:
