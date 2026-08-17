@@ -2,11 +2,13 @@ use crate::application::load_installed;
 use crate::canonical::{Selection, canonical_bytes, list_inventory, pointer_string};
 use crate::project::current_environment;
 use crate::provider::resolve_auth;
+use crate::resolution::{
+    ResolvedApplication, baseline_from, baseline_path, discover, save_baseline,
+};
 use crate::transport::{
     INTERNAL_CURSOR_POINTER, INTERNAL_GUARD_POINTER, OperationInput, RemoteResult,
     execute_retry_safe, remove_pointer,
 };
-use crate::variants::{ResolvedVariants, baseline_from, baseline_path, discover, save_baseline};
 use crate::{SCHEMA_VERSION, git_root, load_project};
 use anyhow::{Context, Result, bail};
 use chrono::{DateTime, Utc};
@@ -51,9 +53,10 @@ pub struct ObservationFile {
     pub observed_at: DateTime<Utc>,
     pub binding: String,
     #[serde(default)]
-    pub facts: BTreeMap<String, String>,
+    pub application_version: String,
+    pub catalog_version: String,
     #[serde(default)]
-    pub variants: BTreeMap<String, String>,
+    pub definitions: BTreeMap<String, String>,
     pub resources: BTreeMap<String, Observation>,
 }
 
@@ -79,9 +82,22 @@ pub fn fetch(
     let root = git_root(root)?;
     let project = load_project(&root)?;
     let environment = current_environment(&root, &project, selection.environment.as_deref())?;
+    let mut resolved: BTreeMap<String, ResolvedApplication> = BTreeMap::new();
+    for (target_name, target) in &project.environments[&environment].targets {
+        if !selection.targets.is_empty() && !selection.targets.contains(target_name) {
+            continue;
+        }
+        let app = load_installed(&root, &target.application)?;
+        let auth = resolve_auth(&root, &project, &environment, target, cli_provider)?;
+        let discovered = discover(&app, target, &auth)?;
+        let baseline = baseline_path(&root, &environment, target_name);
+        if !baseline.exists() {
+            save_baseline(&baseline, &baseline_from(&discovered))?;
+        }
+        resolved.insert(target_name.clone(), discovered);
+    }
     let inventory = list_inventory(&root, selection)?;
     let mut reports = Vec::new();
-    let mut resolved: BTreeMap<String, ResolvedVariants> = BTreeMap::new();
     let mut bindings = BTreeMap::new();
     let mut observation_files: BTreeMap<PathBuf, ObservationFile> = BTreeMap::new();
     for item in inventory {
@@ -92,10 +108,7 @@ pub fn fetch(
             let discovered = discover(&app, target, &auth)?;
             let baseline = baseline_path(&root, &environment, &item.target);
             if !baseline.exists() {
-                save_baseline(
-                    &baseline,
-                    &baseline_from(discovered.facts.clone(), discovered.selected.clone()),
-                )?;
+                save_baseline(&baseline, &baseline_from(&discovered))?;
             }
             resolved.insert(item.target.clone(), discovered);
         }
@@ -174,8 +187,9 @@ pub fn fetch(
                     schema_version: SCHEMA_VERSION,
                     observed_at: Utc::now(),
                     binding: bindings[&item.target].clone(),
-                    facts: BTreeMap::new(),
-                    variants: BTreeMap::new(),
+                    application_version: discovered.application_version.clone(),
+                    catalog_version: discovered.catalog_version.clone(),
+                    definitions: BTreeMap::new(),
                     resources: BTreeMap::new(),
                 }
             };
@@ -184,8 +198,9 @@ pub fn fetch(
         let file = observation_files.get_mut(&path).unwrap();
         file.observed_at = Utc::now();
         file.binding = bindings[&item.target].clone();
-        file.facts = discovered.facts.clone();
-        file.variants = discovered.selected.clone();
+        file.application_version = discovered.application_version.clone();
+        file.catalog_version = discovered.catalog_version.clone();
+        file.definitions = discovered.selected.clone();
         let local_hash = hash(&canonical_bytes(&item.value)?);
         let guard = value.as_ref().map(|value| {
             pointer_string(value, INTERNAL_GUARD_POINTER)
@@ -222,10 +237,7 @@ pub fn fetch(
             let discovered = discover(&app, target, &auth)?;
             let baseline = baseline_path(&root, &environment, &marker.target);
             if !baseline.exists() {
-                save_baseline(
-                    &baseline,
-                    &baseline_from(discovered.facts.clone(), discovered.selected.clone()),
-                )?;
+                save_baseline(&baseline, &baseline_from(&discovered))?;
             }
             resolved.insert(marker.target.clone(), discovered);
         }
@@ -309,8 +321,9 @@ pub fn fetch(
                     schema_version: SCHEMA_VERSION,
                     observed_at: Utc::now(),
                     binding: bindings[&marker.target].clone(),
-                    facts: BTreeMap::new(),
-                    variants: BTreeMap::new(),
+                    application_version: discovered.application_version.clone(),
+                    catalog_version: discovered.catalog_version.clone(),
+                    definitions: BTreeMap::new(),
                     resources: BTreeMap::new(),
                 }
             };
@@ -319,8 +332,9 @@ pub fn fetch(
         let file = observation_files.get_mut(&path).unwrap();
         file.observed_at = Utc::now();
         file.binding = bindings[&marker.target].clone();
-        file.facts = discovered.facts.clone();
-        file.variants = discovered.selected.clone();
+        file.application_version = discovered.application_version.clone();
+        file.catalog_version = discovered.catalog_version.clone();
+        file.definitions = discovered.selected.clone();
         let guard = value.as_ref().map(|value| {
             pointer_string(value, INTERNAL_GUARD_POINTER)
                 .unwrap_or_else(|| hash(&canonical_bytes(value).unwrap_or_default()))
@@ -381,6 +395,20 @@ pub fn remote_list(
     let root = git_root(root)?;
     let project = load_project(&root)?;
     let environment = current_environment(&root, &project, selection.environment.as_deref())?;
+    let mut resolved = BTreeMap::new();
+    for (target_name, target) in &project.environments[&environment].targets {
+        if !selection.targets.is_empty() && !selection.targets.contains(target_name) {
+            continue;
+        }
+        let app = load_installed(&root, &target.application)?;
+        let auth = resolve_auth(&root, &project, &environment, target, cli_provider)?;
+        let discovered = discover(&app, target, &auth)?;
+        let baseline = baseline_path(&root, &environment, target_name);
+        if !baseline.exists() {
+            save_baseline(&baseline, &baseline_from(&discovered))?;
+        }
+        resolved.insert(target_name.clone(), discovered);
+    }
     let local = list_inventory(&root, selection)?;
     let local_ids: std::collections::BTreeSet<_> = local
         .iter()
@@ -401,7 +429,7 @@ pub fn remote_list(
         }
         let app = load_installed(&root, &target.application)?;
         let auth = resolve_auth(&root, &project, &environment, target, cli_provider)?;
-        let discovered = discover(&app, target, &auth)?;
+        let discovered = &resolved[target_name];
         for (type_name, rt) in &discovered.resource_types {
             if !selection.types.is_empty() && !selection.types.contains(type_name) {
                 continue;
@@ -649,6 +677,10 @@ pub fn binding(
     digest.update(environment);
     digest.update(target);
     digest.update(serde_yaml::to_string(app)?);
+    for (major, catalog) in &app.catalogs {
+        digest.update(major.to_be_bytes());
+        digest.update(serde_yaml::to_string(catalog)?);
+    }
     let _ = root;
     Ok(hex::encode(digest.finalize()))
 }

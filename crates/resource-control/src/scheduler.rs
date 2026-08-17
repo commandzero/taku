@@ -8,11 +8,11 @@ use crate::observe::{binding, cache_path, hash, load_observation, save_observati
 use crate::project::current_environment;
 use crate::provider::{SecretFields, resolve_auth};
 use crate::reconcile::PushResult;
+use crate::resolution::{baseline_from, baseline_path, discover, from_baseline, load_baseline};
 use crate::transport::{
     INTERNAL_GUARD_POINTER, OperationInput, RemoteResult, execute, execute_retry_safe, outbound,
     remove_pointer,
 };
-use crate::variants::{baseline_path, discover, from_baseline, load_baseline};
 use crate::{
     ApplicationDefinition, ConcurrencyClass, GitPolicy, MissingPolicy, Operation, ResourceType,
     TargetConfig, WriteIntent, git_root, load_project,
@@ -167,9 +167,9 @@ pub fn push(
         };
         let baseline = load_baseline(&baseline_path(&root, &environment, &item.target))
             .context("Target Baseline is unavailable; run `taku fetch`")?;
-        if baseline.variants != discovered.selected {
+        if baseline != baseline_from(&discovered) {
             bail!(
-                "Target Facts select different Resource Type Variants; run `taku fetch` and `taku pull`"
+                "Application Version selects different Resource Type Definitions; run `taku fetch` and `taku pull`"
             );
         }
         let resource_type = discovered.resource_types[&item.resource_type].clone();
@@ -181,6 +181,7 @@ pub fn push(
             hash(&canonical_bytes(&item.value)?)
         ));
         binding_parts.push(serde_yaml::to_string(&app)?);
+        binding_parts.push(serde_yaml::to_string(&resource_type)?);
         binding_parts.push(serde_yaml::to_string(&baseline)?);
         let observation_path = cache_path(
             &root,
@@ -348,9 +349,9 @@ pub fn push(
         };
         let baseline = load_baseline(&baseline_path(&root, &environment, &marker.target))
             .context("Target Baseline is unavailable; run `taku fetch`")?;
-        if baseline.variants != discovered.selected {
+        if baseline != baseline_from(&discovered) {
             bail!(
-                "Target Facts select different Resource Type Variants; run `taku fetch` and `taku pull`"
+                "Application Version selects different Resource Type Definitions; run `taku fetch` and `taku pull`"
             );
         }
         let resource_type = discovered.resource_types[&marker.resource_type].clone();
@@ -368,6 +369,9 @@ pub fn push(
             "{}:{}:{}:{}",
             marker.target, marker.resource_type, marker.id, marker.guard
         ));
+        binding_parts.push(serde_yaml::to_string(&app)?);
+        binding_parts.push(serde_yaml::to_string(&resource_type)?);
+        binding_parts.push(serde_yaml::to_string(&baseline)?);
         let mut prepared = PreparedDeletion {
             path,
             marker,
@@ -642,18 +646,14 @@ fn preflight_transformations(
     for item in inventory {
         let target = &project.environments[environment].targets[&item.target];
         let app = load_installed(root, &target.application)?;
-        for configured_type in target.sensitive_fields.keys() {
-            if !app
-                .target_profile
-                .resource_types
-                .contains_key(configured_type)
-            {
-                bail!("Target Sensitive Fields reference unknown Resource Type {configured_type}");
-            }
-        }
         let baseline = load_baseline(&baseline_path(root, environment, &item.target))
             .context("Target Baseline is unavailable; run `taku fetch`")?;
         let effective = from_baseline(&app, target, &baseline)?;
+        for configured_type in target.sensitive_fields.keys() {
+            if !effective.resource_types.contains_key(configured_type) {
+                bail!("Target Sensitive Fields reference unknown Resource Type {configured_type}");
+            }
+        }
         let resource_type = &effective.resource_types[&item.resource_type];
         if outbound(&item.value, resource_type, None).is_err() {
             reports.push(report(

@@ -2,15 +2,10 @@ schema_version: 1
 version: "1.2.0"
 application:
   name: elasticsearch
-  version: "9.4.0"
-target_profile:
-  headers:
-    accept: application/json
-    content-type: application/json
-  fact_probes: []
-  resource_types:
-    ingest_pipelines:
-      id: { pointer: /id, scope: universal }
+  version: ">=9.0.0, <10.0.0"
+resource_types:
+  ingest_pipelines:
+    - id: { pointer: /id, scope: universal }
       display_name: { pointer: /name, strategy: name_id }
       write_intent: upsert
       mutation_mode: replace
@@ -26,8 +21,8 @@ target_profile:
         update: { method: PUT, path: "/_ingest/pipeline/{id}", cardinality: one, retry_safe: true }
         upsert: { method: PUT, path: "/_ingest/pipeline/{id}", cardinality: one, retry_safe: true, trustworthy_response: false }
         delete: { method: DELETE, path: "/_ingest/pipeline/{id}", cardinality: one, retry_safe: true }
-    ilm_policies:
-      id: { pointer: /id, scope: universal }
+  ilm_policies:
+    - id: { pointer: /id, scope: universal }
       display_name: { pointer: /id, strategy: name, unique: true }
       write_intent: update
       mutation_mode: replace
@@ -48,8 +43,8 @@ target_profile:
           trustworthy_response: false
           transformations: [{ kind: frame, pointer: /policy }]
         delete: { method: DELETE, path: "/_ilm/policy/{id}", cardinality: one, retry_safe: true }
-    component_templates:
-      id: { pointer: /name, scope: universal }
+  component_templates:
+    - id: { pointer: /name, scope: universal }
       display_name: { pointer: /name, strategy: name, unique: true }
       write_intent: upsert
       mutation_mode: replace
@@ -72,8 +67,8 @@ target_profile:
           retry_safe: true
           transformations: [{ kind: frame, pointer: /component_template }]
         delete: { method: DELETE, path: "/_component_template/{id}", cardinality: one, retry_safe: true }
-    index_templates:
-      id: { pointer: /name, scope: universal }
+  index_templates:
+    - id: { pointer: /name, scope: universal }
       display_name: { pointer: /name, strategy: name, unique: true }
       write_intent: upsert
       mutation_mode: replace
@@ -97,8 +92,8 @@ target_profile:
           retry_safe: true
           transformations: [{ kind: frame, pointer: /index_template }]
         delete: { method: DELETE, path: "/_index_template/{id}", cardinality: one, retry_safe: true }
-    roles:
-      id: { pointer: /id, scope: universal }
+  roles:
+    - id: { pointer: /id, scope: universal }
       display_name: { pointer: /id, strategy: name, unique: true }
       write_intent: upsert
       mutation_mode: replace
@@ -110,8 +105,8 @@ target_profile:
         list: { method: GET, path: "/_security/role", cardinality: many, retry_safe: true, concurrency: parallel }
         upsert: { method: PUT, path: "/_security/role/{id}", cardinality: one, retry_safe: true, trustworthy_response: false }
         delete: { method: DELETE, path: "/_security/role/{id}", cardinality: one, retry_safe: true }
-    snapshot_repositories:
-      id: { pointer: /id, scope: universal }
+  snapshot_repositories:
+    - id: { pointer: /id, scope: universal }
       display_name: { pointer: /id, strategy: name, unique: true }
       write_intent: upsert
       mutation_mode: replace
@@ -125,8 +120,8 @@ target_profile:
         list: { method: GET, path: "/_snapshot", cardinality: many, retry_safe: true, concurrency: parallel }
         upsert: { method: PUT, path: "/_snapshot/{id}", cardinality: one, retry_safe: true, trustworthy_response: false }
         delete: { method: DELETE, path: "/_snapshot/{id}", cardinality: one, retry_safe: true }
-    legacy_index_templates:
-      id: { pointer: /id, scope: universal }
+  legacy_index_templates:
+    - id: { pointer: /id, scope: universal }
       display_name: { pointer: /id, strategy: name, unique: true }
       write_intent: upsert
       mutation_mode: replace
@@ -138,8 +133,8 @@ target_profile:
         create: { method: PUT, path: "/_template/{id}?create=true", cardinality: one, retry_safe: true, trustworthy_response: false }
         update: { method: PUT, path: "/_template/{id}", cardinality: one, retry_safe: true, trustworthy_response: false }
         delete: { method: DELETE, path: "/_template/{id}", cardinality: one, retry_safe: true }
-    role_mappings:
-      id: { pointer: /id, scope: universal }
+  role_mappings:
+    - id: { pointer: /id, scope: universal }
       display_name: { pointer: /id, strategy: name, unique: true }
       write_intent: upsert
       mutation_mode: replace
@@ -150,8 +145,8 @@ target_profile:
         list: { method: GET, path: "/_security/role_mapping", cardinality: many, retry_safe: true, concurrency: parallel }
         upsert: { method: PUT, path: "/_security/role_mapping/{id}", cardinality: one, retry_safe: true, trustworthy_response: false }
         delete: { method: DELETE, path: "/_security/role_mapping/{id}", cardinality: one, retry_safe: true }
-    slm_policies:
-      id: { pointer: /id, scope: universal }
+  slm_policies:
+    - id: { pointer: /id, scope: universal }
       display_name: { pointer: /id, strategy: name, unique: true }
       write_intent: upsert
       mutation_mode: replace
@@ -176,8 +171,8 @@ target_profile:
           trustworthy_response: false
           transformations: [{ kind: frame, pointer: /policy }]
         delete: { method: DELETE, path: "/_slm/policy/{id}", cardinality: one, retry_safe: true }
-    ccr_auto_follow_patterns:
-      id: { pointer: /name, scope: universal }
+  ccr_auto_follow_patterns:
+    - id: { pointer: /name, scope: universal }
       display_name: { pointer: /name, strategy: name, unique: true }
       write_intent: upsert
       mutation_mode: replace
@@ -194,8 +189,8 @@ target_profile:
           trustworthy_response: false
           transformations: [{ kind: frame, pointer: /pattern }]
         delete: { method: DELETE, path: "/_ccr/auto_follow/{id}", cardinality: one, retry_safe: true }
-    cluster_settings:
-      id: { pointer: /id, scope: target }
+  cluster_settings:
+    - id: { pointer: /id, scope: target }
       display_name: { pointer: /id, strategy: name, unique: true }
       write_intent: update
       mutation_mode: replace
@@ -204,8 +199,8 @@ target_profile:
       operations:
         read: { method: GET, path: "/_cluster/settings?flat_settings=true", cardinality: one, retry_safe: true }
         update: { method: PUT, path: "/_cluster/settings", cardinality: one, retry_safe: true, trustworthy_response: false }
-    enrich_policies:
-      id: { pointer: /policy/name, scope: universal }
+  enrich_policies:
+    - id: { pointer: /policy/name, scope: universal }
       display_name: { pointer: /policy/name, strategy: name, unique: true }
       write_intent: create
       mutation_mode: replace

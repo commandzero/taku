@@ -91,6 +91,9 @@ impl PluginFake {
                     "version": "1.0.0"
                 });
                 let response = match (request.method(), request.url()) {
+                    (&Method::Get, "/api/status") => {
+                        Response::from_string(r#"{"version":{"number":"9.4.0"}}"#)
+                    }
                     (&Method::Get, "/api/agent_builder/plugins/financial-analysis")
                         if state.load(Ordering::Relaxed) =>
                     {
@@ -173,6 +176,9 @@ impl SkillFake {
                     }]
                 });
                 let response = match (request.method(), request.url()) {
+                    (&Method::Get, "/api/status") => {
+                        Response::from_string(r#"{"version":{"number":"9.4.0"}}"#)
+                    }
                     (&Method::Get, "/api/agent_builder/skills") => {
                         Response::from_string(json!({"results": [skill]}).to_string())
                     }
@@ -228,6 +234,9 @@ impl OperationTransformFake {
                     .unwrap()
                     .push((format!("{} {}", request.method(), request.url()), body));
                 let response = match (request.method(), request.url()) {
+                    (&Method::Get, "/api/status") => {
+                        Response::from_string(r#"{"version":{"number":"9.4.0"}}"#)
+                    }
                     (&Method::Get, "/api/workflows/workflow/create-me") => {
                         Response::from_string("not found").with_status_code(404)
                     }
@@ -279,6 +288,9 @@ impl UpsertFake {
                     .unwrap()
                     .push(format!("{} {}", request.method(), request.url()));
                 let response = match (request.method(), request.url()) {
+                    (&Method::Get, "/api/status") => {
+                        Response::from_string(r#"{"version":{"number":"9.4.0"}}"#)
+                    }
                     (&Method::Get, "/api/spaces/space/new-space") => {
                         Response::from_string("not found").with_status_code(404)
                     }
@@ -336,7 +348,7 @@ impl Fake {
                 captured.lock().unwrap().push(body.clone());
                 captured_content_types.lock().unwrap().push(content_type);
                 captured_urls.lock().unwrap().push(request.url().to_owned());
-                let response=match(request.method(),request.url()){(&Method::Post,"/api/saved_objects/_export"|"/s/esdiag/api/saved_objects/_export")=>Response::from_string(if body.contains("5e05b9ee-3e49-4efd-8a16-94de208ebb83"){"{\"attributes\":{\"color\":\"#48EFCF\",\"description\":\"Elastic Stack Diagnostics (ESDiag)\",\"name\":\"ESDiag\"},\"id\":\"5e05b9ee-3e49-4efd-8a16-94de208ebb83\",\"references\":[],\"type\":\"tag\"}\n{\"exportedCount\":1,\"missingRefCount\":0}\n"}else if body.contains("\"objects\""){"{\"id\":\"obj-1\",\"type\":\"visualization\",\"attributes\":{\"title\":\"Chart\",\"visState\":\"{\\\"a\\\":1}\",\"yaml\":\"# keep\\nx: 1\\n\"}}\n{\"exportedCount\":1,\"missingRefCount\":0}\n"}else{"{\"id\":\"9.4.2\",\"type\":\"config\",\"attributes\":{}}\n{\"id\":\"9.4.2\",\"type\":\"config-global\",\"attributes\":{}}\n{\"id\":\"obj-1\",\"type\":\"visualization\",\"sort\":[1],\"attributes\":{\"title\":\"Chart\",\"visState\":\"{\\\"a\\\":1}\",\"yaml\":\"# keep\\nx: 1\\n\"}}\n{\"attributes\":{\"color\":\"#48EFCF\",\"description\":\"Elastic Stack Diagnostics (ESDiag)\",\"name\":\"ESDiag\"},\"id\":\"5e05b9ee-3e49-4efd-8a16-94de208ebb83\",\"references\":[],\"type\":\"tag\"}\n{\"exportedCount\":4,\"missingRefCount\":0}\n"}).with_header(Header::from_bytes("content-type","application/x-ndjson").unwrap()),(&Method::Post,path)if path.starts_with("/api/saved_objects/_import")||path.starts_with("/s/esdiag/api/saved_objects/_import")=>Response::from_string("{\"success\":true}"),_=>Response::from_string("not found").with_status_code(404)};
+                let response=match(request.method(),request.url()){(&Method::Get,"/api/status")=>Response::from_string(r#"{"version":{"number":"9.4.0"}}"#),(&Method::Post,"/api/saved_objects/_export"|"/s/esdiag/api/saved_objects/_export")=>Response::from_string(if body.contains("5e05b9ee-3e49-4efd-8a16-94de208ebb83"){"{\"attributes\":{\"color\":\"#48EFCF\",\"description\":\"Elastic Stack Diagnostics (ESDiag)\",\"name\":\"ESDiag\"},\"id\":\"5e05b9ee-3e49-4efd-8a16-94de208ebb83\",\"references\":[],\"type\":\"tag\"}\n{\"exportedCount\":1,\"missingRefCount\":0}\n"}else if body.contains("\"objects\""){"{\"id\":\"obj-1\",\"type\":\"visualization\",\"attributes\":{\"title\":\"Chart\",\"visState\":\"{\\\"a\\\":1}\",\"yaml\":\"# keep\\nx: 1\\n\"}}\n{\"exportedCount\":1,\"missingRefCount\":0}\n"}else{"{\"id\":\"9.4.2\",\"type\":\"config\",\"attributes\":{}}\n{\"id\":\"9.4.2\",\"type\":\"config-global\",\"attributes\":{}}\n{\"id\":\"obj-1\",\"type\":\"visualization\",\"sort\":[1],\"attributes\":{\"title\":\"Chart\",\"visState\":\"{\\\"a\\\":1}\",\"yaml\":\"# keep\\nx: 1\\n\"}}\n{\"attributes\":{\"color\":\"#48EFCF\",\"description\":\"Elastic Stack Diagnostics (ESDiag)\",\"name\":\"ESDiag\"},\"id\":\"5e05b9ee-3e49-4efd-8a16-94de208ebb83\",\"references\":[],\"type\":\"tag\"}\n{\"exportedCount\":4,\"missingRefCount\":0}\n"}).with_header(Header::from_bytes("content-type","application/x-ndjson").unwrap()),(&Method::Post,path)if path.starts_with("/api/saved_objects/_import")||path.starts_with("/s/esdiag/api/saved_objects/_import")=>Response::from_string("{\"success\":true}"),_=>Response::from_string("not found").with_status_code(404)};
                 request.respond(response).unwrap();
             }
         });
@@ -375,10 +387,10 @@ fn run(project: &TempDir, args: &[&str]) -> Value {
 fn configure_skill_projection(project: &TempDir) {
     let definition_path = project
         .path()
-        .join(".taku/applications/kibana/resources.yml");
+        .join(".taku/applications/kibana/version-9.yml");
     let mut definition: serde_yaml::Value =
         serde_yaml::from_str(&std::fs::read_to_string(&definition_path).unwrap()).unwrap();
-    let skill = &mut definition["target_profile"]["resource_types"]["skills"];
+    let skill = &mut definition["resource_types"]["skills"][0];
     skill["display_name"] = serde_yaml::to_value(json!({
         "pointer": "/name",
         "strategy": "id",
@@ -953,10 +965,10 @@ fn upsert_uses_create_when_a_resource_is_absent_and_no_native_upsert_exists() {
 
     let definition_path = project
         .path()
-        .join(".taku/applications/kibana/resources.yml");
+        .join(".taku/applications/kibana/version-9.yml");
     let mut definition: serde_yaml::Value =
         serde_yaml::from_str(&std::fs::read_to_string(&definition_path).unwrap()).unwrap();
-    definition["target_profile"]["resource_types"]["spaces"]["operations"]
+    definition["resource_types"]["spaces"][0]["operations"]
         .as_mapping_mut()
         .unwrap()
         .remove(serde_yaml::Value::String("upsert".into()));
@@ -1020,11 +1032,10 @@ fn namespaced_resource_types_require_an_explicit_namespace_directory() {
 
     let definition_path = project
         .path()
-        .join(".taku/applications/kibana/resources.yml");
+        .join(".taku/applications/kibana/version-9.yml");
     let mut definition: serde_yaml::Value =
         serde_yaml::from_str(&std::fs::read_to_string(&definition_path).unwrap()).unwrap();
-    definition["target_profile"]["resource_types"]["saved_objects"]["namespaced"] =
-        serde_yaml::Value::Bool(true);
+    definition["resource_types"]["saved_objects"][0]["namespaced"] = serde_yaml::Value::Bool(true);
     std::fs::write(definition_path, serde_yaml::to_string(&definition).unwrap()).unwrap();
 
     for (namespace, id, title) in [
@@ -1155,7 +1166,7 @@ fn namespace_selectors_render_named_and_default_operation_paths() {
     assert_eq!(default["result"][0]["id"], "obj-1");
 
     let bodies = fake.bodies.lock().unwrap();
-    assert_eq!(bodies.len(), 2);
+    assert_eq!(bodies.iter().filter(|body| !body.is_empty()).count(), 2);
     let urls = fake.urls.lock().unwrap();
     assert!(
         urls.iter()
@@ -1188,10 +1199,11 @@ fn selected_write_operation_applies_its_own_outbound_transformations() {
 
     let definition_path = project
         .path()
-        .join(".taku/applications/kibana/resources.yml");
+        .join(".taku/applications/kibana/version-9.yml");
     let mut definition: serde_yaml::Value =
         serde_yaml::from_str(&std::fs::read_to_string(&definition_path).unwrap()).unwrap();
-    definition["target_profile"]["resource_types"]["workflows"] = serde_yaml::to_value(json!({
+    definition["resource_types"]["workflows"] = serde_yaml::to_value(json!([{
+        "version": ">=9.4.0, <10.0.0",
         "id": {"pointer": "/id", "scope": "universal"},
         "display_name": {"pointer": "/name", "strategy": "name"},
         "namespaced": true,
@@ -1232,7 +1244,7 @@ fn selected_write_operation_applies_its_own_outbound_transformations() {
                 "transformations": [{"kind": "omit", "pointer": "/id"}]
             }
         }
-    }))
+    }]))
     .unwrap();
     std::fs::write(definition_path, serde_yaml::to_string(&definition).unwrap()).unwrap();
 

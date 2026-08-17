@@ -107,15 +107,33 @@ pub struct ApplicationDefinition {
     pub version: String,
     pub application: ApplicationIdentity,
     pub target_profile: TargetProfile,
+    pub version_endpoints: Vec<VersionEndpoint>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub installation: Option<Installation>,
+    #[serde(skip)]
+    pub catalogs: BTreeMap<u64, ResourceTypeCatalog>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ApplicationIdentity {
     pub name: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CatalogApplicationIdentity {
+    pub name: String,
     pub version: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResourceTypeCatalog {
+    pub schema_version: u32,
+    pub version: String,
+    pub application: CatalogApplicationIdentity,
+    pub resource_types: BTreeMap<String, Vec<ResourceType>>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -135,22 +153,30 @@ pub struct Installation {
 pub struct TargetProfile {
     #[serde(default)]
     pub headers: BTreeMap<String, String>,
-    #[serde(default)]
-    pub fact_probes: Vec<FactProbe>,
-    pub resource_types: BTreeMap<String, ResourceType>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct FactProbe {
-    pub name: String,
-    pub operation: Operation,
+pub struct VersionEndpoint {
+    #[serde(default = "default_get_method")]
+    pub method: String,
+    pub path: String,
+    #[serde(default)]
+    pub headers: BTreeMap<String, String>,
     pub pointer: String,
+}
+
+fn default_get_method() -> String {
+    "GET".into()
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ResourceType {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    #[serde(default)]
+    pub stability: ApiStability,
     pub id: Identity,
     pub display_name: DisplayName,
     #[serde(default)]
@@ -173,9 +199,16 @@ pub struct ResourceType {
     pub filesystem: Option<FilesystemProjection>,
     #[serde(default)]
     pub dependencies: Vec<String>,
-    #[serde(default)]
-    pub variants: Vec<ResourceVariant>,
     pub operations: Operations,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ApiStability {
+    Experimental,
+    Preview,
+    #[default]
+    Stable,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -432,8 +465,9 @@ bundle:
     fn requires_an_application_definition_version() {
         let yaml = r#"
 schema_version: 1
-application: { name: example, version: "1.0.0" }
-target_profile: { resource_types: {} }
+application: { name: example }
+target_profile: {}
+version_endpoints: []
 "#;
         assert!(serde_yaml::from_str::<ApplicationDefinition>(yaml).is_err());
     }
@@ -479,18 +513,6 @@ pub enum ConcurrencyMode {
     #[default]
     Unguarded,
     Guarded,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct ResourceVariant {
-    pub name: String,
-    #[serde(default)]
-    pub facts: BTreeMap<String, String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub operations: Option<Operations>,
-    #[serde(default)]
-    pub transformations: Vec<Transformation>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

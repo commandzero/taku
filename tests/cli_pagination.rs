@@ -33,7 +33,9 @@ impl Fake {
                 let Some(request) = server.recv_timeout(Duration::from_millis(25)).unwrap() else {
                     continue;
                 };
-                let body = if malformed {
+                let body = if request.url() == "/" {
+                    r#"{"version":{"number":"9.4.0"}}"#.to_owned()
+                } else if malformed {
                     "{".to_owned()
                 } else if request.url() == "/widgets" {
                     r#"{"items":[{"id":"a","name":"A"}],"next":"second"}"#.to_owned()
@@ -85,16 +87,13 @@ fn setup(fake: &Fake) -> TempDir {
     std::fs::write(
         project
             .path()
-            .join(".taku/applications/elasticsearch/resources.yml"),
+            .join(".taku/applications/elasticsearch/version-9.yml"),
         r#"schema_version: 1
 version: pagination-definition
-application: { name: elasticsearch, version: pagination-test }
-target_profile:
-  headers: {}
-  fact_probes: []
-  resource_types:
-    widgets:
-      id: { pointer: /id, scope: universal }
+application: { name: elasticsearch, version: ">=9.0.0, <10.0.0" }
+resource_types:
+  widgets:
+    - id: { pointer: /id, scope: universal }
       display_name: { pointer: /name, strategy: name }
       operations:
         read: { method: GET, path: "/widgets/{id}", cardinality: one }

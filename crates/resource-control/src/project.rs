@@ -164,7 +164,7 @@ pub fn add_target(
     if !root
         .join(".taku/applications")
         .join(application)
-        .join("resources.yml")
+        .join("application.yml")
         .is_file()
     {
         bail!("Application {application} is not installed");

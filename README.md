@@ -47,7 +47,9 @@ Tracked Taku metadata lives under `.taku/`:
 ```text
 .taku/
 ├── project.yml
-├── applications/<application>/resources.yml
+├── applications/<application>/
+│   ├── application.yml
+│   └── version-<major>.yml
 └── baselines/<environment>/<target>.yml
 ```
 
@@ -97,43 +99,78 @@ The lifecycle tests create uniquely named remote fixtures, manage them through t
 
 ## Application definitions
 
-An Application is a strictly validated Target Profile and Resource Type Catalog. Each Resource Type declares identity, optional namespacing, display-name policy, lifecycle Operations, actual HTTP methods, paths, headers and body templates, One/Many cardinality, independent Bundling and Unbundling, transformations, write intent, retry safety, scheduling class, and dependencies. Many writes are bundled at runtime, including multipart NDJSON payloads. HTTP verbs do not imply lifecycle semantics.
+An Application is a strictly validated `application.yml` plus one flat `version-<major>.yml` Resource Type Catalog per supported major product version. The application file declares shared transport defaults and an ordered fallback list of Version Endpoints. Taku tries each endpoint until one returns a valid Application Version, then selects the matching major catalog. Each Resource Type declares identity, optional namespacing, display-name policy, lifecycle Operations, actual HTTP methods, paths, headers and body templates, One/Many cardinality, independent Bundling and Unbundling, transformations, write intent, retry safety, scheduling class, and dependencies. Many writes are bundled at runtime, including multipart NDJSON payloads. HTTP verbs do not imply lifecycle semantics.
 
-Application definitions distinguish the file-format `schema_version`, the definition's own top-level `version`, and the supported remote product version under `application.version`:
+Every configuration file carries its file-format `schema_version` and its own top-level definition `version`. The shared application file identifies the product and declares version discovery:
+
+```yaml
+schema_version: 1
+version: "1.0.0"
+application:
+  name: elasticsearch
+target_profile:
+  headers:
+    accept: application/json
+version_endpoints:
+  - method: GET
+    path: /
+    pointer: /version/number
+```
+
+Each `version-<major>.yml` repeats the Application name, constrains its supported Application Versions, and defines each Resource Type as a list of complete version-qualified definitions:
 
 ```yaml
 schema_version: 1
 version: "1.2.0"
 application:
   name: elasticsearch
-  version: "9.4.0"
+  version: ">=9.0.0, <10.0.0"
+resource_types:
+  ingest_pipelines:
+    - id: { pointer: /id, scope: universal }
+      display_name: { pointer: /name, strategy: name_id }
+      operations:
+        read: { method: GET, path: "/_ingest/pipeline/{id}", cardinality: one }
+        upsert: { method: PUT, path: "/_ingest/pipeline/{id}", cardinality: one }
+  future_resource:
+    - version: ">=9.5.0, <10.0.0"
+      stability: preview
+      id: { pointer: /id, scope: universal }
+      display_name: { pointer: /name, strategy: name }
+      operations:
+        read: { method: GET, path: "/future/{id}", cardinality: one }
+        upsert: { method: PUT, path: "/future/{id}", cardinality: one }
 ```
+
+An omitted Resource Type `version` inherits `application.version`; omitted `stability` defaults to `stable`. Zero matching definitions makes that Resource Type unavailable for the Target. More than one match is invalid configuration. Definitions are complete objects—Taku does not merge version overlays.
 
 A display-name policy may define one `pointer` or an ordered `pointers` fallback list. The first pointer with a scalar value supplies the human-readable filename component; if none match, Taku falls back to the Resource ID. The `name_id` strategy appends up to the last eight characters of the Resource ID when that suffix is filename-safe, with an eight-character hash fallback for other IDs.
 
 Filesystem Projection is separate from operation encoding. `split` converts one Resource Object into its canonical file tree; `merge` reconstructs it. `bundle.format` converts one or more Resource Objects into a request payload; an optional `bundle.multipart` configuration wraps that payload in a named multipart form part. `unbundle` decodes a response payload. Kibana Skills use the built-in `frontmatter_markdown` projection, while Kibana Saved Objects use NDJSON Unbundling and an explicitly configured multipart NDJSON Bundle.
 
 ```yaml
-skills:
-  id: { pointer: /id, scope: universal }
-  display_name: { pointer: /name, strategy: id, unique: true }
-  filesystem:
-    split: frontmatter_markdown
-    merge: frontmatter_markdown
-    frontmatter_markdown:
-      document: SKILL.md
-      body_pointer: /content
-      referenced_files:
-        pointer: /referenced_content
-        path_pointer: /relativePath
-        name_pointer: /name
-        content_pointer: /content
-        extension: md
-  operations:
-    list:
-      method: GET
-      path: /api/agent_builder/skills
-      cardinality: many
+resource_types:
+  skills:
+    - version: ">=9.4.0, <10.0.0"
+      id: { pointer: /id, scope: universal }
+      display_name: { pointer: /name, strategy: id, unique: true }
+      filesystem:
+        split: frontmatter_markdown
+        merge: frontmatter_markdown
+        frontmatter_markdown:
+          document: SKILL.md
+          body_pointer: /content
+          referenced_files:
+            pointer: /referenced_content
+            path_pointer: /relativePath
+            name_pointer: /name
+            content_pointer: /content
+            extension: md
+      operations:
+        list:
+          method: GET
+          path: /api/agent_builder/skills
+          cardinality: many
 ```
 
 For `frontmatter_markdown`, every unclaimed YAML frontmatter value passes through to the Resource Object. The Markdown body and referenced files are the only extracted fields. Splitting serializes passthrough values back to frontmatter; comments and original YAML formatting are not part of the API round trip.
@@ -145,7 +182,9 @@ Git sources use this layout:
 ```text
 applications/
 └── custom-application/
-    └── resources.yml
+    ├── application.yml
+    ├── version-8.yml
+    └── version-9.yml
 ```
 
 Configure `application_source.location` in `.taku/project.yml`, run `taku app refresh`, then install from the current offline cache. `taku update` is the only definition replacement workflow and refreshes each installed Git Application from its recorded source; `--from` explicitly switches eligible Applications to another source.
@@ -153,7 +192,7 @@ Configure `application_source.location` in `.taku/project.yml`, run `taku app re
 ## Safety model
 
 - Taku must run at a Git worktree root and never stages or commits files.
-- Unknown configuration fields, invalid references, dependency cycles, unsafe paths, and ambiguous Variants fail before mutation.
+- Unknown configuration fields, invalid references, dependency cycles, unsafe paths, and overlapping Resource Type Definitions fail before mutation.
 - Symlinked or traversal-escaped Resource inputs are rejected.
 - Omission always means unmanaged and never deletes a remote Resource.
 - Push checks selected uncommitted and untracked inputs independently. Automation defaults both to `block` unless explicitly overridden.

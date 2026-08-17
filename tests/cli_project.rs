@@ -60,26 +60,26 @@ fn lists_and_installs_embedded_applications_without_adding_targets() {
     let listed = json(&project, &["app"]);
     assert_eq!(listed["result"][0]["name"], "elasticsearch");
     assert_eq!(listed["result"][1]["name"], "kibana");
-    assert_eq!(listed["result"][0]["version"], "9.4.0");
-    assert_eq!(listed["result"][0]["definition_version"], "1.2.0");
-    assert_eq!(listed["result"][1]["version"], "9.4.0");
-    assert_eq!(listed["result"][1]["definition_version"], "1.5.0");
+    assert_eq!(listed["result"][0]["version"], ">=9.0.0, <10.0.0");
+    assert_eq!(listed["result"][0]["definition_version"], "1.0.0");
+    assert_eq!(listed["result"][1]["version"], ">=9.0.0, <10.0.0");
+    assert_eq!(listed["result"][1]["definition_version"], "1.0.0");
     assert_eq!(listed["result"][0]["installed"], false);
 
     let installed = json(&project, &["install", "elasticsearch", "kibana"]);
     assert_eq!(installed["result"][0]["source"], "embedded");
-    assert_eq!(installed["result"][0]["version"], "9.4.0");
-    assert_eq!(installed["result"][0]["definition_version"], "1.2.0");
+    assert_eq!(installed["result"][0]["version"], ">=9.0.0, <10.0.0");
+    assert_eq!(installed["result"][0]["definition_version"], "1.0.0");
     assert!(
         project
             .path()
-            .join(".taku/applications/elasticsearch/resources.yml")
+            .join(".taku/applications/elasticsearch/version-9.yml")
             .is_file()
     );
     assert!(
         project
             .path()
-            .join(".taku/applications/kibana/resources.yml")
+            .join(".taku/applications/kibana/version-9.yml")
             .is_file()
     );
 
@@ -331,10 +331,10 @@ fn target_sensitive_fields_cannot_remove_required_transformation_inputs() {
     );
     let definition_file = project
         .path()
-        .join(".taku/applications/elasticsearch/resources.yml");
+        .join(".taku/applications/elasticsearch/version-9.yml");
     let mut definition: serde_yaml::Value =
         serde_yaml::from_str(&std::fs::read_to_string(&definition_file).unwrap()).unwrap();
-    definition["target_profile"]["resource_types"]["ingest_pipelines"]["transformations"] =
+    definition["resource_types"]["ingest_pipelines"][0]["transformations"] =
         serde_yaml::from_str("- { kind: embedded_json, pointer: /payload }\n").unwrap();
     std::fs::write(
         &definition_file,
@@ -377,10 +377,10 @@ fn sensitive_descendants_inside_an_extracted_document_are_allowed() {
     );
     let definition_file = project
         .path()
-        .join(".taku/applications/elasticsearch/resources.yml");
+        .join(".taku/applications/elasticsearch/version-9.yml");
     let mut definition: serde_yaml::Value =
         serde_yaml::from_str(&std::fs::read_to_string(&definition_file).unwrap()).unwrap();
-    definition["target_profile"]["resource_types"]["ingest_pipelines"]["transformations"] =
+    definition["resource_types"]["ingest_pipelines"][0]["transformations"] =
         serde_yaml::from_str("- { kind: extract, pointer: /payload }\n").unwrap();
     std::fs::write(
         &definition_file,

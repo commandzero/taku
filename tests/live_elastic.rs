@@ -717,11 +717,11 @@ fn lists_real_kibana_dashboard_exports_without_treating_export_details_as_a_reso
     let project = project("kibana", "kb", KIBANA_URL, &authorization);
     let definition_path = project
         .path()
-        .join(".taku/applications/kibana/resources.yml");
+        .join(".taku/applications/kibana/version-9.yml");
     let mut definition: serde_yaml::Value =
         serde_yaml::from_str(&std::fs::read_to_string(&definition_path).unwrap()).unwrap();
-    definition["target_profile"]["resource_types"]["saved_objects"]["operations"]["list"]["body"]
-        ["type"] = serde_yaml::to_value(["dashboard"]).unwrap();
+    definition["resource_types"]["saved_objects"][0]["operations"]["list"]["body"]["type"] =
+        serde_yaml::to_value(["dashboard"]).unwrap();
     std::fs::write(definition_path, serde_yaml::to_string(&definition).unwrap()).unwrap();
 
     let listed = run(

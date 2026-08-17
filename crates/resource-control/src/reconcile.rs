@@ -5,7 +5,9 @@ use crate::canonical::{
 };
 use crate::observe::{binding, cache_path, hash, load_observation, save_observation};
 use crate::project::current_environment;
-use crate::variants::{baseline_from, baseline_path, save_baseline};
+use crate::resolution::{
+    baseline_from, baseline_path, from_baseline, load_baseline, save_baseline,
+};
 use crate::{MissingPolicy, git_root, load_project};
 use anyhow::{Context, Result, bail};
 use chrono::Utc;
@@ -84,7 +86,9 @@ pub fn compare(root: &Path, selection: &Selection) -> Result<Vec<Comparison>> {
             );
         }
         let application = &applications[&item.target];
-        let resource_type = &application.target_profile.resource_types[&item.resource_type];
+        let baseline = load_baseline(&baseline_path(&root, &environment, &item.target))?;
+        let resolved = from_baseline(application, target, &baseline)?;
+        let resource_type = &resolved.resource_types[&item.resource_type];
         let observation_path = cache_path(
             &root,
             &environment,
@@ -157,7 +161,9 @@ pub fn diff(root: &Path, selection: &Selection) -> Result<Vec<DiffEntry>> {
             );
         }
         let application = &applications[&item.target];
-        let resource_type = &application.target_profile.resource_types[&item.resource_type];
+        let baseline = load_baseline(&baseline_path(&root, &environment, &item.target))?;
+        let resolved = from_baseline(application, target, &baseline)?;
+        let resource_type = &resolved.resource_types[&item.resource_type];
         let observation_path = cache_path(
             &root,
             &environment,
@@ -228,7 +234,9 @@ pub fn pull(
     for item in list_inventory(&root, selection)? {
         let target = &project.environments[&environment].targets[&item.target];
         let application = load_installed(&root, &target.application)?;
-        let resource_type = &application.target_profile.resource_types[&item.resource_type];
+        let baseline = load_baseline(&baseline_path(&root, &environment, &item.target))?;
+        let resolved = from_baseline(&application, target, &baseline)?;
+        let resource_type = &resolved.resource_types[&item.resource_type];
         let path = cache_path(
             &root,
             &environment,
@@ -315,7 +323,12 @@ pub fn pull(
         if !matches!(outcome, "pull_conflict" | "presence_conflict") {
             baselines.insert(
                 baseline_path(&root, &environment, &item.target),
-                baseline_from(observation.facts.clone(), observation.variants.clone()),
+                baseline_from(&crate::resolution::ResolvedApplication {
+                    application_version: observation.application_version.clone(),
+                    catalog_version: observation.catalog_version.clone(),
+                    selected: observation.definitions.clone(),
+                    resource_types: BTreeMap::new(),
+                }),
             );
         }
         result.push(PullResult {

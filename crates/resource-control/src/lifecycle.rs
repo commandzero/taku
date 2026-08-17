@@ -6,8 +6,8 @@ use crate::canonical::{
 use crate::observe::{cache_path, load_observation, remote_list};
 use crate::project::current_environment;
 use crate::provider::resolve_auth;
+use crate::resolution::{baseline_path, discover, for_local_use, load_baseline};
 use crate::transport::{OperationInput, RemoteResult, execute_retry_safe};
-use crate::variants::discover;
 use crate::{IdScope, RepositoryLayout, SCHEMA_VERSION, git_root, load_project};
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
@@ -231,7 +231,9 @@ pub fn forget(root: &Path, selection: &Selection) -> Result<Vec<LifecycleResult>
             continue;
         }
         let app = load_installed(&root, &target.application)?;
-        for (type_name, resource_type) in &app.target_profile.resource_types {
+        let baseline = load_baseline(&baseline_path(&root, &environment, target_name)).ok();
+        let resolved = for_local_use(&app, target, baseline.as_ref())?;
+        for (type_name, resource_type) in &resolved.resource_types {
             if !selection.types.is_empty() && !selection.types.contains(type_name) {
                 continue;
             }
@@ -302,7 +304,9 @@ pub fn deletion_markers(
             continue;
         }
         let app = load_installed(&root, &target.application)?;
-        for (type_name, resource_type) in &app.target_profile.resource_types {
+        let baseline = load_baseline(&baseline_path(&root, &environment, target_name)).ok();
+        let resolved = for_local_use(&app, target, baseline.as_ref())?;
+        for (type_name, resource_type) in &resolved.resource_types {
             if !selection.types.is_empty() && !selection.types.contains(type_name) {
                 continue;
             }
@@ -469,6 +473,12 @@ pub fn promote(
             bail!("Promotion Targets {from} and {to} use incompatible Applications");
         }
         let application = load_installed(&root, &destination_target.application)?;
+        let destination_baseline = load_baseline(&baseline_path(&root, &destination, &to)).ok();
+        let destination_application = for_local_use(
+            &application,
+            destination_target,
+            destination_baseline.as_ref(),
+        )?;
         let selection = Selection {
             environment: Some(source.clone()),
             targets: vec![from.clone()],
@@ -494,7 +504,7 @@ pub fn promote(
                 &item.resource_type,
             )
             .join(filename);
-            let resource_type = &application.target_profile.resource_types[&item.resource_type];
+            let resource_type = &destination_application.resource_types[&item.resource_type];
             write_canonical_resource(&destination_path, &item.value, resource_type)?;
             out.push(PromotionResult {
                 from_environment: source.clone(),
@@ -541,7 +551,28 @@ pub fn promote_projects(
     }
     let source_app = load_installed(&source_root, &source_target.application)?;
     let destination_app = load_installed(&destination_root, &destination_target.application)?;
-    if serde_yaml::to_string(&source_app)? != serde_yaml::to_string(&destination_app)? {
+    let source_baseline = load_baseline(&baseline_path(
+        &source_root,
+        &source_environment,
+        from_target,
+    ))
+    .ok();
+    let destination_baseline = load_baseline(&baseline_path(
+        &destination_root,
+        &destination_environment,
+        to_target,
+    ))
+    .ok();
+    let source_resolved = for_local_use(&source_app, source_target, source_baseline.as_ref())?;
+    let destination_resolved = for_local_use(
+        &destination_app,
+        destination_target,
+        destination_baseline.as_ref(),
+    )?;
+    if source_resolved.application_version != destination_resolved.application_version
+        || source_resolved.catalog_version != destination_resolved.catalog_version
+        || source_resolved.selected != destination_resolved.selected
+    {
         bail!("Promotion installed Applications are not exactly compatible");
     }
     let selection = Selection {
@@ -569,7 +600,7 @@ pub fn promote_projects(
             &item.resource_type,
         )
         .join(filename);
-        let resource_type = &destination_app.target_profile.resource_types[&item.resource_type];
+        let resource_type = &destination_resolved.resource_types[&item.resource_type];
         write_canonical_resource(&path, &item.value, resource_type)?;
         out.push(PromotionResult {
             from_environment: source_environment.clone(),

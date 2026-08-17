@@ -81,6 +81,12 @@ fn handle(mut request: tiny_http::Request, metrics: Arc<Metrics>) {
         .or_default() += 1;
     let mut body = String::new();
     request.as_reader().read_to_string(&mut body).unwrap();
+    if path == "/" {
+        request
+            .respond(Response::from_string(r#"{"version":{"number":"9.4.0"}}"#))
+            .unwrap();
+        return;
+    }
     if request.method() == &Method::Put {
         let active = metrics.active.fetch_add(1, Ordering::SeqCst) + 1;
         metrics.max_active.fetch_max(active, Ordering::SeqCst);
@@ -175,8 +181,8 @@ fn setup(fake: &Fake, include_heavy: bool, include_dependent: bool) -> TempDir {
         &["app", "add", "elasticsearch", "es", "--url", &fake.url],
     );
     let mut resource_types = String::from(
-        r#"    light:
-      id: { pointer: /id, scope: universal }
+        r#"  light:
+    - id: { pointer: /id, scope: universal }
       display_name: { pointer: /name, strategy: name }
       operations:
         read: { method: GET, path: "/light/{id}", cardinality: one }
@@ -184,8 +190,8 @@ fn setup(fake: &Fake, include_heavy: bool, include_dependent: bool) -> TempDir {
 "#,
     );
     if include_heavy {
-        resource_types.push_str(r#"    heavy:
-      id: { pointer: /id, scope: universal }
+        resource_types.push_str(r#"  heavy:
+    - id: { pointer: /id, scope: universal }
       display_name: { pointer: /name, strategy: name }
       operations:
         read: { method: GET, path: "/heavy/{id}", cardinality: one }
@@ -194,8 +200,8 @@ fn setup(fake: &Fake, include_heavy: bool, include_dependent: bool) -> TempDir {
     }
     if include_dependent {
         resource_types.push_str(
-            r#"    dependent:
-      id: { pointer: /id, scope: universal }
+            r#"  dependent:
+    - id: { pointer: /id, scope: universal }
       display_name: { pointer: /name, strategy: name }
       dependencies: [heavy]
       operations:
@@ -206,12 +212,12 @@ fn setup(fake: &Fake, include_heavy: bool, include_dependent: bool) -> TempDir {
         );
     }
     let definition = format!(
-        "schema_version: 1\nversion: scheduler-definition\napplication: {{ name: elasticsearch, version: scheduler-test }}\ntarget_profile:\n  headers: {{ content-type: application/json }}\n  fact_probes: []\n  resource_types:\n{resource_types}"
+        "schema_version: 1\nversion: scheduler-definition\napplication: {{ name: elasticsearch, version: \">=9.0.0, <10.0.0\" }}\nresource_types:\n{resource_types}"
     );
     std::fs::write(
         project
             .path()
-            .join(".taku/applications/elasticsearch/resources.yml"),
+            .join(".taku/applications/elasticsearch/version-9.yml"),
         definition,
     )
     .unwrap();
@@ -435,10 +441,10 @@ fn outbound_transformation_conflicts_are_reported_before_any_network_call() {
     let project = setup(&fake, false, false);
     let definition_path = project
         .path()
-        .join(".taku/applications/elasticsearch/resources.yml");
+        .join(".taku/applications/elasticsearch/version-9.yml");
     let mut definition: serde_yaml::Value =
         serde_yaml::from_str(&std::fs::read_to_string(&definition_path).unwrap()).unwrap();
-    definition["target_profile"]["resource_types"]["light"]["transformations"] =
+    definition["resource_types"]["light"][0]["transformations"] =
         serde_yaml::from_str("- { kind: frame, pointer: /missing }\n").unwrap();
     std::fs::write(
         &definition_path,
@@ -470,10 +476,10 @@ fn retry_safe_create_with_client_owned_id_may_retry() {
     let project = setup(&fake, false, false);
     let definition_path = project
         .path()
-        .join(".taku/applications/elasticsearch/resources.yml");
+        .join(".taku/applications/elasticsearch/version-9.yml");
     let mut definition: serde_yaml::Value =
         serde_yaml::from_str(&std::fs::read_to_string(&definition_path).unwrap()).unwrap();
-    let light = &mut definition["target_profile"]["resource_types"]["light"];
+    let light = &mut definition["resource_types"]["light"][0];
     light["write_intent"] = serde_yaml::Value::String("create".into());
     light["operations"]["create"] = serde_yaml::from_str(
         "{ method: PUT, path: \"/light/{id}\", cardinality: one, retry_safe: true }\n",

@@ -1,20 +1,26 @@
 use crate::{
-    ApplicationDefinition, ApplicationSourceConfig, Installation, SCHEMA_VERSION, git_root,
-    load_project,
+    ApplicationDefinition, ApplicationSourceConfig, Installation, ResourceTypeCatalog,
+    SCHEMA_VERSION, git_root, load_project,
 };
 use anyhow::{Context, Result, bail};
 use rust_embed::Embed;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 use std::process::Command;
 
 #[derive(Embed)]
 #[folder = "assets/applications/"]
-#[include = "*/resources.yml"]
+#[include = "*/*.yml"]
 struct EmbeddedApplications;
+
+#[derive(Clone)]
+struct ApplicationBundle {
+    definition: ApplicationDefinition,
+    files: BTreeMap<String, Vec<u8>>,
+}
 
 #[derive(Clone, Debug, Serialize)]
 pub struct ApplicationListing {
@@ -49,13 +55,7 @@ pub struct UpdateResult {
     pub outcome: String,
     pub checksum: String,
 }
-type ApplicationCandidate = (
-    ApplicationDefinition,
-    Vec<u8>,
-    String,
-    Option<String>,
-    Option<String>,
-);
+type ApplicationCandidate = (ApplicationBundle, String, Option<String>, Option<String>);
 
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -65,23 +65,29 @@ struct SourceMetadata {
     revision: String,
 }
 
-pub fn embedded_application(name: &str) -> Result<(ApplicationDefinition, Vec<u8>)> {
-    let path = format!("{name}/resources.yml");
-    let file =
-        EmbeddedApplications::get(&path).with_context(|| format!("unknown Application {name}"))?;
-    let bytes = file.data.into_owned();
-    let definition = parse_definition(name, &bytes)?;
-    Ok((definition, bytes))
+fn embedded_application(name: &str) -> Result<ApplicationBundle> {
+    let prefix = format!("{name}/");
+    let files = EmbeddedApplications::iter()
+        .filter_map(|path| {
+            path.strip_prefix(&prefix).map(|relative| {
+                EmbeddedApplications::get(path.as_ref())
+                    .map(|file| (relative.to_owned(), file.data.into_owned()))
+                    .with_context(|| format!("missing embedded Application file {path}"))
+            })
+        })
+        .collect::<Result<BTreeMap<_, _>>>()?;
+    if files.is_empty() {
+        bail!("unknown Application {name}");
+    }
+    parse_bundle(name, files)
 }
 
 pub fn load_installed(root: &Path, name: &str) -> Result<ApplicationDefinition> {
-    let bytes = fs::read(
-        root.join(".taku/applications")
-            .join(name)
-            .join("resources.yml"),
-    )
-    .with_context(|| format!("Application {name} is not installed"))?;
-    parse_definition(name, &bytes)
+    let path = root.join(".taku/applications").join(name);
+    if !path.join("application.yml").is_file() {
+        bail!("Application {name} is not installed");
+    }
+    Ok(read_bundle_directory(name, &path)?.definition)
 }
 
 pub fn list_applications(root: &Path) -> Result<Vec<ApplicationListing>> {
@@ -95,7 +101,7 @@ pub fn list_applications(root: &Path) -> Result<Vec<ApplicationListing>> {
     let cached = cache_root(&root).join("applications");
     if let Ok(entries) = fs::read_dir(&cached) {
         for entry in entries.flatten() {
-            if entry.path().join("resources.yml").is_file() {
+            if entry.path().join("application.yml").is_file() {
                 names.insert(entry.file_name().to_string_lossy().into_owned());
             }
         }
@@ -103,7 +109,7 @@ pub fn list_applications(root: &Path) -> Result<Vec<ApplicationListing>> {
     let installed_root = root.join(".taku/applications");
     if let Ok(entries) = fs::read_dir(&installed_root) {
         for entry in entries.flatten() {
-            if entry.path().join("resources.yml").is_file() {
+            if entry.path().join("application.yml").is_file() {
                 names.insert(entry.file_name().to_string_lossy().into_owned());
             }
         }
@@ -111,8 +117,8 @@ pub fn list_applications(root: &Path) -> Result<Vec<ApplicationListing>> {
     names
         .into_iter()
         .map(|name| {
-            let installed = installed_root.join(&name).join("resources.yml").is_file();
-            let cached_path = cached.join(&name).join("resources.yml");
+            let installed = installed_root.join(&name).join("application.yml").is_file();
+            let cached_path = cached.join(&name).join("application.yml");
             let cached_definition = if cached_path.exists() {
                 Some(load_cached(&root, &name)?)
             } else {
@@ -121,13 +127,13 @@ pub fn list_applications(root: &Path) -> Result<Vec<ApplicationListing>> {
             let embedded_definition = embedded_application(&name).ok();
             let definition = if installed {
                 load_installed(&root, &name)?
-            } else if let Some((definition, _)) = &cached_definition {
-                definition.clone()
+            } else if let Some(bundle) = &cached_definition {
+                bundle.definition.clone()
             } else {
                 embedded_definition
                     .as_ref()
                     .with_context(|| format!("Application {name} has no valid definition"))?
-                    .0
+                    .definition
                     .clone()
             };
             let selected_source = if installed {
@@ -149,7 +155,7 @@ pub fn list_applications(root: &Path) -> Result<Vec<ApplicationListing>> {
                 };
             Ok(ApplicationListing {
                 name,
-                version: definition.application.version,
+                version: supported_versions(&definition).join(", "),
                 definition_version: definition.version,
                 installed,
                 selected_source,
@@ -184,34 +190,29 @@ pub fn install_applications_from(
         let destination = root
             .join(".taku/applications")
             .join(name)
-            .join("resources.yml");
+            .join("application.yml");
         if destination.exists() {
             bail!("Application {name} is already installed; use `taku update {name}`");
         }
-        let (mut definition, bytes, source, source_identity, revision) =
-            source_candidate(&root, name)?;
-        let checksum = hex::encode(Sha256::digest(&bytes));
-        definition.installation = Some(Installation {
+        let (mut bundle, source, source_identity, revision) = source_candidate(&root, name)?;
+        let checksum = bundle_checksum(&bundle.files);
+        bundle.definition.installation = Some(Installation {
             source: source.clone(),
             checksum: checksum.clone(),
             taku_version: env!("CARGO_PKG_VERSION").into(),
             source_identity,
             revision,
         });
-        loaded.push((name, definition, checksum, source));
+        loaded.push((name, bundle, checksum, source));
     }
     let mut results = Vec::new();
-    for (name, definition, checksum, source) in loaded {
+    for (name, bundle, checksum, source) in loaded {
         let destination = root.join(".taku/applications").join(name);
-        fs::create_dir_all(&destination)?;
-        fs::write(
-            destination.join("resources.yml"),
-            serde_yaml::to_string(&definition)?,
-        )?;
+        write_bundle(&destination, &bundle)?;
         results.push(InstallResult {
             name: name.clone(),
-            version: definition.application.version.clone(),
-            definition_version: definition.version.clone(),
+            version: supported_versions(&bundle.definition).join(", "),
+            definition_version: bundle.definition.version.clone(),
             source,
             checksum,
         });
@@ -296,7 +297,7 @@ pub fn update_applications(
         let mut names = Vec::new();
         if let Ok(entries) = fs::read_dir(&installed_root) {
             for entry in entries.flatten() {
-                if entry.path().join("resources.yml").is_file() {
+                if entry.path().join("application.yml").is_file() {
                     names.push(entry.file_name().to_string_lossy().into_owned());
                 }
             }
@@ -315,10 +316,9 @@ pub fn update_applications(
         let candidate = if from.is_none() {
             match installed.installation.as_ref() {
                 Some(installation) if installation.source == "embedded" => {
-                    embedded_application(&name).ok().map(|(d, b)| {
+                    embedded_application(&name).ok().map(|bundle| {
                         (
-                            d,
-                            b,
+                            bundle,
                             String::from("embedded"),
                             None::<String>,
                             None::<String>,
@@ -341,31 +341,30 @@ pub fn update_applications(
                 None => bail!("installed Application has no provenance"),
             }
         } else {
-            load_cached(&root, &name).ok().map(|(d, b)| {
+            load_cached(&root, &name).ok().map(|bundle| {
                 let metadata = source_metadata(&root).ok();
                 (
-                    d,
-                    b,
+                    bundle,
                     String::from("git"),
                     metadata.as_ref().map(|m| m.0.clone()),
                     metadata.map(|m| m.1),
                 )
             })
         };
-        let Some((mut definition, bytes, source, source_identity, revision)) = candidate else {
+        let Some((mut bundle, source, source_identity, revision)) = candidate else {
             candidates.push((name, None));
             continue;
         };
-        validate_resources_for(&root, &name, &definition)?;
-        let checksum = hex::encode(Sha256::digest(&bytes));
-        definition.installation = Some(Installation {
+        validate_resources_for(&root, &name, &bundle.definition)?;
+        let checksum = bundle_checksum(&bundle.files);
+        bundle.definition.installation = Some(Installation {
             source: source.clone(),
             checksum: checksum.clone(),
             taku_version: env!("CARGO_PKG_VERSION").into(),
             source_identity,
             revision,
         });
-        candidates.push((name, Some((definition, source, checksum))));
+        candidates.push((name, Some((bundle, source, checksum))));
     }
     let staging = root.join(".taku/applications.update.next");
     let backup = root.join(".taku/applications.update.previous");
@@ -379,15 +378,16 @@ pub fn update_applications(
     let staged = (|| -> Result<Vec<UpdateResult>> {
         let mut out = Vec::new();
         for (name, candidate) in candidates {
-            if let Some((definition, source, checksum)) = candidate {
-                let destination = staging.join(&name).join("resources.yml");
-                let temporary = destination.with_extension("next");
-                fs::write(&temporary, serde_yaml::to_string(&definition)?)?;
-                fs::rename(temporary, destination)?;
+            if let Some((bundle, source, checksum)) = candidate {
+                let destination = staging.join(&name);
+                if destination.exists() {
+                    fs::remove_dir_all(&destination)?;
+                }
+                write_bundle(&destination, &bundle)?;
                 out.push(UpdateResult {
                     name,
-                    version: definition.application.version.clone(),
-                    definition_version: definition.version.clone(),
+                    version: supported_versions(&bundle.definition).join(", "),
+                    definition_version: bundle.definition.version.clone(),
                     source,
                     outcome: "updated".into(),
                     checksum,
@@ -459,16 +459,9 @@ fn load_application_from_git_source(
         let revision = String::from_utf8_lossy(&revision_output.stdout)
             .trim()
             .to_owned();
-        let bytes = fs::read(
-            temporary
-                .join("applications")
-                .join(name)
-                .join("resources.yml"),
-        )?;
-        let definition = parse_definition(name, &bytes)?;
+        let bundle = read_bundle_directory(name, &temporary.join("applications").join(name))?;
         Ok(Some((
-            definition,
-            bytes,
+            bundle,
             "git".into(),
             Some(location.into()),
             Some(revision),
@@ -508,15 +501,8 @@ fn copy_directory(source: &Path, destination: &Path) -> Result<()> {
 fn cache_root(root: &Path) -> std::path::PathBuf {
     root.join(".taku/cache/application-source")
 }
-fn load_cached(root: &Path, name: &str) -> Result<(ApplicationDefinition, Vec<u8>)> {
-    let bytes = fs::read(
-        cache_root(root)
-            .join("applications")
-            .join(name)
-            .join("resources.yml"),
-    )?;
-    let definition = parse_definition(name, &bytes)?;
-    Ok((definition, bytes))
+fn load_cached(root: &Path, name: &str) -> Result<ApplicationBundle> {
+    read_bundle_directory(name, &cache_root(root).join("applications").join(name))
 }
 fn source_metadata(root: &Path) -> Result<(String, String)> {
     let value: SourceMetadata =
@@ -533,20 +519,14 @@ fn source_candidate(root: &Path, name: &str) -> Result<ApplicationCandidate> {
     let cached_path = cache_root(root)
         .join("applications")
         .join(name)
-        .join("resources.yml");
+        .join("application.yml");
     if cached_path.exists() {
-        let (definition, bytes) = load_cached(root, name)?;
+        let bundle = load_cached(root, name)?;
         let (location, revision) = source_metadata(root)?;
-        return Ok((
-            definition,
-            bytes,
-            "git".into(),
-            Some(location),
-            Some(revision),
-        ));
+        return Ok((bundle, "git".into(), Some(location), Some(revision)));
     }
-    let (definition, bytes) = embedded_application(name)?;
-    Ok((definition, bytes, "embedded".into(), None, None))
+    let bundle = embedded_application(name)?;
+    Ok((bundle, "embedded".into(), None, None))
 }
 fn validate_source_tree(root: &Path) -> Result<Vec<String>> {
     let applications = root.join("applications");
@@ -560,13 +540,13 @@ fn validate_source_tree(root: &Path) -> Result<Vec<String>> {
             bail!("Application Source contains a symlink or special entry");
         }
         let name = entry.file_name().to_string_lossy().into_owned();
-        let definition_path = entry.path().join("resources.yml");
+        let definition_path = entry.path().join("application.yml");
         let definition_metadata = fs::symlink_metadata(&definition_path)
-            .with_context(|| format!("Application {name} has no resources.yml"))?;
+            .with_context(|| format!("Application {name} has no application.yml"))?;
         if definition_metadata.file_type().is_symlink() || !definition_metadata.is_file() {
             bail!("Application {name} definition is not a regular file");
         }
-        parse_definition(&name, &fs::read(definition_path)?)?;
+        read_bundle_directory(&name, &entry.path())?;
         names.push(name);
     }
     names.sort();
@@ -586,7 +566,16 @@ fn validate_resources_for(
             if target.application != name {
                 continue;
             }
-            for (type_name, installed_type) in &installed.target_profile.resource_types {
+            let baseline = crate::resolution::load_baseline(&crate::resolution::baseline_path(
+                root,
+                environment,
+                target_name,
+            ))
+            .ok();
+            let installed =
+                crate::resolution::for_local_use(&installed, target, baseline.as_ref())?;
+            let updated = crate::resolution::for_local_use(definition, target, baseline.as_ref())?;
+            for (type_name, installed_type) in &installed.resource_types {
                 let directories = crate::canonical::resource_directories(
                     root,
                     &project,
@@ -598,13 +587,9 @@ fn validate_resources_for(
                 if directories.is_empty() {
                     continue;
                 }
-                let updated_type = definition
-                    .target_profile
-                    .resource_types
-                    .get(type_name)
-                    .with_context(|| {
-                        format!("updated Application removes managed Resource Type {type_name}")
-                    })?;
+                let updated_type = updated.resource_types.get(type_name).with_context(|| {
+                    format!("updated Application removes managed Resource Type {type_name}")
+                })?;
                 if updated_type.namespaced != installed_type.namespaced {
                     bail!(
                         "updated Application changes namespace layout for managed Resource Type {type_name}"
@@ -665,9 +650,15 @@ fn validate_resources_for(
     Ok(())
 }
 
-pub fn parse_definition(expected_name: &str, bytes: &[u8]) -> Result<ApplicationDefinition> {
-    let definition: ApplicationDefinition =
-        serde_yaml::from_slice(bytes).context("invalid Application definition")?;
+fn parse_bundle(
+    expected_name: &str,
+    files: BTreeMap<String, Vec<u8>>,
+) -> Result<ApplicationBundle> {
+    let manifest = files
+        .get("application.yml")
+        .context("Application has no application.yml")?;
+    let mut definition: ApplicationDefinition =
+        serde_yaml::from_slice(manifest).context("invalid Application definition")?;
     if definition.schema_version != SCHEMA_VERSION {
         bail!(
             "unsupported Application schema version {}",
@@ -680,139 +671,129 @@ pub fn parse_definition(expected_name: &str, bytes: &[u8]) -> Result<Application
             definition.application.name
         );
     }
-    if definition.application.version.is_empty() {
-        bail!("Application {expected_name} has no supported application version");
-    }
     if definition.version.is_empty() {
         bail!("Application {expected_name} has an empty definition version");
     }
-    if definition.target_profile.resource_types.is_empty() {
-        bail!("Application {expected_name} has no Resource Types");
+    if definition.version_endpoints.is_empty() {
+        bail!("Application {expected_name} has no Version Endpoints");
     }
-    for (name, resource_type) in &definition.target_profile.resource_types {
-        if !resource_type.id.pointer.starts_with('/') {
-            bail!("Resource Type {name} has an invalid identity pointer");
+    for endpoint in &definition.version_endpoints {
+        reqwest::Method::from_bytes(endpoint.method.as_bytes())
+            .context("Version Endpoint has an invalid HTTP method")?;
+        if !endpoint.path.starts_with('/') {
+            bail!("Version Endpoint path must begin with /");
         }
-        if resource_type.display_name.pointer.is_some()
-            && !resource_type.display_name.pointers.is_empty()
-        {
-            bail!("Resource Type {name} Display Name cannot define both pointer and pointers");
-        }
-        if resource_type
-            .display_name
-            .pointers()
-            .any(|pointer| !pointer.starts_with('/'))
-        {
-            bail!("Resource Type {name} has an invalid Display Name pointer");
-        }
-        if resource_type.operations.read.is_none() && resource_type.operations.list.is_none() {
-            bail!("Resource Type {name} has no observation Operation");
-        }
-        validate_operations(&resource_type.operations, name)?;
-        validate_transformations(&resource_type.transformations, name)?;
-        validate_filesystem(resource_type, name)?;
-        for dependency in &resource_type.dependencies {
-            if !definition
-                .target_profile
-                .resource_types
-                .contains_key(dependency)
-            {
-                bail!("Resource Type {name} depends on unknown Resource Type {dependency}");
-            }
-        }
-        for pointer in &resource_type.sensitive_fields {
-            if crate::model::sensitive_field_conflicts(resource_type, pointer) {
-                bail!("Sensitive Field {pointer} overlaps required canonical state for {name}");
-            }
-        }
-        let fact_names: BTreeSet<_> = definition
-            .target_profile
-            .fact_probes
-            .iter()
-            .map(|p| p.name.as_str())
-            .collect();
-        let mut predicates = BTreeSet::new();
-        for variant in &resource_type.variants {
-            if let Some(operations) = &variant.operations {
-                validate_operations(operations, name)?;
-            }
-            validate_transformations(&variant.transformations, name)?;
-            let mut variant_resource_type = resource_type.clone();
-            variant_resource_type
-                .transformations
-                .extend(variant.transformations.clone());
-            for pointer in &variant_resource_type.sensitive_fields {
-                if crate::model::sensitive_field_conflicts(&variant_resource_type, pointer) {
-                    bail!(
-                        "Sensitive Field {pointer} overlaps required Variant canonical state for {name}"
-                    );
-                }
-            }
-            for fact in variant.facts.keys() {
-                if !fact_names.contains(fact.as_str()) {
-                    bail!(
-                        "Resource Type {name} Variant {} references unknown Target Fact {fact}",
-                        variant.name
-                    );
-                }
-            }
-            let signature = serde_json::to_string(&variant.facts)?;
-            if !predicates.insert(signature) {
-                bail!("Resource Type {name} has ambiguous duplicate Variant predicates");
-            }
-            let write_available = match resource_type.write_intent {
-                crate::WriteIntent::Create => variant
-                    .operations
-                    .as_ref()
-                    .and_then(|operations| operations.create.as_ref())
-                    .or(resource_type.operations.create.as_ref())
-                    .is_some(),
-                crate::WriteIntent::Update => variant
-                    .operations
-                    .as_ref()
-                    .and_then(|operations| operations.update.as_ref())
-                    .or(resource_type.operations.update.as_ref())
-                    .is_some(),
-                crate::WriteIntent::Upsert => {
-                    let overlay = variant.operations.as_ref();
-                    let upsert = overlay
-                        .and_then(|operations| operations.upsert.as_ref())
-                        .or(resource_type.operations.upsert.as_ref());
-                    let create = overlay
-                        .and_then(|operations| operations.create.as_ref())
-                        .or(resource_type.operations.create.as_ref());
-                    let update = overlay
-                        .and_then(|operations| operations.update.as_ref())
-                        .or(resource_type.operations.update.as_ref());
-                    upsert.is_some() || (create.is_some() && update.is_some())
-                }
-            };
-            if !write_available {
-                bail!(
-                    "Resource Type {name} Variant {} cannot enforce configured Write Intent",
-                    variant.name
-                );
-            }
-        }
-        if resource_type.variants.is_empty()
-            && match resource_type.write_intent {
-                crate::WriteIntent::Create => resource_type.operations.create.is_none(),
-                crate::WriteIntent::Update => resource_type.operations.update.is_none(),
-                crate::WriteIntent::Upsert => {
-                    resource_type.operations.upsert.is_none()
-                        && (resource_type.operations.create.is_none()
-                            || resource_type.operations.update.is_none())
-                }
-            }
-        {
-            bail!("Resource Type {name} cannot enforce configured Write Intent");
+        if !endpoint.pointer.starts_with('/') {
+            bail!("Version Endpoint pointer must be a JSON pointer");
         }
     }
-    for probe in &definition.target_profile.fact_probes {
-        validate_operation(&probe.operation, &format!("Target Fact {}", probe.name))?;
+    let mut catalogs = BTreeMap::new();
+    for (path, bytes) in &files {
+        let Some(major) = version_file_major(path) else {
+            if path != "application.yml" {
+                bail!("unexpected Application definition file {path}");
+            }
+            continue;
+        };
+        let catalog: ResourceTypeCatalog = serde_yaml::from_slice(bytes)
+            .with_context(|| format!("invalid Major Version Catalog {path}"))?;
+        validate_catalog(expected_name, major, &catalog)?;
+        if catalogs.insert(major, catalog).is_some() {
+            bail!("Application {expected_name} defines major version {major} more than once");
+        }
     }
-    validate_dependencies(&definition)?;
-    Ok(definition)
+    if catalogs.is_empty() {
+        bail!("Application {expected_name} has no Major Version Catalogs");
+    }
+    definition.catalogs = catalogs;
+    Ok(ApplicationBundle { definition, files })
+}
+
+fn validate_catalog(expected_name: &str, major: u64, catalog: &ResourceTypeCatalog) -> Result<()> {
+    if catalog.schema_version != SCHEMA_VERSION {
+        bail!(
+            "unsupported Major Version Catalog schema version {}",
+            catalog.schema_version
+        );
+    }
+    if catalog.version.is_empty() {
+        bail!("Major Version Catalog {major} has an empty definition version");
+    }
+    if catalog.application.name != expected_name {
+        bail!(
+            "Major Version Catalog identity {} does not match {expected_name}",
+            catalog.application.name
+        );
+    }
+    semver::VersionReq::parse(&catalog.application.version).with_context(|| {
+        format!(
+            "Major Version Catalog {major} has invalid Application Version constraint {}",
+            catalog.application.version
+        )
+    })?;
+    if catalog.resource_types.is_empty() {
+        bail!("Major Version Catalog {major} has no Resource Types");
+    }
+    for (name, definitions) in &catalog.resource_types {
+        if definitions.is_empty() {
+            bail!("Resource Type {name} has no definitions");
+        }
+        for resource_type in definitions {
+            if let Some(version) = &resource_type.version {
+                semver::VersionReq::parse(version).with_context(|| {
+                    format!("Resource Type {name} has invalid version constraint {version}")
+                })?;
+            }
+            validate_resource_type(resource_type, name)?;
+            for dependency in &resource_type.dependencies {
+                if !catalog.resource_types.contains_key(dependency) {
+                    bail!("Resource Type {name} depends on unknown Resource Type {dependency}");
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_resource_type(resource_type: &crate::ResourceType, name: &str) -> Result<()> {
+    if !resource_type.id.pointer.starts_with('/') {
+        bail!("Resource Type {name} has an invalid identity pointer");
+    }
+    if resource_type.display_name.pointer.is_some()
+        && !resource_type.display_name.pointers.is_empty()
+    {
+        bail!("Resource Type {name} Display Name cannot define both pointer and pointers");
+    }
+    if resource_type
+        .display_name
+        .pointers()
+        .any(|pointer| !pointer.starts_with('/'))
+    {
+        bail!("Resource Type {name} has an invalid Display Name pointer");
+    }
+    if resource_type.operations.read.is_none() && resource_type.operations.list.is_none() {
+        bail!("Resource Type {name} has no observation Operation");
+    }
+    validate_operations(&resource_type.operations, name)?;
+    validate_transformations(&resource_type.transformations, name)?;
+    validate_filesystem(resource_type, name)?;
+    for pointer in &resource_type.sensitive_fields {
+        if crate::model::sensitive_field_conflicts(resource_type, pointer) {
+            bail!("Sensitive Field {pointer} overlaps required canonical state for {name}");
+        }
+    }
+    if match resource_type.write_intent {
+        crate::WriteIntent::Create => resource_type.operations.create.is_none(),
+        crate::WriteIntent::Update => resource_type.operations.update.is_none(),
+        crate::WriteIntent::Upsert => {
+            resource_type.operations.upsert.is_none()
+                && (resource_type.operations.create.is_none()
+                    || resource_type.operations.update.is_none())
+        }
+    } {
+        bail!("Resource Type {name} cannot enforce configured Write Intent");
+    }
+    Ok(())
 }
 
 fn validate_operations(operations: &crate::Operations, owner: &str) -> Result<()> {
@@ -975,30 +956,61 @@ fn validate_transformations(transformations: &[crate::Transformation], owner: &s
     Ok(())
 }
 
-fn validate_dependencies(definition: &ApplicationDefinition) -> Result<()> {
-    fn visit(
-        name: &str,
-        definition: &ApplicationDefinition,
-        visiting: &mut BTreeSet<String>,
-        done: &mut BTreeSet<String>,
-    ) -> Result<()> {
-        if done.contains(name) {
-            return Ok(());
+fn version_file_major(path: &str) -> Option<u64> {
+    path.strip_prefix("version-")?
+        .strip_suffix(".yml")?
+        .parse()
+        .ok()
+}
+
+fn read_bundle_directory(name: &str, directory: &Path) -> Result<ApplicationBundle> {
+    let mut files = BTreeMap::new();
+    for entry in
+        fs::read_dir(directory).with_context(|| format!("Application {name} is not installed"))?
+    {
+        let entry = entry?;
+        let metadata = fs::symlink_metadata(entry.path())?;
+        if metadata.file_type().is_symlink() || !metadata.is_file() {
+            bail!("Application {name} contains a symlink or special entry");
         }
-        if !visiting.insert(name.into()) {
-            bail!("Resource Type dependency cycle includes {name}");
+        let path = entry.file_name().to_string_lossy().into_owned();
+        if path == "application.yml" || version_file_major(&path).is_some() {
+            files.insert(path, fs::read(entry.path())?);
+        } else {
+            bail!("unexpected Application definition file {path}");
         }
-        for dep in &definition.target_profile.resource_types[name].dependencies {
-            visit(dep, definition, visiting, done)?;
-        }
-        visiting.remove(name);
-        done.insert(name.into());
-        Ok(())
     }
-    let mut visiting = BTreeSet::new();
-    let mut done = BTreeSet::new();
-    for name in definition.target_profile.resource_types.keys() {
-        visit(name, definition, &mut visiting, &mut done)?;
+    parse_bundle(name, files)
+}
+
+fn write_bundle(destination: &Path, bundle: &ApplicationBundle) -> Result<()> {
+    fs::create_dir_all(destination)?;
+    for (path, bytes) in &bundle.files {
+        let bytes = if path == "application.yml" {
+            serde_yaml::to_string(&bundle.definition)?.into_bytes()
+        } else {
+            bytes.clone()
+        };
+        fs::write(destination.join(path), bytes)?;
     }
     Ok(())
+}
+
+fn bundle_checksum(files: &BTreeMap<String, Vec<u8>>) -> String {
+    let mut hasher = Sha256::new();
+    for (path, bytes) in files {
+        hasher.update((path.len() as u64).to_be_bytes());
+        hasher.update(path.as_bytes());
+        hasher.update((bytes.len() as u64).to_be_bytes());
+        hasher.update(bytes);
+    }
+    hex::encode(hasher.finalize())
+}
+
+fn supported_versions(definition: &ApplicationDefinition) -> Vec<String> {
+    definition
+        .catalogs
+        .values()
+        .map(|catalog| catalog.application.version.clone())
+        .collect()
 }

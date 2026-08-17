@@ -1,5 +1,6 @@
 use crate::application::load_installed;
 use crate::project::current_environment;
+use crate::resolution::{baseline_path, for_local_use, load_baseline};
 use crate::{
     DisplayName, DisplayNameStrategy, IdScope, Project, RepositoryLayout, git_root, load_project,
 };
@@ -52,7 +53,41 @@ pub fn list_inventory(root: &Path, selection: &Selection) -> Result<Vec<Inventor
             continue;
         }
         let app = load_installed(&root, &target.application)?;
-        for (type_name, resource_type) in &app.target_profile.resource_types {
+        let baseline = load_baseline(&baseline_path(&root, &environment, target_name)).ok();
+        let resolved = for_local_use(&app, target, baseline.as_ref())?;
+        if let Some(baseline) = &baseline {
+            let version = semver::Version::parse(&baseline.application_version)?;
+            let catalog = &app.catalogs[&version.major];
+            for (type_name, definitions) in &catalog.resource_types {
+                if resolved.resource_types.contains_key(type_name) {
+                    continue;
+                }
+                let mut layouts: Vec<bool> = definitions
+                    .iter()
+                    .map(|definition| definition.namespaced)
+                    .collect();
+                layouts.sort_unstable();
+                layouts.dedup();
+                for namespaced in layouts {
+                    for (_, directory) in resource_directories(
+                        &root,
+                        &project,
+                        &environment,
+                        target_name,
+                        type_name,
+                        namespaced,
+                    )? {
+                        if directory_has_recognized_input(&directory, definitions)? {
+                            bail!(
+                                "Resource Type {type_name} is unavailable for Application Version {} but has recognized inputs",
+                                baseline.application_version
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        for (type_name, resource_type) in &resolved.resource_types {
             if !selection.types.is_empty() && !selection.types.contains(type_name) {
                 continue;
             }
@@ -200,6 +235,40 @@ pub fn list_inventory(root: &Path, selection: &Selection) -> Result<Vec<Inventor
         }
     }
     Ok(result)
+}
+
+fn directory_has_recognized_input(
+    directory: &Path,
+    definitions: &[crate::ResourceType],
+) -> Result<bool> {
+    for entry in fs::read_dir(directory)? {
+        let entry = entry?;
+        let path = entry.path();
+        let metadata = fs::symlink_metadata(&path)?;
+        if metadata.file_type().is_symlink() {
+            bail!(
+                "symlinked Resource input is not allowed: {}",
+                path.display()
+            );
+        }
+        if is_deletion_marker(&path)
+            || (metadata.is_dir()
+                && definitions
+                    .iter()
+                    .any(|definition| definition.filesystem.is_some()))
+            || (metadata.is_file()
+                && definitions
+                    .iter()
+                    .any(|definition| definition.filesystem.is_none())
+                && matches!(
+                    path.extension().and_then(|extension| extension.to_str()),
+                    Some("json" | "json5" | "yaml" | "yml")
+                ))
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn validate_namespace(namespace: &str) -> Result<()> {

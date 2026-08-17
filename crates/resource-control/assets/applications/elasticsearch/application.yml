@@ -1,0 +1,12 @@
+schema_version: 1
+version: "1.0.0"
+application:
+  name: elasticsearch
+target_profile:
+  headers:
+    accept: application/json
+    content-type: application/json
+version_endpoints:
+  - method: GET
+    path: /
+    pointer: /version/number

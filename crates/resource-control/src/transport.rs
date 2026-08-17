@@ -1,5 +1,8 @@
 use crate::canonical::{pointer_string, sort_value};
-use crate::{ApplicationDefinition, Operation, Outcome, PayloadFormat, ResourceType, TargetConfig};
+use crate::{
+    ApplicationDefinition, Operation, Outcome, PayloadFormat, ResourceType, TargetConfig,
+    VersionEndpoint,
+};
 use anyhow::{Context, Result, bail};
 use redact::Secret;
 use reqwest::blocking::{Client, Response};
@@ -29,72 +32,51 @@ pub struct OperationInput<'a> {
 pub const INTERNAL_GUARD_POINTER: &str = "/_taku_internal_guard";
 pub const INTERNAL_CURSOR_POINTER: &str = "/_taku_internal_cursor";
 
-pub fn execute_probe(
+pub fn execute_version_endpoint(
     target: &TargetConfig,
     app: &ApplicationDefinition,
-    operation: &Operation,
+    endpoint: &VersionEndpoint,
     auth: &BTreeMap<String, Secret<String>>,
 ) -> Result<Value> {
     let base_url = auth
         .get("url")
         .map(|value| value.expose_secret().as_str())
         .unwrap_or(&target.url);
-    let operation_path = operation_path(operation, None);
-    let path = render_path(&operation_path, None, None, None);
+    let path = render_path(&endpoint.path, None, None, None);
     let url = format!("{}{}", base_url.trim_end_matches('/'), path);
     let client = Client::builder().timeout(Duration::from_secs(30)).build()?;
-    let method = Method::from_bytes(operation.method.as_bytes())
-        .context("invalid configured HTTP method")?;
-    let mut attempts = 0;
-    let response = loop {
-        attempts += 1;
-        let mut request = client.request(method.clone(), &url);
-        for (name, value) in &app.target_profile.headers {
-            request = request.header(name, value);
-        }
-        for (name, value) in &target.headers {
-            request = request.header(name, value);
-        }
-        for (name, value) in &operation.headers {
-            request = request.header(name, value);
-        }
-        for (name, value) in auth.iter().filter(|(name, _)| name.as_str() != "url") {
-            request = request.header(name, value.expose_secret());
-        }
-        match request.send() {
-            Ok(response)
-                if operation.retry_safe
-                    && attempts < 3
-                    && (response.status() == StatusCode::TOO_MANY_REQUESTS
-                        || response.status().is_server_error()) =>
-            {
-                continue;
-            }
-            Ok(response) => break response,
-            Err(error)
-                if operation.retry_safe
-                    && attempts < 3
-                    && (error.is_timeout() || error.is_connect()) =>
-            {
-                continue;
-            }
-            Err(_) => bail!("Target Fact probe failed"),
-        }
-    };
+    let method =
+        Method::from_bytes(endpoint.method.as_bytes()).context("invalid configured HTTP method")?;
+    let mut request = client.request(method, &url);
+    for (name, value) in &app.target_profile.headers {
+        request = request.header(name, value);
+    }
+    for (name, value) in &target.headers {
+        request = request.header(name, value);
+    }
+    for (name, value) in &endpoint.headers {
+        request = request.header(name, value);
+    }
+    for (name, value) in auth.iter().filter(|(name, _)| name.as_str() != "url") {
+        request = request.header(name, value.expose_secret());
+    }
+    let response = request
+        .send()
+        .map_err(|_| anyhow::anyhow!("Version Endpoint request failed"))?;
     if !response.status().is_success() {
         bail!(
-            "Target Fact probe returned HTTP {}",
+            "Version Endpoint returned HTTP {}",
             response.status().as_u16()
         );
     }
     let bytes = response
         .bytes()
-        .map_err(|_| anyhow::anyhow!("Target Fact probe response failed"))?;
+        .map_err(|_| anyhow::anyhow!("Version Endpoint response failed"))?;
     json5::from_str(
         std::str::from_utf8(&bytes)
-            .map_err(|_| anyhow::anyhow!("Target Fact probe response is not UTF-8"))?,
+            .map_err(|_| anyhow::anyhow!("Version Endpoint response is not UTF-8"))?,
     )
-    .map_err(|_| anyhow::anyhow!("Target Fact probe response is invalid"))
+    .map_err(|_| anyhow::anyhow!("Version Endpoint response is invalid"))
 }
 
 pub fn execute(

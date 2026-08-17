@@ -2,15 +2,10 @@ schema_version: 1
 version: "1.5.0"
 application:
   name: kibana
-  version: "9.4.0"
-target_profile:
-  headers:
-    accept: application/json
-    kbn-xsrf: taku
-  fact_probes: []
-  resource_types:
-    spaces:
-      id: { pointer: /id, scope: universal }
+  version: ">=9.0.0, <10.0.0"
+resource_types:
+  spaces:
+    - id: { pointer: /id, scope: universal }
       display_name: { pointer: /name, strategy: name }
       write_intent: upsert
       operations:
@@ -19,8 +14,8 @@ target_profile:
         create: { method: POST, path: "/api/spaces/space", cardinality: one }
         update: { method: PUT, path: "/api/spaces/space/{id}", cardinality: one }
         delete: { method: DELETE, path: "/api/spaces/space/{id}", cardinality: one, retry_safe: true }
-    saved_objects:
-      id: { pointer: /id, scope: universal }
+  saved_objects:
+    - id: { pointer: /id, scope: universal }
       display_name: { pointers: [/attributes/title, /attributes/name], strategy: name_id }
       namespaced: true
       write_intent: upsert
@@ -68,7 +63,8 @@ target_profile:
           path: "/api/saved_objects/{type}/{id}"
           namespace: { prefix: "/s/{namespace}" }
           cardinality: one
-    workflows:
+  workflows:
+    - version: ">=9.4.0, <10.0.0"
       id: { pointer: /id, scope: universal }
       display_name: { pointer: /name, strategy: name_id }
       namespaced: true
@@ -121,7 +117,8 @@ target_profile:
           cardinality: one
           retry_safe: true
           headers: { x-elastic-internal-origin: Kibana }
-    tools:
+  tools:
+    - version: ">=9.4.0, <10.0.0"
       id: { pointer: /id, scope: universal }
       display_name: { pointer: /id, strategy: name, unique: true }
       namespaced: true
@@ -143,7 +140,8 @@ target_profile:
             - { kind: omit, pointer: /id }
             - { kind: omit, pointer: /type }
         delete: { method: DELETE, path: "/api/agent_builder/tools/{id}", namespace: { prefix: "/s/{namespace}" }, cardinality: one, retry_safe: true }
-    skills:
+  skills:
+    - version: ">=9.4.0, <10.0.0"
       id: { pointer: /id, scope: universal }
       display_name: { pointer: /name, strategy: id, unique: true }
       namespaced: true
@@ -179,7 +177,9 @@ target_profile:
           cardinality: one
           transformations: [{ kind: omit, pointer: /id }]
         delete: { method: DELETE, path: "/api/agent_builder/skills/{id}", namespace: { prefix: "/s/{namespace}" }, cardinality: one, retry_safe: true }
-    plugins:
+  plugins:
+    - version: ">=9.4.0, <10.0.0"
+      stability: experimental
       id: { pointer: /id, scope: universal }
       display_name: { pointer: /name, strategy: name, unique: true }
       namespaced: true
@@ -204,7 +204,8 @@ target_profile:
           trustworthy_response: true
           body: { url: "{source_url}", plugin_name: "{name}" }
         delete: { method: DELETE, path: "/api/agent_builder/plugins/{id}", namespace: { prefix: "/s/{namespace}" }, cardinality: one, retry_safe: true }
-    agents:
+  agents:
+    - version: ">=9.4.0, <10.0.0"
       id: { pointer: /id, scope: universal }
       display_name: { pointer: /name, strategy: name_id }
       namespaced: true

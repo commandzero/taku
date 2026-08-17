@@ -17,12 +17,12 @@ The Project structure selected at initialization: Single omits an Environment di
 _Avoid_: Overlay, auto-detected layout
 
 **Application**:
-An installable, reusable definition containing one Target Profile and its Resource Type Catalog. It is vendored into a Project and instantiated by Environment-specific Targets whose names default to the Application name.
+An installable, reusable definition containing shared connection behavior and one Resource Type Catalog for each supported major Application Version. It is vendored into a Project and instantiated by Environment-specific Targets whose names default to the Application name.
 _Avoid_: Target, remote application instance
 
 **Application Version**:
-The remote product version supported by an Application Definition.
-_Avoid_: Application Definition Version, schema version
+The remote product version discovered from a Target and used to select a Major Version Catalog and its applicable Resource Type Definitions.
+_Avoid_: Application Definition Version, schema version, catalog version
 
 **Application Definition Version**:
 The release identifier for the content of an Application Definition and its Resource Type Catalog.
@@ -77,7 +77,7 @@ The local, atomic renaming of a Target within one selected Environment, includin
 _Avoid_: Application rename, remote rename
 
 **Target Profile**:
-A reusable definition of non-secret application-wide transport defaults and Target Fact probes shared by corresponding Targets across Environments.
+A reusable definition of non-secret application-wide transport defaults and Version Endpoints shared by corresponding Targets across Environments.
 _Avoid_: Target, Environment
 
 **Authentication Provider**:
@@ -92,12 +92,12 @@ _Avoid_: redacted string, managed Resource field
 An exact structural field pointer whose value is dropped from a remote response before any Canonical Representation, cache, output, or other persistent form is written. Sensitive Fields cannot supply Resource identity or other required canonical state.
 _Avoid_: Secret Value, masked persisted value
 
-**Target Facts**:
-Version and capability information discovered from or explicitly supplied for a Target and used to select compatible Resource Type behavior.
-_Avoid_: Desired configuration, credentials
+**Version Endpoint**:
+One entry in an Application's ordered fallback list of remote requests and extraction rules for discovering its Application Version. Discovery succeeds at the first endpoint that returns an extractable valid version and fails only after every endpoint is exhausted.
+_Avoid_: Fact Probe, health check, Resource Operation
 
 **Target Baseline**:
-The version-controlled record of the Target Facts and Resource Type Variants against which an Environment's Canonical Representations were last reconciled.
+The version-controlled record of the Application Version, Major Version Catalog, and Resource Type Definitions against which an Environment's Canonical Representations were last reconciled.
 _Avoid_: Observed State Cache, version pin
 
 **Resource Type**:
@@ -116,17 +116,25 @@ _Avoid_: Namespace directory, special command
 A Resource Type that opts into Namespace-scoped identity and storage. Its Resources always include a Namespace directory, including `default`; Resource Types that do not opt in retain the non-namespaced layout.
 _Avoid_: globally scoped Resource Type, optional path guessing
 
-**Resource Type Variant**:
-The Operations and Transformations selected for a Resource Type when a specific set of Target Facts applies.
-_Avoid_: Resource Type, application upgrade
-
 **Resource Type Dependency**:
 An ordering relationship requiring all selected Resources of one Resource Type to succeed before a dependent Resource Type is changed.
 _Avoid_: Resource reference, filesystem order
 
 **Resource Type Catalog**:
-The vendored, application-specific collection of Resource Type declarations for one Target Profile that defines how remote configuration is identified, observed, normalized, and changed.
+The vendored, application-specific collection of Resource Type Definitions for one major Application Version.
 _Avoid_: Resource inventory, payload manifest
+
+**Major Version Catalog**:
+The Resource Type Catalog selected by the major component of a Target's discovered Application Version.
+_Avoid_: Application Definition, minor-version catalog
+
+**Resource Type Definition**:
+A complete, version-bounded declaration of one Resource Type's identity, lifecycle, transformations, and Operations. Its version constraint defaults to the enclosing Application Version constraint, and at most one definition for a Resource Type may apply to a Target.
+_Avoid_: Resource Type Variant, configuration overlay
+
+**API Stability**:
+The declared lifecycle stage of a Resource Type Definition: Experimental, Preview, or Stable. An unclassified definition is Stable.
+_Avoid_: Application Version, availability
 
 **Operation**:
 A named capability declared by a Resource Type for observing or changing Resources through a remote interaction. Its cardinality is One or Many.
@@ -245,11 +253,11 @@ The authoritative set of desired Resources intentionally managed by Taku for one
 _Avoid_: Resource Type Catalog, payload manifest
 
 **Observed State Cache**:
-A disposable, non-authoritative snapshot produced by Fetch for later comparison or Pull and bound to the exact Project, configuration, Resource Type Catalog, and Target facts used to create it. Deleting it never changes desired or remote state.
+A disposable, non-authoritative snapshot produced by Fetch for later comparison or Pull and bound to the exact Project, configuration, Resource Type Catalog, Target, and Application Version used to create it. Deleting it never changes desired or remote state.
 _Avoid_: State backend, desired state
 
 **Observation Validity**:
-The structural usability of Observed State based on its bound Project inputs, Application definitions, Target, and Target Facts. Elapsed time is reported but does not itself invalidate an observation.
+The structural usability of Observed State based on its bound Project inputs, Application definitions, Target, Application Version, and Resource Type Definitions. Elapsed time is reported but does not itself invalidate an observation.
 _Avoid_: cache TTL, concurrency guarantee
 
 **Write Intent**:

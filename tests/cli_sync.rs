@@ -34,7 +34,7 @@ impl FakeTarget {
         let resource = Arc::new(Mutex::new(
             json!({"id":"pipe-1","name":"Pipeline","description":"remote","processors":[],"version":"7","created_date_millis":1000,"modified_date_millis":2000,"_secret":"NEVER-PERSIST"}),
         ));
-        let version = Arc::new(Mutex::new(String::from("1")));
+        let version = Arc::new(Mutex::new(String::from("9.1.0")));
         let requests = Arc::new(Mutex::new(Vec::new()));
         let stop = Arc::new(AtomicBool::new(false));
         let (state, remote_version, captured, stopping) = (
@@ -84,8 +84,9 @@ impl FakeTarget {
                         .to_string(),
                     )
                     .with_header(Header::from_bytes("content-type", "application/json").unwrap()),
-                    (&Method::Get, "/version") => Response::from_string(
-                        json!({"version":remote_version.lock().unwrap().clone()}).to_string(),
+                    (&Method::Get, "/") => Response::from_string(
+                        json!({"version":{"number":remote_version.lock().unwrap().clone()}})
+                            .to_string(),
                     )
                     .with_header(Header::from_bytes("content-type", "application/json").unwrap()),
                     (&Method::Get, "/_ingest/pipeline") => Response::from_string(
@@ -125,33 +126,31 @@ impl FakeTarget {
 }
 
 #[test]
-fn changed_target_facts_that_select_a_new_variant_block_push_until_pull_reconciles() {
+fn changed_application_version_that_selects_a_new_definition_blocks_push_until_pull_reconciles() {
     let target = FakeTarget::start();
     let project = setup(&target);
     let definition = r#"schema_version: 1
 version: "variant-definition"
-application: { name: elasticsearch, version: "variant-test" }
-target_profile:
-  headers: { content-type: application/json }
-  fact_probes:
-    - name: version
-      pointer: /version
-      operation: { method: GET, path: /version, cardinality: one }
-  resource_types:
-    ingest_pipelines:
+application: { name: elasticsearch, version: ">=9.0.0, <10.0.0" }
+resource_types:
+  ingest_pipelines:
+    - version: ">=9.0.0, <9.2.0"
       id: { pointer: /id, scope: universal }
       display_name: { pointer: /name, strategy: name }
       operations:
         read: { method: GET, path: "/_ingest/pipeline/{id}", cardinality: one, extract: "/{id}" }
         upsert: { method: PUT, path: "/_ingest/pipeline/{id}", cardinality: one }
-      variants:
-        - { name: v1, facts: { version: "1" } }
-        - { name: v2, facts: { version: "2" } }
+    - version: ">=9.2.0, <10.0.0"
+      id: { pointer: /id, scope: universal }
+      display_name: { pointer: /name, strategy: name }
+      operations:
+        read: { method: GET, path: "/_ingest/pipeline/{id}", cardinality: one, extract: "/{id}" }
+        upsert: { method: PUT, path: "/_ingest/pipeline/{id}", cardinality: one }
 "#;
     std::fs::write(
         project
             .path()
-            .join(".taku/applications/elasticsearch/resources.yml"),
+            .join(".taku/applications/elasticsearch/version-9.yml"),
         definition,
     )
     .unwrap();
@@ -159,9 +158,9 @@ target_profile:
     assert!(
         std::fs::read_to_string(project.path().join(".taku/baselines/dev/es.yml"))
             .unwrap()
-            .contains("v1")
+            .contains(">=9.0.0, <9.2.0")
     );
-    *target.version.lock().unwrap() = "2".into();
+    *target.version.lock().unwrap() = "9.2.0".into();
     let desired = project.path().join("es/ingest_pipelines/Pipeline.json");
     let mut local: Value =
         serde_json::from_str(&std::fs::read_to_string(&desired).unwrap()).unwrap();
@@ -172,13 +171,15 @@ target_profile:
         &["push", "--untracked", "allow", "--uncommitted", "allow"],
     );
     assert!(!blocked.status.success());
-    assert!(String::from_utf8_lossy(&blocked.stderr).contains("different Resource Type Variants"));
+    assert!(
+        String::from_utf8_lossy(&blocked.stderr).contains("different Resource Type Definitions")
+    );
     run(&project, &["fetch"]);
     run(&project, &["pull", "--yes"]);
     assert!(
         std::fs::read_to_string(project.path().join(".taku/baselines/dev/es.yml"))
             .unwrap()
-            .contains("v2")
+            .contains(">=9.2.0, <10.0.0")
     );
 }
 
@@ -188,13 +189,10 @@ fn target_scoped_pending_create_becomes_identified_only_after_trustworthy_succes
     let project = setup(&target);
     let definition = r#"schema_version: 1
 version: "test-definition"
-application: { name: elasticsearch, version: "test" }
-target_profile:
-  headers: { content-type: application/json }
-  fact_probes: []
-  resource_types:
-    jobs:
-      id: { pointer: /id, scope: target }
+application: { name: elasticsearch, version: ">=9.0.0, <10.0.0" }
+resource_types:
+  jobs:
+    - id: { pointer: /id, scope: target }
       display_name: { pointer: /name, strategy: name }
       write_intent: create
       operations:
@@ -204,7 +202,7 @@ target_profile:
     std::fs::write(
         project
             .path()
-            .join(".taku/applications/elasticsearch/resources.yml"),
+            .join(".taku/applications/elasticsearch/version-9.yml"),
         definition,
     )
     .unwrap();
@@ -491,13 +489,10 @@ fn guarded_concurrency_uses_a_response_token_without_persisting_the_response_onl
     let project = setup(&target);
     let definition = r#"schema_version: 1
 version: guard-definition
-application: { name: elasticsearch, version: guard-test }
-target_profile:
-  headers: { content-type: application/json }
-  fact_probes: []
-  resource_types:
-    ingest_pipelines:
-      id: { pointer: /id, scope: universal }
+application: { name: elasticsearch, version: ">=9.0.0, <10.0.0" }
+resource_types:
+  ingest_pipelines:
+    - id: { pointer: /id, scope: universal }
       display_name: { pointer: /name, strategy: name }
       concurrency_mode: guarded
       guard_pointer: /version
@@ -509,7 +504,7 @@ target_profile:
     std::fs::write(
         project
             .path()
-            .join(".taku/applications/elasticsearch/resources.yml"),
+            .join(".taku/applications/elasticsearch/version-9.yml"),
         definition,
     )
     .unwrap();
@@ -589,10 +584,10 @@ fn create_only_dry_run_rechecks_remote_absence_instead_of_trusting_the_cache() {
     let project = setup(&target);
     let definition_path = project
         .path()
-        .join(".taku/applications/elasticsearch/resources.yml");
+        .join(".taku/applications/elasticsearch/version-9.yml");
     let mut definition: serde_yaml::Value =
         serde_yaml::from_str(&std::fs::read_to_string(&definition_path).unwrap()).unwrap();
-    definition["target_profile"]["resource_types"]["ingest_pipelines"]["write_intent"] =
+    definition["resource_types"]["ingest_pipelines"][0]["write_intent"] =
         serde_yaml::Value::String("create".into());
     std::fs::write(
         &definition_path,
@@ -643,10 +638,10 @@ fn fetch_reports_inbound_transformation_failures_as_structured_conflicts() {
     let project = setup(&target);
     let definition_path = project
         .path()
-        .join(".taku/applications/elasticsearch/resources.yml");
+        .join(".taku/applications/elasticsearch/version-9.yml");
     let mut definition: serde_yaml::Value =
         serde_yaml::from_str(&std::fs::read_to_string(&definition_path).unwrap()).unwrap();
-    definition["target_profile"]["resource_types"]["ingest_pipelines"]["transformations"] =
+    definition["resource_types"]["ingest_pipelines"][0]["transformations"] =
         serde_yaml::from_str("- { kind: extract, pointer: /missing }\n").unwrap();
     std::fs::write(
         &definition_path,
@@ -667,10 +662,10 @@ fn patch_mutation_mode_compares_and_pulls_only_fields_owned_by_the_resource() {
     let project = setup(&target);
     let definition_path = project
         .path()
-        .join(".taku/applications/elasticsearch/resources.yml");
+        .join(".taku/applications/elasticsearch/version-9.yml");
     let mut definition: serde_yaml::Value =
         serde_yaml::from_str(&std::fs::read_to_string(&definition_path).unwrap()).unwrap();
-    definition["target_profile"]["resource_types"]["ingest_pipelines"]["mutation_mode"] =
+    definition["resource_types"]["ingest_pipelines"][0]["mutation_mode"] =
         serde_yaml::Value::String("patch".into());
     std::fs::write(
         &definition_path,

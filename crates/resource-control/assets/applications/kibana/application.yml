@@ -1,0 +1,12 @@
+schema_version: 1
+version: "1.0.0"
+application:
+  name: kibana
+target_profile:
+  headers:
+    accept: application/json
+    kbn-xsrf: taku
+version_endpoints:
+  - method: GET
+    path: /api/status
+    pointer: /version/number

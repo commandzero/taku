@@ -9,9 +9,9 @@ mod project;
 mod projection;
 mod provider;
 mod reconcile;
+mod resolution;
 mod scheduler;
 mod transport;
-mod variants;
 
 pub use application::{
     ApplicationListing, InstallResult, RefreshResult, UpdateResult, install_applications,
@@ -25,5 +25,5 @@ pub use model::*;
 pub use observe::{FetchResult, RemoteEntry, fetch, is_transformation_conflict, remote_list};
 pub use project::{add_target, git_root, initialize, load_project, rename_target, save_context};
 pub use reconcile::{Comparison, DiffEntry, PullResult, compare, diff, pull};
+pub use resolution::{TargetBaseline, validate_project};
 pub use scheduler::{push, push_confirmation_required};
-pub use variants::{TargetBaseline, validate_project};
