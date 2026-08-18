@@ -391,6 +391,56 @@ pub fn pull(
             outcome: outcome.into(),
         });
     }
+    for (_, marker) in crate::lifecycle::deletion_markers(&root, selection)? {
+        let target = &project.environments[&environment].targets[&marker.target];
+        let application = load_installed(&root, &target.application)?;
+        let path = cache_path(
+            &root,
+            &environment,
+            &marker.target,
+            marker.namespace.as_deref(),
+            &marker.resource_type,
+        );
+        if !observations.contains_key(&path) {
+            observations.insert(path.clone(), load_observation(&path)?);
+        }
+        let observation = observations.get_mut(&path).unwrap();
+        if observation.binding
+            != binding(
+                &root,
+                &project,
+                &environment,
+                &marker.target,
+                &application,
+                marker.namespace.as_deref(),
+                &marker.resource_type,
+            )?
+        {
+            bail!("Observed State is structurally invalid; run `taku fetch`");
+        }
+        let resource = observation
+            .resources
+            .get_mut(&marker.id)
+            .context("selected deletion marker is absent from Observed State")?;
+        resource.requires_pull = false;
+        baselines.insert(
+            baseline_path(&root, &environment, &marker.target),
+            baseline_from(&crate::resolution::ResolvedApplication {
+                application_version: observation.application_version.clone(),
+                catalog_version: observation.catalog_version.clone(),
+                selected: observation.definitions.clone(),
+                resource_types: BTreeMap::new(),
+            }),
+        );
+        result.push(PullResult {
+            environment: environment.clone(),
+            target: marker.target,
+            namespace: marker.namespace,
+            resource_type: marker.resource_type,
+            id: marker.id,
+            outcome: "unchanged".into(),
+        });
+    }
     if has_conflict {
         for report in &mut result {
             if matches!(report.outcome.as_str(), "pulled" | "deleted") {

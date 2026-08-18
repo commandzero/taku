@@ -290,15 +290,16 @@ pub fn fetch(
         }
         let discovered = &resolved[&marker.target];
         let resource_type = &discovered.resource_types[&marker.resource_type];
-        let metadata_track = crate::hints::resolve(
+        let hint_resolution = crate::hints::resolve(
             &root,
             &project,
             &environment,
             &marker.target,
             marker.namespace.as_deref(),
             &marker.resource_type,
-        )?
-        .track;
+        )?;
+        let metadata_track = hint_resolution.track;
+        let hint_binding = hash(&hint_resolution.binding_material(&root)?);
         let operation = resource_type
             .operations
             .read
@@ -395,6 +396,16 @@ pub fn fetch(
             observation_files.insert(path.clone(), file);
         }
         let file = observation_files.get_mut(&path).unwrap();
+        let requires_pull = file.resources.get(&marker.id).is_some_and(|observation| {
+            observation.requires_pull
+                || observation.hint_binding.as_ref().map_or_else(
+                    || {
+                        hint_resolution.target_bytes.is_some()
+                            || hint_resolution.resource_bytes.is_some()
+                    },
+                    |binding| binding != &hint_binding,
+                )
+        });
         file.observed_at = Utc::now();
         file.binding = bindings[&path].clone();
         file.application_version = discovered.application_version.clone();
@@ -420,8 +431,8 @@ pub fn fetch(
                 present,
                 value,
                 guard,
-                requires_pull: false,
-                hint_binding: None,
+                requires_pull,
+                hint_binding: Some(hint_binding),
             },
         );
         reports.push(FetchResult {

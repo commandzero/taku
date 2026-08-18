@@ -440,6 +440,43 @@ fn push_deletes_only_through_a_matching_guarded_marker_and_consumes_it() {
 }
 
 #[test]
+fn deletion_marker_push_requires_fetch_and_pull_after_a_hint_change() {
+    let target = FakeTarget::start();
+    let project = setup(&target);
+    run(&project, &["fetch"]);
+    run(&project, &["remove", "es", "ingest_pipelines", "pipe-1"]);
+    std::fs::write(
+        project.path().join("es/.target.yaml"),
+        "schema_version: 1\nmetadata: { track: true }\n",
+    )
+    .unwrap();
+
+    run(&project, &["fetch"]);
+    target.requests.lock().unwrap().clear();
+    let blocked = output(
+        &project,
+        &["push", "--uncommitted", "allow", "--untracked", "allow"],
+    );
+    assert!(!blocked.status.success());
+    assert!(String::from_utf8_lossy(&blocked.stderr).contains("requires Pull"));
+    assert!(target.requests.lock().unwrap().is_empty());
+
+    run(&project, &["pull", "--yes"]);
+    run(
+        &project,
+        &["push", "--uncommitted", "allow", "--untracked", "allow"],
+    );
+    assert!(
+        target
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|request| request.method == "DELETE")
+    );
+}
+
+#[test]
 fn fetch_explicitly_reobserves_resources_marked_for_deletion() {
     let target = FakeTarget::start();
     let project = setup(&target);

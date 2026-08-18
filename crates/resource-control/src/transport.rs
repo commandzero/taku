@@ -507,9 +507,7 @@ pub(crate) fn inbound(
     let mut value = value.clone();
     apply_inbound(&mut value, resource_type)?;
     if !metadata_track && let Some(metadata) = &resource_type.metadata {
-        for pointer in &metadata.fields {
-            remove_pointer(&mut value, pointer)?;
-        }
+        remove_pointers(&mut value, &metadata.fields)?;
     }
     Ok(value)
 }
@@ -530,9 +528,7 @@ pub fn outbound(
 pub(crate) fn without_metadata(value: &Value, resource_type: &ResourceType) -> Result<Value> {
     let mut value = value.clone();
     if let Some(metadata) = &resource_type.metadata {
-        for pointer in &metadata.fields {
-            remove_pointer(&mut value, pointer)?;
-        }
+        remove_pointers(&mut value, &metadata.fields)?;
     }
     Ok(value)
 }
@@ -693,6 +689,28 @@ pub fn remove_pointer(root: &mut Value, pointer: &str) -> Result<()> {
     Ok(())
 }
 
+fn remove_pointers(root: &mut Value, pointers: &[String]) -> Result<()> {
+    let mut pointers = pointers.iter().map(String::as_str).collect::<Vec<_>>();
+    pointers.sort_by(|left, right| {
+        let left = left.split('/').skip(1);
+        let right = right.split('/').skip(1);
+        for (left, right) in left.zip(right) {
+            if left == right {
+                continue;
+            }
+            return match (left.parse::<usize>(), right.parse::<usize>()) {
+                (Ok(left), Ok(right)) => right.cmp(&left),
+                _ => left.cmp(right),
+            };
+        }
+        std::cmp::Ordering::Equal
+    });
+    for pointer in pointers {
+        remove_pointer(root, pointer)?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod namespace_path_tests {
     use super::{inbound, operation_path, outbound, render_path};
@@ -774,12 +792,12 @@ transformations: [{ kind: extract, pointer: /payload }]
             r#"
 id: { pointer: /id, scope: universal }
 display_name: { strategy: id }
-metadata: { fields: [/audit/0] }
+metadata: { fields: [/audit/0, /audit/1] }
 operations: {}
 "#,
         )
         .unwrap();
-        let value = serde_json::json!({"id": "one", "audit": ["secret", "kept"]});
+        let value = serde_json::json!({"id": "one", "audit": ["secret-a", "secret-b", "kept"]});
 
         assert_eq!(
             outbound(&value, &resource_type, None).unwrap(),

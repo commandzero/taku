@@ -366,6 +366,49 @@ pub fn push(
     for (path, marker) in markers {
         let target = &project.environments[&environment].targets[&marker.target];
         let app = load_installed(&root, &target.application)?;
+        let hints = crate::hints::resolve(
+            &root,
+            &project,
+            &environment,
+            &marker.target,
+            marker.namespace.as_deref(),
+            &marker.resource_type,
+        )?;
+        binding_parts.push(hex::encode(hints.binding_material(&root)?));
+        let observation_path = cache_path(
+            &root,
+            &environment,
+            &marker.target,
+            marker.namespace.as_deref(),
+            &marker.resource_type,
+        );
+        if !observation_files.contains_key(&observation_path) {
+            observation_files.insert(
+                observation_path.clone(),
+                load_observation(&observation_path)?,
+            );
+        }
+        let observation_file = &observation_files[&observation_path];
+        if observation_file.binding
+            != binding(
+                &root,
+                &project,
+                &environment,
+                &marker.target,
+                &app,
+                marker.namespace.as_deref(),
+                &marker.resource_type,
+            )?
+        {
+            bail!("Observed State is structurally invalid; run `taku fetch`");
+        }
+        let observation = observation_file
+            .resources
+            .get(&marker.id)
+            .context("selected deletion marker is absent from Observed State")?;
+        if observation.requires_pull {
+            bail!("Observed State requires Pull after a Directory Hint change; run `taku pull`");
+        }
         let auth = resolve_auth(&root, &project, &environment, target, cli_provider)?;
         let discovered = match discover(&app, target, &auth) {
             Ok(discovered) => discovered,
@@ -383,15 +426,6 @@ pub fn push(
             );
         }
         let resource_type = discovered.resource_types[&marker.resource_type].clone();
-        let hints = crate::hints::resolve(
-            &root,
-            &project,
-            &environment,
-            &marker.target,
-            marker.namespace.as_deref(),
-            &marker.resource_type,
-        )?;
-        binding_parts.push(hex::encode(hints.binding_material(&root)?));
         let read = resource_type
             .operations
             .read
