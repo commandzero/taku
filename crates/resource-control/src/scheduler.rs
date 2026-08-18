@@ -69,6 +69,7 @@ struct PreparedDeletion {
     read: Operation,
     delete: Operation,
     auth: SecretFields,
+    metadata_track: bool,
     remote_absent: bool,
 }
 impl PreparedDeletion {
@@ -453,6 +454,7 @@ pub fn push(
             read,
             delete,
             auth,
+            metadata_track: hints.track,
             remote_absent: false,
         };
         match verify_deletion(&prepared) {
@@ -1097,7 +1099,7 @@ fn verify_deletion(task: &PreparedDeletion) -> Result<DeletionVerification> {
             context: Some(&parameters),
             body: None,
             mutation: false,
-            metadata_track: false,
+            metadata_track: task.metadata_track,
         },
         &task.auth,
     )? {

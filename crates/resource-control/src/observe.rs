@@ -84,6 +84,20 @@ pub struct Observation {
     pub hint_binding: Option<String>,
 }
 
+fn requires_pull_after_hint_change(
+    previous: Option<&Observation>,
+    hints: &crate::hints::HintResolution,
+    current_binding: &str,
+) -> bool {
+    previous.is_some_and(|observation| {
+        observation.requires_pull
+            || observation.hint_binding.as_ref().map_or_else(
+                || hints.target_bytes.is_some() || hints.resource_bytes.is_some(),
+                |binding| binding != current_binding,
+            )
+    })
+}
+
 pub fn fetch(
     root: &Path,
     selection: &Selection,
@@ -231,16 +245,11 @@ pub fn fetch(
             observation_files.insert(path.clone(), file);
         }
         let file = observation_files.get_mut(&path).unwrap();
-        let requires_pull = file.resources.get(&item.id).is_some_and(|observation| {
-            observation.requires_pull
-                || observation.hint_binding.as_ref().map_or_else(
-                    || {
-                        hint_resolution.target_bytes.is_some()
-                            || hint_resolution.resource_bytes.is_some()
-                    },
-                    |binding| binding != &hint_binding,
-                )
-        });
+        let requires_pull = requires_pull_after_hint_change(
+            file.resources.get(&item.id),
+            &hint_resolution,
+            &hint_binding,
+        );
         file.observed_at = Utc::now();
         file.binding = bindings[&path].clone();
         file.application_version = discovered.application_version.clone();
@@ -396,16 +405,11 @@ pub fn fetch(
             observation_files.insert(path.clone(), file);
         }
         let file = observation_files.get_mut(&path).unwrap();
-        let requires_pull = file.resources.get(&marker.id).is_some_and(|observation| {
-            observation.requires_pull
-                || observation.hint_binding.as_ref().map_or_else(
-                    || {
-                        hint_resolution.target_bytes.is_some()
-                            || hint_resolution.resource_bytes.is_some()
-                    },
-                    |binding| binding != &hint_binding,
-                )
-        });
+        let requires_pull = requires_pull_after_hint_change(
+            file.resources.get(&marker.id),
+            &hint_resolution,
+            &hint_binding,
+        );
         file.observed_at = Utc::now();
         file.binding = bindings[&path].clone();
         file.application_version = discovered.application_version.clone();

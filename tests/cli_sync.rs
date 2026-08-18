@@ -477,6 +477,48 @@ fn deletion_marker_push_requires_fetch_and_pull_after_a_hint_change() {
 }
 
 #[test]
+fn pull_reconciles_a_deletion_guard_when_metadata_tracking_is_disabled() {
+    let target = FakeTarget::start();
+    let project = setup(&target);
+    let hint = project.path().join("es/.target.yaml");
+    std::fs::write(&hint, "schema_version: 1\nmetadata: { track: true }\n").unwrap();
+    run(&project, &["fetch"]);
+    run(&project, &["remove", "es", "ingest_pipelines", "pipe-1"]);
+    let marker = std::fs::read_dir(project.path().join("es/ingest_pipelines"))
+        .unwrap()
+        .filter_map(Result::ok)
+        .find(|entry| entry.file_name().to_string_lossy().ends_with(".delete.yml"))
+        .unwrap()
+        .path();
+    let tracked_guard = std::fs::read_to_string(&marker).unwrap();
+    std::fs::write(&hint, "schema_version: 1\nmetadata: { track: false }\n").unwrap();
+
+    run(&project, &["fetch"]);
+    let blocked = output(
+        &project,
+        &["push", "--uncommitted", "allow", "--untracked", "allow"],
+    );
+    assert!(!blocked.status.success());
+    assert!(String::from_utf8_lossy(&blocked.stderr).contains("requires Pull"));
+
+    let pulled = run(&project, &["pull", "--yes"]);
+    assert_eq!(pulled["result"][0]["outcome"], "pulled");
+    assert_ne!(std::fs::read_to_string(&marker).unwrap(), tracked_guard);
+    run(
+        &project,
+        &["push", "--uncommitted", "allow", "--untracked", "allow"],
+    );
+    assert!(
+        target
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|request| request.method == "DELETE")
+    );
+}
+
+#[test]
 fn fetch_explicitly_reobserves_resources_marked_for_deletion() {
     let target = FakeTarget::start();
     let project = setup(&target);

@@ -245,6 +245,7 @@ pub fn pull(
     let mut result = Vec::new();
     let mut observations = std::collections::BTreeMap::new();
     let mut mutations: Vec<(std::path::PathBuf, Option<Value>, crate::ResourceType)> = Vec::new();
+    let mut marker_mutations = Vec::new();
     let mut baselines = std::collections::BTreeMap::new();
     let mut has_conflict = false;
     for item in list_inventory(&root, selection)? {
@@ -391,7 +392,7 @@ pub fn pull(
             outcome: outcome.into(),
         });
     }
-    for (_, marker) in crate::lifecycle::deletion_markers(&root, selection)? {
+    for (marker_path, mut marker) in crate::lifecycle::deletion_markers(&root, selection)? {
         let target = &project.environments[&environment].targets[&marker.target];
         let application = load_installed(&root, &target.application)?;
         let path = cache_path(
@@ -422,6 +423,14 @@ pub fn pull(
             .resources
             .get_mut(&marker.id)
             .context("selected deletion marker is absent from Observed State")?;
+        let mut outcome = "unchanged";
+        if let Some(guard) = &resource.guard
+            && &marker.guard != guard
+        {
+            marker.guard.clone_from(guard);
+            marker_mutations.push((marker_path, marker.clone()));
+            outcome = "pulled";
+        }
         resource.requires_pull = false;
         baselines.insert(
             baseline_path(&root, &environment, &marker.target),
@@ -438,7 +447,7 @@ pub fn pull(
             namespace: marker.namespace,
             resource_type: marker.resource_type,
             id: marker.id,
-            outcome: "unchanged".into(),
+            outcome: outcome.into(),
         });
     }
     if has_conflict {
@@ -450,6 +459,9 @@ pub fn pull(
         return Ok(result);
     }
     apply_pull_mutations(&mutations)?;
+    for (path, marker) in marker_mutations {
+        std::fs::write(path, serde_yaml::to_string(&marker)?)?;
+    }
     for (path, observation) in observations {
         save_observation(&path, &observation)?;
     }
