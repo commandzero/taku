@@ -1,4 +1,5 @@
 use assert_cmd::Command;
+use resource_control::{CompletionIntent, CompletionQuery, completion_candidates};
 use serde_json::Value;
 use std::process::Command as StdCommand;
 use std::sync::{
@@ -69,12 +70,27 @@ impl Drop for Fake {
 fn version_endpoints_fall_back_in_order_and_unavailable_resource_types_are_skipped() {
     let fake = Fake::start();
     let project = project(&fake);
-    let result = run(&project, &["list", "--remote", "--type", "widgets"]);
+    let mut query = CompletionQuery::new(project.path(), CompletionIntent::RemoteResourceType);
+    query.target = Some("api".into());
+    assert!(
+        completion_candidates(&query)
+            .unwrap()
+            .iter()
+            .any(|candidate| candidate.value == "widgets")
+    );
+    assert!(!project.path().join(".taku/baselines/dev/api.yml").exists());
+    let result = run(&project, &["list", "--remote", "api", "widgets"]);
 
     assert_eq!(result["result"][0]["id"], "one");
     assert_eq!(
         *fake.requests.lock().unwrap(),
-        vec!["GET /missing-version", "GET /version", "GET /widgets"]
+        vec![
+            "GET /missing-version",
+            "GET /version",
+            "GET /missing-version",
+            "GET /version",
+            "GET /widgets"
+        ]
     );
     let baseline =
         std::fs::read_to_string(project.path().join(".taku/baselines/dev/api.yml")).unwrap();
@@ -92,7 +108,7 @@ fn version_endpoints_fall_back_in_order_and_unavailable_resource_types_are_skipp
     let failed = Command::cargo_bin("taku")
         .unwrap()
         .current_dir(project.path())
-        .args(["list", "--type", "future_widgets"])
+        .args(["list", "api", "future_widgets"])
         .output()
         .unwrap();
     assert!(!failed.status.success());
@@ -116,7 +132,7 @@ fn project(fake: &Fake) -> TempDir {
     run(&project, &["install", "elasticsearch"]);
     run(
         &project,
-        &["app", "add", "elasticsearch", "api", "--url", &fake.url],
+        &["target", "add", "elasticsearch", "api", "--url", &fake.url],
     );
     std::fs::write(
         project
@@ -156,6 +172,24 @@ resource_types:
         read: { method: GET, path: "/future/{id}", cardinality: one }
         list: { method: GET, path: /future, cardinality: many }
         upsert: { method: PUT, path: "/future/{id}", cardinality: one }
+"#,
+    )
+    .unwrap();
+    std::fs::write(
+        project
+            .path()
+            .join(".taku/applications/elasticsearch/version-8.yml"),
+        r#"schema_version: 1
+version: test
+application: { name: elasticsearch, version: ">=8.0.0, <9.0.0" }
+resource_types:
+  widgets:
+    - id: { pointer: /id, scope: universal }
+      display_name: { pointer: /name, strategy: name }
+      operations:
+        read: { method: GET, path: "/widgets/{id}", cardinality: one }
+        list: { method: GET, path: /widgets, cardinality: many }
+        upsert: { method: PUT, path: "/widgets/{id}", cardinality: one }
 "#,
     )
     .unwrap();

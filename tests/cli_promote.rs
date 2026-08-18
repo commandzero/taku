@@ -37,7 +37,7 @@ fn init_single(name: &str) -> TempDir {
     run(
         &project,
         &[
-            "app",
+            "target",
             "add",
             "elasticsearch",
             "es",
@@ -67,9 +67,9 @@ fn promotes_complete_universal_resources_through_destination_owned_mapping() {
     run(
         &project,
         &[
+            "target",
             "--environment",
             "dev",
-            "app",
             "add",
             "elasticsearch",
             "source",
@@ -80,9 +80,9 @@ fn promotes_complete_universal_resources_through_destination_owned_mapping() {
     run(
         &project,
         &[
+            "target",
             "--environment",
             "prod",
-            "app",
             "add",
             "elasticsearch",
             "destination",

@@ -1,5 +1,7 @@
 use crate::application::load_installed;
-use crate::canonical::{Selection, canonical_bytes, list_inventory, pointer_string};
+use crate::canonical::{
+    Selection, canonical_bytes, list_inventory, list_inventory_with_resolved, pointer_string,
+};
 use crate::project::current_environment;
 use crate::provider::resolve_auth;
 use crate::resolution::{
@@ -44,6 +46,12 @@ pub struct RemoteEntry {
     pub tracked: bool,
     #[serde(skip)]
     pub value: Value,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+pub struct RemoteResourceType {
+    pub name: String,
+    pub namespaced: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -392,10 +400,75 @@ pub fn remote_list(
     untracked_only: bool,
     cli_provider: &BTreeMap<String, String>,
 ) -> Result<Vec<RemoteEntry>> {
+    let discovery = discover_remote(root, selection, cli_provider)?;
+    for (path, baseline) in &discovery.missing_baselines {
+        save_baseline(path, baseline)?;
+    }
+    remote_query(&discovery, selection, untracked_only, cli_provider)
+}
+
+/// Query remote Resources without persisting Baselines or any other Project state.
+pub fn remote_list_read_only(
+    root: &Path,
+    selection: &Selection,
+    untracked_only: bool,
+    cli_provider: &BTreeMap<String, String>,
+) -> Result<Vec<RemoteEntry>> {
+    let discovery = discover_remote(root, selection, cli_provider)?;
+    remote_query(&discovery, selection, untracked_only, cli_provider)
+}
+
+/// Discover the effective listable Resource Types for one Target without persistence.
+pub fn remote_resource_types_read_only(
+    root: &Path,
+    environment: Option<&str>,
+    target_name: &str,
+    cli_provider: &BTreeMap<String, String>,
+) -> Result<Vec<RemoteResourceType>> {
+    let root = git_root(root)?;
+    let project = load_project(&root)?;
+    let environment = current_environment(&root, &project, environment)?;
+    let target = project.environments[&environment]
+        .targets
+        .get(target_name)
+        .with_context(|| format!("unknown Target {target_name}"))?;
+    let app = load_installed(&root, &target.application)?;
+    let auth = resolve_auth(&root, &project, &environment, target, cli_provider)?;
+    Ok(discover(&app, target, &auth)?
+        .resource_types
+        .into_iter()
+        .filter(|(_, resource_type)| {
+            resource_type
+                .operations
+                .list
+                .as_ref()
+                .is_some_and(|operation| operation.cardinality == crate::Cardinality::Many)
+        })
+        .map(|(name, resource_type)| RemoteResourceType {
+            name,
+            namespaced: resource_type.namespaced,
+        })
+        .collect())
+}
+
+struct RemoteDiscovery {
+    root: PathBuf,
+    project: crate::Project,
+    environment: String,
+    resolved: BTreeMap<String, ResolvedApplication>,
+    missing_baselines: Vec<(PathBuf, crate::TargetBaseline)>,
+}
+
+fn discover_remote(
+    root: &Path,
+    selection: &Selection,
+    cli_provider: &BTreeMap<String, String>,
+) -> Result<RemoteDiscovery> {
     let root = git_root(root)?;
     let project = load_project(&root)?;
     let environment = current_environment(&root, &project, selection.environment.as_deref())?;
     let mut resolved = BTreeMap::new();
+    let mut missing_baselines = Vec::new();
     for (target_name, target) in &project.environments[&environment].targets {
         if !selection.targets.is_empty() && !selection.targets.contains(target_name) {
             continue;
@@ -405,11 +478,30 @@ pub fn remote_list(
         let discovered = discover(&app, target, &auth)?;
         let baseline = baseline_path(&root, &environment, target_name);
         if !baseline.exists() {
-            save_baseline(&baseline, &baseline_from(&discovered))?;
+            missing_baselines.push((baseline, baseline_from(&discovered)));
         }
         resolved.insert(target_name.clone(), discovered);
     }
-    let local = list_inventory(&root, selection)?;
+    Ok(RemoteDiscovery {
+        root,
+        project,
+        environment,
+        resolved,
+        missing_baselines,
+    })
+}
+
+fn remote_query(
+    discovery: &RemoteDiscovery,
+    selection: &Selection,
+    untracked_only: bool,
+    cli_provider: &BTreeMap<String, String>,
+) -> Result<Vec<RemoteEntry>> {
+    let root = &discovery.root;
+    let project = &discovery.project;
+    let environment = discovery.environment.as_str();
+    let resolved = &discovery.resolved;
+    let local = list_inventory_with_resolved(root, selection, Some(resolved))?;
     let local_ids: std::collections::BTreeSet<_> = local
         .iter()
         .map(|i| {
@@ -421,14 +513,14 @@ pub fn remote_list(
             )
         })
         .collect();
-    let env = &project.environments[&environment];
+    let env = &project.environments[environment];
     let mut out = Vec::new();
     for (target_name, target) in &env.targets {
         if !selection.targets.is_empty() && !selection.targets.contains(target_name) {
             continue;
         }
-        let app = load_installed(&root, &target.application)?;
-        let auth = resolve_auth(&root, &project, &environment, target, cli_provider)?;
+        let app = load_installed(root, &target.application)?;
+        let auth = resolve_auth(root, project, environment, target, cli_provider)?;
         let discovered = &resolved[target_name];
         for (type_name, rt) in &discovered.resource_types {
             if !selection.types.is_empty() && !selection.types.contains(type_name) {
@@ -455,7 +547,7 @@ pub fn remote_list(
                     .collect()
             } else {
                 if !selection.namespaces.is_empty() {
-                    continue;
+                    bail!("--namespace is not valid for non-namespaced Resource Type {type_name}");
                 }
                 vec![None]
             };
@@ -600,7 +692,7 @@ pub fn remote_list(
                     let name = crate::canonical::display_name_value(&value, &rt.display_name)
                         .unwrap_or_else(|| id.clone());
                     out.push(RemoteEntry {
-                        environment: environment.clone(),
+                        environment: environment.to_owned(),
                         target: target_name.clone(),
                         namespace: namespace.map(str::to_owned),
                         resource_type: type_name.clone(),

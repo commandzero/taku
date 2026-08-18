@@ -95,6 +95,8 @@ The module owns candidate source rules:
 
 The module returns errors through its interface. The interactive shell adapter, not the module, owns the silent-empty failure policy. No public transport port is introduced solely for completion; existing local test Projects and HTTP test servers provide two real implementations at internal filesystem/transport seams.
 
+Namespace and exact-ID intents resolve the selected Resource Type before returning candidates: non-namespaced Types do not receive Namespace suggestions, and namespaced Types do not receive ID suggestions until a Namespace is present. Remote Resource Type candidates require a Many List Operation rather than merely the presence of any List Operation.
+
 **Alternative considered:** Add independent Clap callbacks for each argument. Rejected because source policy, side-effect rules, filtering, and error handling would spread across shallow adapters.
 
 ### 6. Separate read-only remote queries from operational persistence
@@ -113,6 +115,8 @@ Add `completion <shell>` using a Clap-compatible completion dependency for Bash,
 
 Completion script and runtime candidate output bypass schema envelopes. Runtime completion dispatch occurs before normal command execution, never prompts, and converts candidate errors to successful empty dynamic output without printing diagnostics. Normal commands and script generation retain ordinary errors.
 
+The completion command factory may hide conditionally invalid options from the generated parser view, such as repeated Environment selection after a Resource Path, while retaining the same underlying Clap grammar. Its token adapter interprets option arity according to the active command when option names have different meanings across commands.
+
 **Alternative considered:** Hand-maintain five complete shell scripts. Rejected because duplicating grammar would drift; shell-specific code should only adapt one parser and candidate interface.
 
 ### 8. Test through the two new interfaces
@@ -120,6 +124,14 @@ Completion script and runtime candidate output bypass schema envelopes. Runtime 
 Parser/dispatch tests exercise Resource Path conversion and command policies, while candidate tests invoke the candidate module with temporary Projects and existing HTTP test servers. Tests assert observable scopes, candidates, output, failures, and filesystem side effects rather than internal helper calls. Old tests whose only purpose was exercising flat selector construction are replaced by interface-level Resource Path tests.
 
 Shell tests smoke-test generated scripts for all supported shells and exercise the runtime adapter with token streams representing every dynamic argument family. The complete CLI integration suite remains the final proof that the converted `Selection` preserves lifecycle behavior.
+
+### 9. Group root help without nesting the grammar
+
+Keep all commands as direct children of `taku`. Customize only the root help template so it renders two command sections: `taku configuration` and `Resource management`. Subcommand help, parsing, dispatch, and completion continue to use the same Clap command tree.
+
+The grouped listing is covered by an integration test that also verifies representative Resource commands remain flat. This makes scope visible during discovery without adding keystrokes or weakening positional completion.
+
+**Alternative considered:** Add a `resource` command namespace. Rejected because the requested distinction is navigational help, not a new grammar level, and nesting would add typing to every Resource operation.
 
 ## Risks / Trade-offs
 

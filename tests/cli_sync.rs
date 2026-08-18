@@ -1,4 +1,5 @@
 use assert_cmd::Command;
+use resource_control::{CompletionIntent, CompletionQuery, completion_candidates};
 use serde_json::{Value, json};
 use std::process::Command as StdCommand;
 use std::sync::{
@@ -210,12 +211,12 @@ resource_types:
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("Pending Job.json");
     std::fs::write(&path, "{ name: 'Pending Job', enabled: true }").unwrap();
-    run(&project, &["fetch", "--type", "jobs"]);
+    run(&project, &["fetch", "es", "jobs"]);
     let result = run(
         &project,
         &[
             "push",
-            "--type",
+            "es",
             "jobs",
             "--untracked",
             "allow",
@@ -277,9 +278,9 @@ fn provider_precedence_and_dotenv_validation_do_not_expose_credentials() {
         .args([
             "--output",
             "json",
+            "fetch",
             "--set",
             "authorization=Bearer CLI-SENTINEL",
-            "fetch",
         ])
         .output()
         .unwrap();
@@ -316,20 +317,11 @@ fn remote_list_add_remove_and_forget_preserve_partial_inventory_safety() {
 
     let remote = run(
         &project,
-        &[
-            "list",
-            "--remote",
-            "--untracked",
-            "--type",
-            "ingest_pipelines",
-        ],
+        &["list", "--remote", "--untracked", "es", "ingest_pipelines"],
     );
     assert_eq!(remote["result"].as_array().unwrap().len(), 1);
     assert_eq!(remote["result"][0]["id"], "pipe-2");
-    run(
-        &project,
-        &["add", "--type", "ingest_pipelines", "--id", "pipe-2"],
-    );
+    run(&project, &["add", "es", "ingest_pipelines", "pipe-2"]);
     assert!(
         project
             .path()
@@ -338,7 +330,7 @@ fn remote_list_add_remove_and_forget_preserve_partial_inventory_safety() {
     );
 
     let request_count = target.requests.lock().unwrap().len();
-    run(&project, &["remove", "--id", "pipe-1"]);
+    run(&project, &["remove", "es", "ingest_pipelines", "pipe-1"]);
     assert_eq!(target.requests.lock().unwrap().len(), request_count);
     let markers: Vec<_> = std::fs::read_dir(project.path().join("es/ingest_pipelines"))
         .unwrap()
@@ -352,9 +344,72 @@ fn remote_list_add_remove_and_forget_preserve_partial_inventory_safety() {
             .join("es/ingest_pipelines/Pipeline.json")
             .exists()
     );
-    run(&project, &["forget", "--id", "pipe-1"]);
+    run(&project, &["forget", "es", "ingest_pipelines", "pipe-1"]);
     assert!(!markers[0].path().exists());
     assert_eq!(target.requests.lock().unwrap().len(), request_count);
+}
+
+#[test]
+fn remote_completion_lists_untracked_ids_without_persisting_operational_state() {
+    let target = FakeTarget::start();
+    let project = setup(&target);
+    let definition_path = project
+        .path()
+        .join(".taku/applications/elasticsearch/version-9.yml");
+    let mut definition: serde_yaml::Value =
+        serde_yaml::from_str(&std::fs::read_to_string(&definition_path).unwrap()).unwrap();
+    let mut non_many = definition["resource_types"]["ingest_pipelines"][0].clone();
+    non_many["operations"]["list"]["cardinality"] = serde_yaml::Value::String("one".into());
+    definition["resource_types"]["single_list"] = serde_yaml::Value::Sequence(vec![non_many]);
+    std::fs::write(
+        &definition_path,
+        serde_yaml::to_string(&definition).unwrap(),
+    )
+    .unwrap();
+    let mut types = CompletionQuery::new(project.path(), CompletionIntent::RemoteResourceType);
+    types.target = Some("es".into());
+    let types = completion_candidates(&types).unwrap();
+    assert!(
+        types
+            .iter()
+            .any(|candidate| candidate.value == "ingest_pipelines")
+    );
+    assert!(
+        types
+            .iter()
+            .all(|candidate| candidate.value != "single_list")
+    );
+    let mut query = CompletionQuery::new(
+        project.path(),
+        CompletionIntent::RemoteResourceId {
+            untracked_only: true,
+        },
+    );
+    query.target = Some("es".into());
+    query.resource_type = Some("ingest_pipelines".into());
+
+    let candidates = completion_candidates(&query).unwrap();
+
+    assert_eq!(
+        candidates
+            .iter()
+            .map(|candidate| candidate.value.as_str())
+            .collect::<Vec<_>>(),
+        ["pipe-2"]
+    );
+    query.intent = CompletionIntent::RemoteResourceId {
+        untracked_only: false,
+    };
+    assert_eq!(
+        completion_candidates(&query)
+            .unwrap()
+            .iter()
+            .map(|candidate| candidate.value.as_str())
+            .collect::<Vec<_>>(),
+        ["pipe-1", "pipe-2"]
+    );
+    assert!(!project.path().join(".taku/baselines").exists());
+    assert!(!project.path().join(".taku/cache/dev").exists());
 }
 
 #[test]
@@ -362,7 +417,7 @@ fn push_deletes_only_through_a_matching_guarded_marker_and_consumes_it() {
     let target = FakeTarget::start();
     let project = setup(&target);
     run(&project, &["fetch"]);
-    run(&project, &["remove", "--id", "pipe-1"]);
+    run(&project, &["remove", "es", "ingest_pipelines", "pipe-1"]);
     let result = run(
         &project,
         &["push", "--uncommitted", "allow", "--untracked", "allow"],
@@ -389,7 +444,7 @@ fn fetch_explicitly_reobserves_resources_marked_for_deletion() {
     let target = FakeTarget::start();
     let project = setup(&target);
     run(&project, &["fetch"]);
-    run(&project, &["remove", "--id", "pipe-1"]);
+    run(&project, &["remove", "es", "ingest_pipelines", "pipe-1"]);
     target.requests.lock().unwrap().clear();
 
     let fetched = run(&project, &["fetch"]);
@@ -410,7 +465,7 @@ fn deletion_markers_reject_unknown_schema_versions() {
     let target = FakeTarget::start();
     let project = setup(&target);
     run(&project, &["fetch"]);
-    run(&project, &["remove", "--id", "pipe-1"]);
+    run(&project, &["remove", "es", "ingest_pipelines", "pipe-1"]);
     let marker = std::fs::read_dir(project.path().join("es/ingest_pipelines"))
         .unwrap()
         .filter_map(Result::ok)
@@ -424,7 +479,7 @@ fn deletion_markers_reject_unknown_schema_versions() {
     )
     .unwrap();
 
-    let failed = output(&project, &["forget", "--id", "pipe-1"]);
+    let failed = output(&project, &["forget", "es", "ingest_pipelines", "pipe-1"]);
 
     assert!(!failed.status.success());
     assert!(marker.exists());
@@ -437,10 +492,17 @@ fn deletion_marker_binding_must_match_the_tree_that_contains_it() {
     let project = setup(&target);
     run(
         &project,
-        &["app", "add", "elasticsearch", "other", "--url", &target.url],
+        &[
+            "target",
+            "add",
+            "elasticsearch",
+            "other",
+            "--url",
+            &target.url,
+        ],
     );
     run(&project, &["fetch"]);
-    run(&project, &["remove", "--id", "pipe-1"]);
+    run(&project, &["remove", "es", "ingest_pipelines", "pipe-1"]);
     let marker = std::fs::read_dir(project.path().join("es/ingest_pipelines"))
         .unwrap()
         .filter_map(Result::ok)
@@ -476,7 +538,7 @@ fn deletion_marker_discovery_rejects_symlinked_inputs() {
     let linked = project.path().join("es/ingest_pipelines/Linked.delete.yml");
     symlink(&outside, &linked).unwrap();
 
-    let failed = output(&project, &["forget", "--id", "pipe-1"]);
+    let failed = output(&project, &["forget", "es", "ingest_pipelines", "pipe-1"]);
 
     assert!(!failed.status.success());
     assert!(linked.exists());
@@ -778,7 +840,7 @@ fn setup(target: &FakeTarget) -> TempDir {
     run(&dir, &["install", "elasticsearch"]);
     run(
         &dir,
-        &["app", "add", "elasticsearch", "es", "--url", &target.url],
+        &["target", "add", "elasticsearch", "es", "--url", &target.url],
     );
     let path = dir.path().join("es/ingest_pipelines");
     std::fs::create_dir_all(&path).unwrap();

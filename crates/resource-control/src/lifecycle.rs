@@ -50,7 +50,7 @@ pub fn add_remote(
     provider: &BTreeMap<String, String>,
 ) -> Result<Vec<LifecycleResult>> {
     if selection.ids.is_empty() {
-        bail!("Add requires at least one exact --id selector");
+        bail!("Add requires at least one exact Resource ID");
     }
     let root = git_root(root)?;
     let project = load_project(&root)?;

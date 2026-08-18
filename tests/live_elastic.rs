@@ -129,7 +129,7 @@ fn project(application: &str, target: &str, url: &str, authorization: &str) -> T
     run(
         &project,
         authorization,
-        &["app", "add", application, target, "--url", url],
+        &["target", "add", application, target, "--url", url],
     );
 
     let path = project.path().join(".taku/project.yml");
@@ -169,25 +169,18 @@ fn manages_an_elasticsearch_ingest_pipeline_through_its_real_api() {
     let listed = run(
         &project,
         &authorization,
-        &[
-            "list",
-            "--remote",
-            "--type",
-            "ingest_pipelines",
-            "--id",
-            &id,
-        ],
+        &["list", "--remote", "es", "ingest_pipelines", &id],
     );
     assert_eq!(listed["result"][0]["id"], id);
     run(
         &project,
         &authorization,
-        &["add", "--type", "ingest_pipelines", "--id", &id],
+        &["add", "es", "ingest_pipelines", &id],
     );
     run(
         &project,
         &authorization,
-        &["fetch", "--type", "ingest_pipelines", "--id", &id],
+        &["fetch", "es", "ingest_pipelines", &id],
     );
 
     let resource = std::fs::read_dir(project.path().join("es/ingest_pipelines"))
@@ -208,9 +201,8 @@ fn manages_an_elasticsearch_ingest_pipeline_through_its_real_api() {
         &authorization,
         &[
             "push",
-            "--type",
+            "es",
             "ingest_pipelines",
-            "--id",
             &id,
             "--uncommitted",
             "allow",
@@ -222,28 +214,27 @@ fn manages_an_elasticsearch_ingest_pipeline_through_its_real_api() {
     run(
         &project,
         &authorization,
-        &["fetch", "--type", "ingest_pipelines", "--id", &id],
+        &["fetch", "es", "ingest_pipelines", &id],
     );
     let status = run(
         &project,
         &authorization,
-        &["status", "--type", "ingest_pipelines", "--id", &id],
+        &["status", "es", "ingest_pipelines", &id],
     );
     assert_eq!(status["result"][0]["state"], "in_sync");
 
     run(
         &project,
         &authorization,
-        &["remove", "--type", "ingest_pipelines", "--id", &id],
+        &["remove", "es", "ingest_pipelines", &id],
     );
     let deleted = run(
         &project,
         &authorization,
         &[
             "push",
-            "--type",
+            "es",
             "ingest_pipelines",
-            "--id",
             &id,
             "--uncommitted",
             "allow",
@@ -255,14 +246,7 @@ fn manages_an_elasticsearch_ingest_pipeline_through_its_real_api() {
     let listed = run(
         &project,
         &authorization,
-        &[
-            "list",
-            "--remote",
-            "--type",
-            "ingest_pipelines",
-            "--id",
-            &id,
-        ],
+        &["list", "--remote", "es", "ingest_pipelines", &id],
     );
     assert_eq!(listed["result"], json!([]));
 
@@ -286,7 +270,7 @@ fn reads_all_declarative_elasticsearch_resource_types_from_real_apis() {
         let listed = run(
             &project,
             &authorization,
-            &["list", "--remote", "--type", resource_type],
+            &["list", "--remote", "es", resource_type],
         );
         assert!(listed["result"].is_array(), "{resource_type}");
     }
@@ -301,13 +285,7 @@ fn reads_all_declarative_elasticsearch_resource_types_from_real_apis() {
     let settings = run(
         &project,
         &authorization,
-        &[
-            "fetch",
-            "--type",
-            "cluster_settings",
-            "--id",
-            "cluster-settings",
-        ],
+        &["fetch", "es", "cluster_settings", "cluster-settings"],
     );
     assert_eq!(settings["result"][0]["outcome"], "observed");
 }
@@ -341,12 +319,12 @@ fn round_trips_a_legacy_index_template_through_its_real_api() {
     run(
         &project,
         &authorization,
-        &["add", "--type", "legacy_index_templates", "--id", &id],
+        &["add", "es", "legacy_index_templates", &id],
     );
     run(
         &project,
         &authorization,
-        &["fetch", "--type", "legacy_index_templates", "--id", &id],
+        &["fetch", "es", "legacy_index_templates", &id],
     );
     let resource = std::fs::read_dir(project.path().join("es/legacy_index_templates"))
         .unwrap()
@@ -363,9 +341,8 @@ fn round_trips_a_legacy_index_template_through_its_real_api() {
         &authorization,
         &[
             "push",
-            "--type",
+            "es",
             "legacy_index_templates",
-            "--id",
             &id,
             "--uncommitted",
             "allow",
@@ -376,27 +353,26 @@ fn round_trips_a_legacy_index_template_through_its_real_api() {
     run(
         &project,
         &authorization,
-        &["fetch", "--type", "legacy_index_templates", "--id", &id],
+        &["fetch", "es", "legacy_index_templates", &id],
     );
     let status = run(
         &project,
         &authorization,
-        &["status", "--type", "legacy_index_templates", "--id", &id],
+        &["status", "es", "legacy_index_templates", &id],
     );
     assert_eq!(status["result"][0]["state"], "in_sync");
     run(
         &project,
         &authorization,
-        &["remove", "--type", "legacy_index_templates", "--id", &id],
+        &["remove", "es", "legacy_index_templates", &id],
     );
     let deleted = run(
         &project,
         &authorization,
         &[
             "push",
-            "--type",
+            "es",
             "legacy_index_templates",
-            "--id",
             &id,
             "--uncommitted",
             "allow",
@@ -439,12 +415,12 @@ fn round_trips_a_role_mapping_through_its_real_api() {
     run(
         &project,
         &authorization,
-        &["add", "--type", "role_mappings", "--id", &id],
+        &["add", "es", "role_mappings", &id],
     );
     run(
         &project,
         &authorization,
-        &["fetch", "--type", "role_mappings", "--id", &id],
+        &["fetch", "es", "role_mappings", &id],
     );
     let resource = std::fs::read_dir(project.path().join("es/role_mappings"))
         .unwrap()
@@ -461,9 +437,8 @@ fn round_trips_a_role_mapping_through_its_real_api() {
         &authorization,
         &[
             "push",
-            "--type",
+            "es",
             "role_mappings",
-            "--id",
             &id,
             "--uncommitted",
             "allow",
@@ -474,27 +449,26 @@ fn round_trips_a_role_mapping_through_its_real_api() {
     run(
         &project,
         &authorization,
-        &["fetch", "--type", "role_mappings", "--id", &id],
+        &["fetch", "es", "role_mappings", &id],
     );
     let status = run(
         &project,
         &authorization,
-        &["status", "--type", "role_mappings", "--id", &id],
+        &["status", "es", "role_mappings", &id],
     );
     assert_eq!(status["result"][0]["state"], "in_sync");
     run(
         &project,
         &authorization,
-        &["remove", "--type", "role_mappings", "--id", &id],
+        &["remove", "es", "role_mappings", &id],
     );
     let deleted = run(
         &project,
         &authorization,
         &[
             "push",
-            "--type",
+            "es",
             "role_mappings",
-            "--id",
             &id,
             "--uncommitted",
             "allow",
@@ -532,16 +506,15 @@ fn creates_and_deletes_an_enrich_policy_through_its_real_api() {
     run(
         &project,
         &authorization,
-        &["fetch", "--type", "enrich_policies", "--id", &id],
+        &["fetch", "es", "enrich_policies", &id],
     );
     let created = run(
         &project,
         &authorization,
         &[
             "push",
-            "--type",
+            "es",
             "enrich_policies",
-            "--id",
             &id,
             "--uncommitted",
             "allow",
@@ -560,27 +533,26 @@ fn creates_and_deletes_an_enrich_policy_through_its_real_api() {
     run(
         &project,
         &authorization,
-        &["fetch", "--type", "enrich_policies", "--id", &id],
+        &["fetch", "es", "enrich_policies", &id],
     );
     let status = run(
         &project,
         &authorization,
-        &["status", "--type", "enrich_policies", "--id", &id],
+        &["status", "es", "enrich_policies", &id],
     );
     assert_eq!(status["result"][0]["state"], "in_sync");
     run(
         &project,
         &authorization,
-        &["remove", "--type", "enrich_policies", "--id", &id],
+        &["remove", "es", "enrich_policies", &id],
     );
     let deleted = run(
         &project,
         &authorization,
         &[
             "push",
-            "--type",
+            "es",
             "enrich_policies",
-            "--id",
             &id,
             "--uncommitted",
             "allow",
@@ -626,19 +598,11 @@ fn manages_a_kibana_space_through_its_real_api() {
     let listed = run(
         &project,
         &authorization,
-        &["list", "--remote", "--type", "spaces", "--id", &id],
+        &["list", "--remote", "kb", "spaces", &id],
     );
     assert_eq!(listed["result"][0]["id"], id);
-    run(
-        &project,
-        &authorization,
-        &["add", "--type", "spaces", "--id", &id],
-    );
-    run(
-        &project,
-        &authorization,
-        &["fetch", "--type", "spaces", "--id", &id],
-    );
+    run(&project, &authorization, &["add", "kb", "spaces", &id]);
+    run(&project, &authorization, &["fetch", "kb", "spaces", &id]);
 
     let resource = std::fs::read_dir(project.path().join("kb/spaces"))
         .unwrap()
@@ -656,9 +620,8 @@ fn manages_a_kibana_space_through_its_real_api() {
         &authorization,
         &[
             "push",
-            "--type",
+            "kb",
             "spaces",
-            "--id",
             &id,
             "--uncommitted",
             "allow",
@@ -667,31 +630,18 @@ fn manages_a_kibana_space_through_its_real_api() {
         ],
     );
     assert_eq!(pushed["result"][0]["outcome"], "success");
-    run(
-        &project,
-        &authorization,
-        &["fetch", "--type", "spaces", "--id", &id],
-    );
-    let status = run(
-        &project,
-        &authorization,
-        &["status", "--type", "spaces", "--id", &id],
-    );
+    run(&project, &authorization, &["fetch", "kb", "spaces", &id]);
+    let status = run(&project, &authorization, &["status", "kb", "spaces", &id]);
     assert_eq!(status["result"][0]["state"], "in_sync");
 
-    run(
-        &project,
-        &authorization,
-        &["remove", "--type", "spaces", "--id", &id],
-    );
+    run(&project, &authorization, &["remove", "kb", "spaces", &id]);
     let deleted = run(
         &project,
         &authorization,
         &[
             "push",
-            "--type",
+            "kb",
             "spaces",
-            "--id",
             &id,
             "--uncommitted",
             "allow",
@@ -703,7 +653,7 @@ fn manages_a_kibana_space_through_its_real_api() {
     let listed = run(
         &project,
         &authorization,
-        &["list", "--remote", "--type", "spaces", "--id", &id],
+        &["list", "--remote", "kb", "spaces", &id],
     );
     assert_eq!(listed["result"], json!([]));
 
@@ -732,7 +682,7 @@ fn lists_real_kibana_dashboard_exports_without_treating_export_details_as_a_reso
             "--remote",
             "--namespace",
             "default",
-            "--type",
+            "kb",
             "saved_objects",
         ],
     );
@@ -764,7 +714,7 @@ fn lists_agent_builder_plugins_through_the_real_kibana_api() {
             "--remote",
             "--namespace",
             "default",
-            "--type",
+            "kb",
             "plugins",
         ],
     );
@@ -801,13 +751,10 @@ fn round_trips_the_complete_esdiag_resource_corpus() {
             &authorization,
             &[
                 "add",
-                "--target",
                 "kb",
                 "--namespace",
                 "esdiag",
-                "--type",
                 "skills",
-                "--id",
                 "agentic-diagnostic-assistant",
             ],
         );
@@ -847,8 +794,8 @@ fn round_trips_the_complete_esdiag_resource_corpus() {
     let skill_path = skill["path"].as_str().unwrap();
     assert!(project.join(skill_path).join("SKILL.md").is_file());
 
-    run_at(&project, &authorization, &["--target", "es", "fetch"]);
-    run_at(&project, &authorization, &["--target", "kb", "fetch"]);
+    run_at(&project, &authorization, &["fetch", "es"]);
+    run_at(&project, &authorization, &["fetch", "kb"]);
     run_at(&project, &authorization, &["pull", "--yes"]);
 
     let source_skill =

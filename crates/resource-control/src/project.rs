@@ -2,7 +2,7 @@ use crate::{
     EnvironmentConfig, InitResult, Project, RepositoryLayout, SCHEMA_VERSION, TargetConfig,
 };
 use anyhow::{Context, Result, bail};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -13,6 +13,14 @@ use std::process::Command;
 struct ContextFile {
     schema_version: u32,
     environment: String,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+pub struct TargetListing {
+    pub environment: String,
+    pub name: String,
+    pub application: String,
+    pub url: String,
 }
 
 pub fn git_root(path: &Path) -> Result<PathBuf> {
@@ -149,6 +157,22 @@ pub fn save_context(root: &Path, environment: &str) -> Result<String> {
         format!("schema_version: 1\nenvironment: {environment}\n"),
     )?;
     Ok(environment.to_owned())
+}
+
+pub fn list_targets(root: &Path, environment: Option<&str>) -> Result<Vec<TargetListing>> {
+    let root = git_root(root)?;
+    let project = load_project(&root)?;
+    let environment = current_environment(&root, &project, environment)?;
+    let targets = &project.environments[&environment].targets;
+    Ok(targets
+        .iter()
+        .map(|(name, target)| TargetListing {
+            environment: environment.clone(),
+            name: name.clone(),
+            application: target.application.clone(),
+            url: target.url.clone(),
+        })
+        .collect())
 }
 
 pub fn add_target(

@@ -82,7 +82,7 @@ fn setup(fake: &Fake) -> TempDir {
     run(&project, &["install", "elasticsearch"]);
     run(
         &project,
-        &["app", "add", "elasticsearch", "api", "--url", &fake.url],
+        &["target", "add", "elasticsearch", "api", "--url", &fake.url],
     );
     std::fs::write(
         project
@@ -118,7 +118,7 @@ fn output(project: &TempDir) -> std::process::Output {
     Command::cargo_bin("taku")
         .unwrap()
         .current_dir(project.path())
-        .args(["--output", "json", "list", "--remote", "--type", "widgets"])
+        .args(["--output", "json", "list", "--remote", "api", "widgets"])
         .output()
         .unwrap()
 }

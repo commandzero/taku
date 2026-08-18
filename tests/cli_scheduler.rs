@@ -178,7 +178,7 @@ fn setup(fake: &Fake, include_heavy: bool, include_dependent: bool) -> TempDir {
     run(&project, &["install", "elasticsearch"]);
     run(
         &project,
-        &["app", "add", "elasticsearch", "es", "--url", &fake.url],
+        &["target", "add", "elasticsearch", "es", "--url", &fake.url],
     );
     let mut resource_types = String::from(
         r#"  light:
@@ -336,7 +336,7 @@ fn failed_resource_type_blocks_dependents_while_independent_work_continues() {
 fn failed_resource_type_blocks_dependent_deletion_markers() {
     let fake = Fake::start(Some("/heavy/h1"));
     let project = setup(&fake, true, true);
-    run(&project, &["remove", "--type", "dependent", "--id", "d1"]);
+    run(&project, &["remove", "es", "dependent", "d1"]);
 
     let output = output(
         &project,

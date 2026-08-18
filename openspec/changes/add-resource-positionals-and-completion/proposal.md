@@ -13,6 +13,7 @@ Taku's repeatable global Resource selectors form a shallow query language that a
 - Preserve positional Application names for `install` and `update`, Environment names for `context set`, role-specific Promotion options, and existing execution-policy options.
 - Add installable shell integration and context-aware completion across the entire grammar: Environments, Applications, Targets, Resource Types, Namespaces, Resource IDs, Promotion mappings, fixed values, and filesystem paths.
 - Make dynamic completion command-aware, prefix-filtered, deterministic, non-interactive, and read-only; remote candidates may perform authenticated version or List reads but never create Baselines, caches, or desired state.
+- Group the flat top-level help listing into `taku configuration` and `Resource management` commands without adding another subcommand layer.
 - Do not provide backwards compatibility or migration aliases for the pre-release command grammar.
 
 ## Capabilities

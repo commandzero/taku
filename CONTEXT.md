@@ -29,7 +29,7 @@ The release identifier for the content of an Application Definition and its Reso
 _Avoid_: Application Version, schema version
 
 **Application Installation**:
-The definition-only vendoring of one or more Applications by `taku install`, without creating Targets. `taku app add` may perform the same installation atomically on first use after explicit confirmation or authorization.
+The definition-only vendoring of one or more Applications by `taku install`, without creating Targets. `taku target add` may perform the same installation atomically on first use after explicit confirmation or authorization.
 _Avoid_: Target addition, remote installation
 
 **Application Source**:
@@ -57,7 +57,7 @@ The local, non-authoritative selection of a current Environment and its provider
 _Avoid_: Environment, Target Baseline
 
 **Command Scope**:
-The Resources selected for one command. It defaults to every managed Resource in the current Environment and may be narrowed by repeatable `--target`, `--type`, and `--id` selectors; crossing Environment boundaries is always explicit.
+The Resources selected for one command. It defaults to every managed Resource in the current Environment and may be narrowed by the contiguous positional Resource Path `<target> <resource-type> <id>...`; crossing Environment boundaries is explicit, and any Resource Path resolves exactly one Environment.
 _Avoid_: Resource Inventory, filesystem glob
 
 **Context Provider**:
@@ -69,11 +69,11 @@ A named remote application instance within an Environment that instantiates one 
 _Avoid_: Environment, Resource Type
 
 **Target Addition**:
-The creation of an Environment-specific Target by `taku app add <application> [name]`, defaulting its name to the Application. If the Application is absent, interactive confirmation or non-interactive `--yes` authorizes an atomic install-and-add using the current source cache.
+The creation of an Environment-specific Target by `taku target add <application> [name]`, defaulting its name to the Application. If the Application is absent, interactive confirmation or non-interactive `--yes` authorizes an atomic install-and-add using the current source cache.
 _Avoid_: Resource Add, Application Installation
 
 **Target Rename**:
-The local, atomic renaming of a Target within one selected Environment, including its configuration and Resource tree, without changing Resource IDs or contacting the remote system. It invalidates Target-bound caches and incomplete Push Journals.
+The local, atomic renaming of a Target by `taku target rename <old> <new>` within one selected Environment, including its configuration and Resource tree, without changing Resource IDs or contacting the remote system. It invalidates Target-bound caches and incomplete Push Journals.
 _Avoid_: Application rename, remote rename
 
 **Target Profile**:

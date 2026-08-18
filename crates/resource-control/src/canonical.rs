@@ -1,5 +1,6 @@
 use crate::application::load_installed;
 use crate::project::current_environment;
+use crate::resolution::ResolvedApplication;
 use crate::resolution::{baseline_path, for_local_use, load_baseline};
 use crate::{
     DisplayName, DisplayNameStrategy, IdScope, Project, RepositoryLayout, git_root, load_project,
@@ -40,6 +41,14 @@ pub struct InventoryEntry {
 }
 
 pub fn list_inventory(root: &Path, selection: &Selection) -> Result<Vec<InventoryEntry>> {
+    list_inventory_with_resolved(root, selection, None)
+}
+
+pub(crate) fn list_inventory_with_resolved(
+    root: &Path,
+    selection: &Selection,
+    resolved_overrides: Option<&std::collections::BTreeMap<String, ResolvedApplication>>,
+) -> Result<Vec<InventoryEntry>> {
     for namespace in &selection.namespaces {
         validate_namespace(namespace)?;
     }
@@ -54,7 +63,15 @@ pub fn list_inventory(root: &Path, selection: &Selection) -> Result<Vec<Inventor
         }
         let app = load_installed(&root, &target.application)?;
         let baseline = load_baseline(&baseline_path(&root, &environment, target_name)).ok();
-        let resolved = for_local_use(&app, target, baseline.as_ref())?;
+        let resolved_fallback;
+        let resolved = if let Some(resolved) =
+            resolved_overrides.and_then(|resolved| resolved.get(target_name))
+        {
+            resolved
+        } else {
+            resolved_fallback = for_local_use(&app, target, baseline.as_ref())?;
+            &resolved_fallback
+        };
         if let Some(baseline) = &baseline {
             let version = semver::Version::parse(&baseline.application_version)?;
             let catalog = &app.catalogs[&version.major];
@@ -90,6 +107,17 @@ pub fn list_inventory(root: &Path, selection: &Selection) -> Result<Vec<Inventor
         for (type_name, resource_type) in &resolved.resource_types {
             if !selection.types.is_empty() && !selection.types.contains(type_name) {
                 continue;
+            }
+            if resource_type.namespaced
+                && !selection.ids.is_empty()
+                && selection.namespaces.is_empty()
+            {
+                bail!(
+                    "--namespace is required when exact IDs select namespaced Resource Type {type_name}"
+                );
+            }
+            if !resource_type.namespaced && !selection.namespaces.is_empty() {
+                bail!("--namespace is not valid for non-namespaced Resource Type {type_name}");
             }
             let directories = resource_directories(
                 &root,

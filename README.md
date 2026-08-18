@@ -16,24 +16,26 @@ git init configuration
 cd configuration
 taku init --layout single --environment dev
 taku install elasticsearch kibana
-taku app add elasticsearch es --url https://localhost:9200
-taku app add kibana kb --url https://localhost:5601
+taku target add elasticsearch es --url https://localhost:9200
+taku target add kibana kb --url https://localhost:5601
 ```
 
-For a Multi Project, initialize with `--layout multi --environments dev,stage,prod`, then select a default with `taku context set dev`. Resource commands accept repeatable `--environment`, `--target`, `--namespace`, `--type`, and `--id` selectors; `--all-environments` is always explicit. A namespaced Resource Type requires an explicit namespace for remote listing, including `--namespace default`.
+For a Multi Project, initialize with `--layout multi --environments dev,stage,prod`, then select a default with `taku context set dev`. `taku app` lists Applications; `taku target` lists the current Environment's Targets. Resource commands use one positional Resource Path: `<target> <resource-type> <id>...`. Local list/fetch/status/diff/pull/push accept any contiguous prefix, while add/remove/forget require the complete path and at least one ID. A supplied path resolves exactly one current or explicit `--environment`; broad commands without a path may repeat `--environment` or use `--all-environments`.
+
+Namespace remains the command-specific `--namespace` modifier. Exact IDs and remote listing require it for namespaced Types (including explicit `--namespace default`), non-namespaced Types reject it, and a local Type-only path without it spans all locally known Namespaces.
 
 The normal observation and reconciliation loop is:
 
 ```console
 taku list
-taku list --remote --untracked --type ingest_pipelines
-taku add --type ingest_pipelines --id pipeline-1
-taku fetch
-taku status
-taku diff
-taku pull --yes
-taku push --dry-run
-taku push
+taku list --remote --untracked es ingest_pipelines
+taku add es ingest_pipelines pipeline-1
+taku fetch es ingest_pipelines
+taku status es
+taku diff es ingest_pipelines pipeline-1
+taku pull es ingest_pipelines pipeline-1 --yes
+taku push es ingest_pipelines --dry-run
+taku push es ingest_pipelines
 ```
 
 `fetch` writes only ignored Observed State. `status` and `diff` never contact a Target. `pull` changes only local desired files. `push` is the only remote mutator. `remove` creates a guarded Deletion Marker for a later Push; `forget` only stops local management.
@@ -86,6 +88,20 @@ auth:
 ```
 
 Provider precedence is explicit `--set field=value`, process environment, then the configured dotenv file. Credential values never enter serializable reports, caches, Baselines, or Journals.
+
+## Shell completion
+
+Taku generates dynamic completion for Bash, Zsh, Fish, Elvish, and PowerShell from the same Clap grammar used to parse commands:
+
+```console
+# Bash (replace `bash` with `zsh` for Zsh)
+source <(taku completion bash)
+
+# Fish
+taku completion fish | source
+```
+
+Use `taku completion elvish` or `taku completion powershell` for the other supported shells. Completion offers command-specific Environments, Applications, Targets, Resource Types, Namespaces, IDs, provider keys, and filesystem paths. Local candidates only read Project state. Remote Type/ID candidates contact the one selected Target through bounded read operations but never refresh Application Sources or write Baselines, caches, desired Resources, or Project metadata. Dynamic lookup failures are silent so they do not disrupt the shell.
 
 ## Live Elastic Stack tests
 

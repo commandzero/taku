@@ -173,3 +173,15 @@ Initialization SHALL retain its layout and Environment options; `install` SHALL 
 #### Scenario: Promotion retains role clarity
 - **WHEN** the user supplies Promotion Environments, Targets, or Projects
 - **THEN** the source and destination remain distinguishable through `--from`, `--to`, `--from-target`, `--to-target`, `--from-project`, and `--to-project`
+
+### Requirement: Top-level help groups commands by scope
+The system SHALL keep every top-level command flat while presenting the root help listing in separate `taku configuration` and `Resource management` sections. The help-only grouping SHALL NOT add a command namespace or alter parsing, dispatch, or completion tokens.
+
+#### Scenario: Root help separates command scopes
+- **WHEN** the user runs `taku help` or `taku --help`
+- **THEN** `init`, `app`, `target`, `install`, `update`, `context`, `validate`, `completion`, and `help` appear under `taku configuration`
+- **AND** `list`, `add`, `remove`, `forget`, `promote`, `fetch`, `status`, `diff`, `pull`, and `push` appear under `Resource management`
+
+#### Scenario: Grouping does not introduce a namespace
+- **WHEN** the user invokes or completes a Resource command such as `taku add es ingest_pipelines pipe-1`
+- **THEN** the command remains directly beneath `taku` with no intervening scope subcommand

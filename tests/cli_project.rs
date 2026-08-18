@@ -101,7 +101,7 @@ fn adds_and_renames_environment_scoped_targets() {
     json(
         &project,
         &[
-            "app",
+            "target",
             "add",
             "elasticsearch",
             "es1",
@@ -112,7 +112,7 @@ fn adds_and_renames_environment_scoped_targets() {
     json(
         &project,
         &[
-            "app",
+            "target",
             "add",
             "elasticsearch",
             "es2",
@@ -120,7 +120,7 @@ fn adds_and_renames_environment_scoped_targets() {
             "http://127.0.0.1:9201",
         ],
     );
-    json(&project, &["app", "rename", "es1", "cluster"]);
+    json(&project, &["target", "rename", "es1", "cluster"]);
 
     let metadata = std::fs::read_to_string(project.path().join(".taku/project.yml")).unwrap();
     assert!(metadata.contains("cluster:"));
@@ -135,9 +135,9 @@ fn first_use_app_add_rolls_back_installation_when_target_addition_fails() {
     failure(
         &project,
         &[
+            "target",
             "--environment",
             "missing",
-            "app",
             "add",
             "elasticsearch",
             "es",
@@ -162,8 +162,8 @@ fn first_use_app_add_validates_single_environment_scope_before_installing() {
     failure(
         &project,
         &[
+            "target",
             "--all-environments",
-            "app",
             "add",
             "elasticsearch",
             "es",
@@ -188,7 +188,7 @@ fn local_list_uses_payload_identity_and_exact_selectors() {
     json(
         &project,
         &[
-            "app",
+            "target",
             "add",
             "elasticsearch",
             "es1",
@@ -209,10 +209,7 @@ fn local_list_uses_payload_identity_and_exact_selectors() {
     )
     .unwrap();
 
-    let listed = json(
-        &project,
-        &["list", "--type", "ingest_pipelines", "--id", "opaque-123"],
-    );
+    let listed = json(&project, &["list", "es1", "ingest_pipelines", "opaque-123"]);
     assert_eq!(listed["result"][0]["id"], "opaque-123");
     assert_eq!(listed["result"][0]["name"], "Readable");
     assert_eq!(listed["result"].as_array().unwrap().len(), 1);
@@ -225,7 +222,7 @@ fn display_names_may_collide_unless_the_resource_type_declares_them_unique() {
     json(
         &project,
         &[
-            "app",
+            "target",
             "add",
             "elasticsearch",
             "es",
@@ -243,7 +240,7 @@ fn display_names_may_collide_unless_the_resource_type_declares_them_unique() {
         .unwrap();
     }
 
-    let listed = json(&project, &["list", "--type", "ingest_pipelines"]);
+    let listed = json(&project, &["list", "es", "ingest_pipelines"]);
     assert_eq!(listed["result"].as_array().unwrap().len(), 2);
 }
 
@@ -254,7 +251,7 @@ fn target_sensitive_fields_tighten_the_installed_resource_type() {
     json(
         &project,
         &[
-            "app",
+            "target",
             "add",
             "elasticsearch",
             "es",
@@ -287,7 +284,7 @@ fn target_sensitive_fields_cannot_remove_required_identity_or_display_state() {
     json(
         &project,
         &[
-            "app",
+            "target",
             "add",
             "elasticsearch",
             "es",
@@ -321,7 +318,7 @@ fn target_sensitive_fields_cannot_remove_required_transformation_inputs() {
     json(
         &project,
         &[
-            "app",
+            "target",
             "add",
             "elasticsearch",
             "es",
@@ -367,7 +364,7 @@ fn sensitive_descendants_inside_an_extracted_document_are_allowed() {
     json(
         &project,
         &[
-            "app",
+            "target",
             "add",
             "elasticsearch",
             "es",
@@ -414,9 +411,9 @@ fn repeated_environment_selectors_make_cross_environment_scope_explicit() {
         json(
             &project,
             &[
+                "target",
                 "--environment",
                 environment,
-                "app",
                 "add",
                 "elasticsearch",
                 "es",
@@ -436,7 +433,7 @@ fn repeated_environment_selectors_make_cross_environment_scope_explicit() {
     }
     let listed = json(
         &project,
-        &["--environment", "dev", "--environment", "prod", "list"],
+        &["list", "--environment", "dev", "--environment", "prod"],
     );
     assert_eq!(listed["result"].as_array().unwrap().len(), 2);
 }
@@ -450,7 +447,7 @@ fn rejects_symlinked_and_traversal_escaped_resource_inputs() {
     json(
         &project,
         &[
-            "app",
+            "target",
             "add",
             "elasticsearch",
             "es",

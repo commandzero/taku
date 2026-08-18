@@ -435,18 +435,17 @@ fn kibana_ndjson_is_unbundled_to_canonical_resources_and_rebuilt_only_for_push()
     run(&project, &["install", "kibana"]);
     run(
         &project,
-        &["app", "add", "kibana", "kb", "--url", &fake.url],
+        &["target", "add", "kibana", "kb", "--url", &fake.url],
     );
     let listed = run(
         &project,
         &[
             "list",
             "--remote",
-            "--type",
+            "kb",
             "saved_objects",
             "--namespace",
             "esdiag",
-            "--id",
             "obj-1",
         ],
     );
@@ -455,11 +454,10 @@ fn kibana_ndjson_is_unbundled_to_canonical_resources_and_rebuilt_only_for_push()
         &project,
         &[
             "add",
-            "--type",
+            "kb",
             "saved_objects",
             "--namespace",
             "esdiag",
-            "--id",
             "obj-1",
         ],
     );
@@ -480,11 +478,10 @@ fn kibana_ndjson_is_unbundled_to_canonical_resources_and_rebuilt_only_for_push()
         &project,
         &[
             "fetch",
-            "--type",
+            "kb",
             "saved_objects",
             "--namespace",
             "esdiag",
-            "--id",
             "obj-1",
         ],
     );
@@ -520,7 +517,7 @@ fn kibana_ndjson_is_unbundled_to_canonical_resources_and_rebuilt_only_for_push()
         &project,
         &[
             "push",
-            "--type",
+            "kb",
             "saved_objects",
             "--namespace",
             "esdiag",
@@ -583,18 +580,17 @@ fn saved_object_filenames_use_the_first_available_display_name_pointer() {
     run(&project, &["install", "kibana"]);
     run(
         &project,
-        &["app", "add", "kibana", "kb", "--url", &fake.url],
+        &["target", "add", "kibana", "kb", "--url", &fake.url],
     );
 
     run(
         &project,
         &[
             "add",
-            "--type",
+            "kb",
             "saved_objects",
             "--namespace",
             "esdiag",
-            "--id",
             "5e05b9ee-3e49-4efd-8a16-94de208ebb83",
         ],
     );
@@ -625,12 +621,12 @@ fn local_json5_accepts_comments_and_triple_quoted_human_text() {
     run(&project, &["install", "kibana"]);
     run(
         &project,
-        &["app", "add", "kibana", "kb", "--url", "http://invalid"],
+        &["target", "add", "kibana", "kb", "--url", "http://invalid"],
     );
     let dir = project.path().join("kb/spaces");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("Space.json5"),"// deprecated API\n{ id: 'space-1', name: 'Space', description: \"\"\"line one\nline two\"\"\" }").unwrap();
-    let listed = run(&project, &["list", "--type", "spaces"]);
+    let listed = run(&project, &["list", "kb", "spaces"]);
     assert_eq!(listed["result"][0]["id"], "space-1");
 }
 
@@ -652,7 +648,7 @@ fn frontmatter_markdown_resources_merge_from_a_directory_tree() {
     run(&project, &["install", "kibana"]);
     run(
         &project,
-        &["app", "add", "kibana", "kb", "--url", "http://invalid"],
+        &["target", "add", "kibana", "kb", "--url", "http://invalid"],
     );
 
     configure_skill_projection(&project);
@@ -674,7 +670,7 @@ fn frontmatter_markdown_resources_merge_from_a_directory_tree() {
 
     let listed = run(
         &project,
-        &["list", "--type", "skills", "--namespace", "default"],
+        &["list", "kb", "skills", "--namespace", "default"],
     );
     let resource = &listed["result"][0];
     assert_eq!(resource["id"], "agentic-diagnostic-assistant");
@@ -704,7 +700,7 @@ fn adding_a_frontmatter_markdown_resource_splits_it_to_a_directory_tree() {
     run(&project, &["install", "kibana"]);
     run(
         &project,
-        &["app", "add", "kibana", "kb", "--url", &fake.url],
+        &["target", "add", "kibana", "kb", "--url", &fake.url],
     );
     configure_skill_projection(&project);
 
@@ -712,11 +708,10 @@ fn adding_a_frontmatter_markdown_resource_splits_it_to_a_directory_tree() {
         &project,
         &[
             "add",
-            "--type",
+            "kb",
             "skills",
             "--namespace",
             "default",
-            "--id",
             "agentic-diagnostic-assistant",
         ],
     );
@@ -755,18 +750,17 @@ fn pulling_a_frontmatter_markdown_resource_replaces_its_directory_projection() {
     run(&project, &["install", "kibana"]);
     run(
         &project,
-        &["app", "add", "kibana", "kb", "--url", &fake.url],
+        &["target", "add", "kibana", "kb", "--url", &fake.url],
     );
 
     run(
         &project,
         &[
             "add",
-            "--type",
+            "kb",
             "skills",
             "--namespace",
             "default",
-            "--id",
             "agentic-diagnostic-assistant",
         ],
     );
@@ -774,11 +768,10 @@ fn pulling_a_frontmatter_markdown_resource_replaces_its_directory_projection() {
         &project,
         &[
             "fetch",
-            "--type",
+            "kb",
             "skills",
             "--namespace",
             "default",
-            "--id",
             "agentic-diagnostic-assistant",
         ],
     );
@@ -787,11 +780,10 @@ fn pulling_a_frontmatter_markdown_resource_replaces_its_directory_projection() {
         &project,
         &[
             "fetch",
-            "--type",
+            "kb",
             "skills",
             "--namespace",
             "default",
-            "--id",
             "agentic-diagnostic-assistant",
         ],
     );
@@ -800,11 +792,10 @@ fn pulling_a_frontmatter_markdown_resource_replaces_its_directory_projection() {
         &[
             "pull",
             "--yes",
-            "--type",
+            "kb",
             "skills",
             "--namespace",
             "default",
-            "--id",
             "agentic-diagnostic-assistant",
         ],
     );
@@ -838,14 +829,13 @@ fn removing_a_projected_resource_replaces_the_directory_with_a_deletion_marker()
     run(&project, &["install", "kibana"]);
     run(
         &project,
-        &["app", "add", "kibana", "kb", "--url", &fake.url],
+        &["target", "add", "kibana", "kb", "--url", &fake.url],
     );
     let selector = [
-        "--type",
+        "kb",
         "skills",
         "--namespace",
         "default",
-        "--id",
         "agentic-diagnostic-assistant",
     ];
     let mut add = vec!["add"];
@@ -890,14 +880,13 @@ fn pushing_a_projected_resource_merges_passthrough_frontmatter_and_files() {
     run(&project, &["install", "kibana"]);
     run(
         &project,
-        &["app", "add", "kibana", "kb", "--url", &fake.url],
+        &["target", "add", "kibana", "kb", "--url", &fake.url],
     );
     let selector = [
-        "--type",
+        "kb",
         "skills",
         "--namespace",
         "default",
-        "--id",
         "agentic-diagnostic-assistant",
     ];
     let mut add = vec!["add"];
@@ -960,7 +949,7 @@ fn upsert_uses_create_when_a_resource_is_absent_and_no_native_upsert_exists() {
     run(&project, &["install", "kibana"]);
     run(
         &project,
-        &["app", "add", "kibana", "kb", "--url", &fake.url],
+        &["target", "add", "kibana", "kb", "--url", &fake.url],
     );
 
     let definition_path = project
@@ -982,17 +971,13 @@ fn upsert_uses_create_when_a_resource_is_absent_and_no_native_upsert_exists() {
     )
     .unwrap();
 
-    run(
-        &project,
-        &["fetch", "--type", "spaces", "--id", "new-space"],
-    );
+    run(&project, &["fetch", "kb", "spaces", "new-space"]);
     let pushed = run(
         &project,
         &[
             "push",
-            "--type",
+            "kb",
             "spaces",
-            "--id",
             "new-space",
             "--missing",
             "restore",
@@ -1027,7 +1012,7 @@ fn namespaced_resource_types_require_an_explicit_namespace_directory() {
     run(&project, &["install", "kibana"]);
     run(
         &project,
-        &["app", "add", "kibana", "kb", "--url", "http://invalid"],
+        &["target", "add", "kibana", "kb", "--url", "http://invalid"],
     );
 
     let definition_path = project
@@ -1101,7 +1086,7 @@ fn namespaced_resource_types_require_an_explicit_namespace_directory() {
     let traversal = Command::cargo_bin("taku")
         .unwrap()
         .current_dir(project.path())
-        .args(["--namespace", "../outside", "list"])
+        .args(["list", "kb", "saved_objects", "--namespace", "../outside"])
         .output()
         .unwrap();
     assert!(!traversal.status.success());
@@ -1130,7 +1115,7 @@ fn namespace_selectors_render_named_and_default_operation_paths() {
     run(&project, &["install", "kibana"]);
     run(
         &project,
-        &["app", "add", "kibana", "kb", "--url", &fake.url],
+        &["target", "add", "kibana", "kb", "--url", &fake.url],
     );
 
     let named = run(
@@ -1138,11 +1123,10 @@ fn namespace_selectors_render_named_and_default_operation_paths() {
         &[
             "list",
             "--remote",
-            "--type",
+            "kb",
             "saved_objects",
             "--namespace",
             "esdiag",
-            "--id",
             "obj-1",
         ],
     );
@@ -1154,11 +1138,10 @@ fn namespace_selectors_render_named_and_default_operation_paths() {
         &[
             "list",
             "--remote",
-            "--type",
+            "kb",
             "saved_objects",
             "--namespace",
             "default",
-            "--id",
             "obj-1",
         ],
     );
@@ -1194,7 +1177,7 @@ fn selected_write_operation_applies_its_own_outbound_transformations() {
     run(&project, &["install", "kibana"]);
     run(
         &project,
-        &["app", "add", "kibana", "kb", "--url", &fake.url],
+        &["target", "add", "kibana", "kb", "--url", &fake.url],
     );
 
     let definition_path = project
@@ -1255,7 +1238,7 @@ fn selected_write_operation_applies_its_own_outbound_transformations() {
             "--remote",
             "--namespace",
             "default",
-            "--type",
+            "kb",
             "workflows",
         ],
     );
@@ -1276,7 +1259,7 @@ fn selected_write_operation_applies_its_own_outbound_transformations() {
 
     run(
         &project,
-        &["fetch", "--namespace", "default", "--type", "workflows"],
+        &["fetch", "--namespace", "default", "kb", "workflows"],
     );
     run(
         &project,
@@ -1284,7 +1267,7 @@ fn selected_write_operation_applies_its_own_outbound_transformations() {
             "push",
             "--namespace",
             "default",
-            "--type",
+            "kb",
             "workflows",
             "--missing",
             "restore",
@@ -1330,7 +1313,7 @@ fn agent_builder_plugins_install_from_source_and_delete_without_force() {
     run(&project, &["install", "kibana"]);
     run(
         &project,
-        &["app", "add", "kibana", "kb", "--url", &fake.url],
+        &["target", "add", "kibana", "kb", "--url", &fake.url],
     );
 
     let directory = project.path().join("kb/default/plugins");
@@ -1347,11 +1330,10 @@ fn agent_builder_plugins_install_from_source_and_delete_without_force() {
     .unwrap();
 
     let selector = [
-        "--type",
+        "kb",
         "plugins",
         "--namespace",
         "default",
-        "--id",
         "financial-analysis",
     ];
     let mut fetch = vec!["fetch"];
@@ -1375,7 +1357,7 @@ fn agent_builder_plugins_install_from_source_and_delete_without_force() {
         &[
             "list",
             "--remote",
-            "--type",
+            "kb",
             "plugins",
             "--namespace",
             "default",

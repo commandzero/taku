@@ -38,10 +38,15 @@ impl ScriptedApi {
     fn start() -> Self {
         let server = Server::http("127.0.0.1:0").unwrap();
         let url = format!("http://{}", server.server_addr());
-        let routes = Arc::new(Mutex::new(BTreeMap::<
-            (String, String),
-            VecDeque<ScriptedResponse>,
-        >::new()));
+        let mut initial_routes = BTreeMap::<(String, String), VecDeque<ScriptedResponse>>::new();
+        initial_routes.insert(
+            ("GET".into(), "/".into()),
+            VecDeque::from([ScriptedResponse {
+                status: 200,
+                body: r#"{"version":{"number":"9.1.0"}}"#.into(),
+            }]),
+        );
+        let routes = Arc::new(Mutex::new(initial_routes));
         let requests = Arc::new(Mutex::new(Vec::new()));
         let stop = Arc::new(AtomicBool::new(false));
         let scripted = routes.clone();
@@ -156,7 +161,12 @@ impl FakeEnrichApi {
     }
   ]
 }"#;
-                let response = Response::from_string(body)
+                let response_body = if request.url() == "/" {
+                    r#"{"version":{"number":"9.1.0"}}"#
+                } else {
+                    body
+                };
+                let response = Response::from_string(response_body)
                     .with_header(Header::from_bytes("content-type", "application/json").unwrap());
                 request.respond(response).unwrap();
             }
@@ -197,7 +207,7 @@ fn project_at(url: &str) -> TempDir {
     run(&project, &["install", "elasticsearch"]);
     run(
         &project,
-        &["app", "add", "elasticsearch", "es", "--url", url],
+        &["target", "add", "elasticsearch", "es", "--url", url],
     );
     project
 }
@@ -246,17 +256,11 @@ fn assert_upsert_lifecycle(exercise: UpsertExercise<'_>) {
     let project = project_at(&api.url);
     run(
         &project,
-        &["add", "--type", exercise.resource_type, "--id", exercise.id],
+        &["add", "es", exercise.resource_type, exercise.id],
     );
     run(
         &project,
-        &[
-            "fetch",
-            "--type",
-            exercise.resource_type,
-            "--id",
-            exercise.id,
-        ],
+        &["fetch", "es", exercise.resource_type, exercise.id],
     );
     let resource = std::fs::read_dir(project.path().join("es").join(exercise.resource_type))
         .unwrap()
@@ -273,9 +277,8 @@ fn assert_upsert_lifecycle(exercise: UpsertExercise<'_>) {
         &project,
         &[
             "push",
-            "--type",
+            "es",
             exercise.resource_type,
-            "--id",
             exercise.id,
             "--uncommitted",
             "allow",
@@ -285,31 +288,18 @@ fn assert_upsert_lifecycle(exercise: UpsertExercise<'_>) {
     );
     run(
         &project,
-        &[
-            "fetch",
-            "--type",
-            exercise.resource_type,
-            "--id",
-            exercise.id,
-        ],
+        &["fetch", "es", exercise.resource_type, exercise.id],
     );
     run(
         &project,
-        &[
-            "remove",
-            "--type",
-            exercise.resource_type,
-            "--id",
-            exercise.id,
-        ],
+        &["remove", "es", exercise.resource_type, exercise.id],
     );
     run(
         &project,
         &[
             "push",
-            "--type",
+            "es",
             exercise.resource_type,
-            "--id",
             exercise.id,
             "--uncommitted",
             "allow",
@@ -353,7 +343,7 @@ fn embedded_elasticsearch_catalog_recognizes_snapshot_repositories() {
     let validated = run(&project, &["validate"]);
 
     assert_eq!(validated["result"]["valid"], true);
-    let listed = run(&project, &["list", "--type", "snapshot_repositories"]);
+    let listed = run(&project, &["list", "es", "snapshot_repositories"]);
     assert_eq!(listed["result"][0]["id"], "backups");
 }
 
@@ -376,7 +366,7 @@ fn embedded_elasticsearch_catalog_recognizes_legacy_index_templates() {
     let validated = run(&project, &["validate"]);
 
     assert_eq!(validated["result"]["valid"], true);
-    let listed = run(&project, &["list", "--type", "legacy_index_templates"]);
+    let listed = run(&project, &["list", "es", "legacy_index_templates"]);
     assert_eq!(listed["result"][0]["id"], "legacy-logs");
 }
 
@@ -400,7 +390,7 @@ fn embedded_elasticsearch_catalog_recognizes_security_role_mappings() {
     let validated = run(&project, &["validate"]);
 
     assert_eq!(validated["result"]["valid"], true);
-    let listed = run(&project, &["list", "--type", "role_mappings"]);
+    let listed = run(&project, &["list", "es", "role_mappings"]);
     assert_eq!(listed["result"][0]["id"], "admins");
 }
 
@@ -427,7 +417,7 @@ fn embedded_elasticsearch_catalog_recognizes_snapshot_lifecycle_policies() {
     let validated = run(&project, &["validate"]);
 
     assert_eq!(validated["result"]["valid"], true);
-    let listed = run(&project, &["list", "--type", "slm_policies"]);
+    let listed = run(&project, &["list", "es", "slm_policies"]);
     assert_eq!(listed["result"][0]["id"], "daily");
 }
 
@@ -451,7 +441,7 @@ fn embedded_elasticsearch_catalog_recognizes_ccr_auto_follow_patterns() {
     let validated = run(&project, &["validate"]);
 
     assert_eq!(validated["result"]["valid"], true);
-    let listed = run(&project, &["list", "--type", "ccr_auto_follow_patterns"]);
+    let listed = run(&project, &["list", "es", "ccr_auto_follow_patterns"]);
     assert_eq!(listed["result"][0]["id"], "logs");
 }
 
@@ -473,7 +463,7 @@ fn embedded_elasticsearch_catalog_recognizes_target_scoped_cluster_settings() {
     let validated = run(&project, &["validate"]);
 
     assert_eq!(validated["result"]["valid"], true);
-    let listed = run(&project, &["list", "--type", "cluster_settings"]);
+    let listed = run(&project, &["list", "es", "cluster_settings"]);
     assert_eq!(listed["result"][0]["id"], "cluster-settings");
 }
 
@@ -482,7 +472,7 @@ fn enrich_policy_types_round_trip_from_dynamic_response_keys() {
     let api = FakeEnrichApi::start();
     let project = project_at(&api.url);
 
-    let listed = run(&project, &["list", "--remote", "--type", "enrich_policies"]);
+    let listed = run(&project, &["list", "--remote", "es", "enrich_policies"]);
 
     assert_eq!(listed["result"].as_array().unwrap().len(), 2);
     let mut ids: Vec<_> = listed["result"]
@@ -493,10 +483,7 @@ fn enrich_policy_types_round_trip_from_dynamic_response_keys() {
         .collect();
     ids.sort_unstable();
     assert_eq!(ids, ["places", "users"]);
-    run(
-        &project,
-        &["add", "--type", "enrich_policies", "--id", "users"],
-    );
+    run(&project, &["add", "es", "enrich_policies", "users"]);
     let resource = std::fs::read_to_string(
         std::fs::read_dir(project.path().join("es/enrich_policies"))
             .unwrap()
@@ -534,19 +521,10 @@ fn snapshot_repositories_use_normalized_put_and_delete_operations() {
         r#"{"acknowledged":true}"#,
     );
     let project = project_at(&api.url);
+    run(&project, &["add", "es", "snapshot_repositories", "backups"]);
     run(
         &project,
-        &["add", "--type", "snapshot_repositories", "--id", "backups"],
-    );
-    run(
-        &project,
-        &[
-            "fetch",
-            "--type",
-            "snapshot_repositories",
-            "--id",
-            "backups",
-        ],
+        &["fetch", "es", "snapshot_repositories", "backups"],
     );
     let resource = project.path().join("es/snapshot_repositories/backups.json");
     let mut value: Value =
@@ -559,9 +537,8 @@ fn snapshot_repositories_use_normalized_put_and_delete_operations() {
         &project,
         &[
             "push",
-            "--type",
+            "es",
             "snapshot_repositories",
-            "--id",
             "backups",
             "--uncommitted",
             "allow",
@@ -571,31 +548,18 @@ fn snapshot_repositories_use_normalized_put_and_delete_operations() {
     );
     run(
         &project,
-        &[
-            "fetch",
-            "--type",
-            "snapshot_repositories",
-            "--id",
-            "backups",
-        ],
+        &["fetch", "es", "snapshot_repositories", "backups"],
     );
     run(
         &project,
-        &[
-            "remove",
-            "--type",
-            "snapshot_repositories",
-            "--id",
-            "backups",
-        ],
+        &["remove", "es", "snapshot_repositories", "backups"],
     );
     run(
         &project,
         &[
             "push",
-            "--type",
+            "es",
             "snapshot_repositories",
-            "--id",
             "backups",
             "--uncommitted",
             "allow",
@@ -795,13 +759,7 @@ fn cluster_settings_use_a_target_scoped_update_operation() {
     .unwrap();
     run(
         &project,
-        &[
-            "fetch",
-            "--type",
-            "cluster_settings",
-            "--id",
-            "cluster-settings",
-        ],
+        &["fetch", "es", "cluster_settings", "cluster-settings"],
     );
     let mut desired: Value =
         serde_json::from_str(&std::fs::read_to_string(&resource).unwrap()).unwrap();
@@ -812,9 +770,8 @@ fn cluster_settings_use_a_target_scoped_update_operation() {
         &project,
         &[
             "push",
-            "--type",
+            "es",
             "cluster_settings",
-            "--id",
             "cluster-settings",
             "--uncommitted",
             "allow",
@@ -888,17 +845,13 @@ fn enrich_policies_create_from_canonical_type_and_delete_by_name() {
         .unwrap(),
     )
     .unwrap();
-    run(
-        &project,
-        &["fetch", "--type", "enrich_policies", "--id", "users"],
-    );
+    run(&project, &["fetch", "es", "enrich_policies", "users"]);
     run(
         &project,
         &[
             "push",
-            "--type",
+            "es",
             "enrich_policies",
-            "--id",
             "users",
             "--uncommitted",
             "allow",
@@ -906,21 +859,14 @@ fn enrich_policies_create_from_canonical_type_and_delete_by_name() {
             "allow",
         ],
     );
-    run(
-        &project,
-        &["fetch", "--type", "enrich_policies", "--id", "users"],
-    );
-    run(
-        &project,
-        &["remove", "--type", "enrich_policies", "--id", "users"],
-    );
+    run(&project, &["fetch", "es", "enrich_policies", "users"]);
+    run(&project, &["remove", "es", "enrich_policies", "users"]);
     run(
         &project,
         &[
             "push",
-            "--type",
+            "es",
             "enrich_policies",
-            "--id",
             "users",
             "--uncommitted",
             "allow",
