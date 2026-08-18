@@ -80,8 +80,8 @@ pub struct Observation {
     pub guard: Option<String>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub requires_pull: bool,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub hint_binding: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hint_binding: Option<String>,
 }
 
 pub fn fetch(
@@ -91,6 +91,7 @@ pub fn fetch(
 ) -> Result<Vec<FetchResult>> {
     let root = git_root(root)?;
     let project = load_project(&root)?;
+    crate::hints::validate_project_placement(&root, &project)?;
     let environment = current_environment(&root, &project, selection.environment.as_deref())?;
     let mut resolved: BTreeMap<String, ResolvedApplication> = BTreeMap::new();
     let mut missing_baselines = Vec::new();
@@ -232,12 +233,13 @@ pub fn fetch(
         let file = observation_files.get_mut(&path).unwrap();
         let requires_pull = file.resources.get(&item.id).is_some_and(|observation| {
             observation.requires_pull
-                || if observation.hint_binding.is_empty() {
-                    hint_resolution.target_bytes.is_some()
-                        || hint_resolution.resource_bytes.is_some()
-                } else {
-                    observation.hint_binding != hint_binding
-                }
+                || observation.hint_binding.as_ref().map_or_else(
+                    || {
+                        hint_resolution.target_bytes.is_some()
+                            || hint_resolution.resource_bytes.is_some()
+                    },
+                    |binding| binding != &hint_binding,
+                )
         });
         file.observed_at = Utc::now();
         file.binding = bindings[&path].clone();
@@ -262,7 +264,7 @@ pub fn fetch(
                 value,
                 guard,
                 requires_pull,
-                hint_binding,
+                hint_binding: Some(hint_binding),
             },
         );
         reports.push(FetchResult {
@@ -419,7 +421,7 @@ pub fn fetch(
                 value,
                 guard,
                 requires_pull: false,
-                hint_binding: String::new(),
+                hint_binding: None,
             },
         );
         reports.push(FetchResult {
@@ -484,6 +486,7 @@ pub fn remote_resource_types_read_only(
 ) -> Result<Vec<RemoteResourceType>> {
     let root = git_root(root)?;
     let project = load_project(&root)?;
+    crate::hints::validate_project_placement(&root, &project)?;
     let environment = current_environment(&root, &project, environment)?;
     let target = project.environments[&environment]
         .targets
@@ -524,6 +527,7 @@ fn discover_remote(
 ) -> Result<RemoteDiscovery> {
     let root = git_root(root)?;
     let project = load_project(&root)?;
+    crate::hints::validate_project_placement(&root, &project)?;
     let environment = current_environment(&root, &project, selection.environment.as_deref())?;
     let mut resolved = BTreeMap::new();
     let mut missing_baselines = Vec::new();

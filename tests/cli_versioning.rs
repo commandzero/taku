@@ -132,6 +132,30 @@ fn version_endpoints_fall_back_in_order_and_unavailable_resource_types_are_skipp
     assert_eq!(fake.requests.lock().unwrap().len(), request_count);
 }
 
+#[test]
+fn a_fresh_target_rejects_version_specific_resource_hints_before_discovery() {
+    let fake = Fake::start();
+    let project = project(&fake);
+    let unavailable = project.path().join("api/future_widgets");
+    std::fs::create_dir_all(&unavailable).unwrap();
+    std::fs::write(
+        unavailable.join(".resource.yaml"),
+        "schema_version: 1\nmetadata: { track: true }\n",
+    )
+    .unwrap();
+
+    let failed = Command::cargo_bin("taku")
+        .unwrap()
+        .current_dir(project.path())
+        .args(["list", "--remote", "api", "widgets"])
+        .output()
+        .unwrap();
+
+    assert!(!failed.status.success());
+    assert!(String::from_utf8_lossy(&failed.stderr).contains("is unavailable"));
+    assert!(fake.requests.lock().unwrap().is_empty());
+}
+
 fn project(fake: &Fake) -> TempDir {
     let project = tempfile::tempdir().unwrap();
     assert!(

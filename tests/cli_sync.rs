@@ -1038,6 +1038,24 @@ fn changing_an_applicable_hint_after_fetch_invalidates_observed_state() {
         &["push", "--uncommitted", "allow", "--untracked", "allow"],
     );
     assert_eq!(pushed["result"][0]["outcome"], "in_sync");
+
+    std::fs::write(
+        project.path().join("es/.target.yaml"),
+        "schema_version: 1\nmetadata: { track: false }\n",
+    )
+    .unwrap();
+    run(&project, &["fetch"]);
+    let blocked = output(
+        &project,
+        &["push", "--uncommitted", "allow", "--untracked", "allow"],
+    );
+    assert!(!blocked.status.success());
+    assert!(String::from_utf8_lossy(&blocked.stderr).contains("requires Pull"));
+    run(&project, &["pull", "--yes"]);
+    let desired =
+        std::fs::read_to_string(project.path().join("es/ingest_pipelines/Pipeline.json")).unwrap();
+    assert!(!desired.contains("created_date_millis"));
+    assert!(!desired.contains("modified_date_millis"));
 }
 
 #[test]
@@ -1137,5 +1155,25 @@ fn validate_rejects_tracked_metadata_overlapping_target_sensitive_fields_without
     let validated = output(&project, &["validate"]);
     assert!(!validated.status.success());
     assert!(String::from_utf8_lossy(&validated.stderr).contains("tracked metadata field"));
+    assert!(target.requests.lock().unwrap().is_empty());
+}
+
+#[test]
+fn hints_for_unknown_targets_fail_before_network_access() {
+    let target = FakeTarget::start();
+    let project = setup(&target);
+    let unknown = project.path().join("typo");
+    std::fs::create_dir_all(&unknown).unwrap();
+    std::fs::write(
+        unknown.join(".target.yaml"),
+        "schema_version: 1\nmetadata: { track: true }\n",
+    )
+    .unwrap();
+
+    let failed = output(&project, &["fetch", "es", "ingest_pipelines"]);
+
+    assert!(!failed.status.success());
+    let stderr = String::from_utf8_lossy(&failed.stderr);
+    assert!(stderr.contains("unknown Environment or Target"), "{stderr}");
     assert!(target.requests.lock().unwrap().is_empty());
 }

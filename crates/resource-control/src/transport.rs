@@ -663,13 +663,32 @@ pub fn remove_pointer(root: &mut Value, pointer: &str) -> Result<()> {
     let mut current = root;
     for raw in tokens {
         let token = raw.replace("~1", "/").replace("~0", "~");
-        let Some(next) = current.get_mut(&token) else {
+        let next = match current {
+            Value::Object(map) => map.get_mut(&token),
+            Value::Array(values) => token
+                .parse::<usize>()
+                .ok()
+                .and_then(|index| values.get_mut(index)),
+            _ => None,
+        };
+        let Some(next) = next else {
             return Ok(());
         };
         current = next;
     }
-    if let Some(map) = current.as_object_mut() {
-        map.remove(&last.replace("~1", "/").replace("~0", "~"));
+    let last = last.replace("~1", "/").replace("~0", "~");
+    match current {
+        Value::Object(map) => {
+            map.remove(&last);
+        }
+        Value::Array(values) => {
+            if let Ok(index) = last.parse::<usize>()
+                && index < values.len()
+            {
+                values.remove(index);
+            }
+        }
+        _ => {}
     }
     Ok(())
 }
@@ -746,6 +765,25 @@ transformations: [{ kind: extract, pointer: /payload }]
         assert_eq!(
             outbound(&value, &metadata_type(), Some(&operation)).unwrap(),
             serde_json::json!({"payload": {"document": {"id": "one", "name": "One", "audit": {}}}})
+        );
+    }
+
+    #[test]
+    fn outbound_metadata_removes_array_elements() {
+        let resource_type: ResourceType = serde_yaml::from_str(
+            r#"
+id: { pointer: /id, scope: universal }
+display_name: { strategy: id }
+metadata: { fields: [/audit/0] }
+operations: {}
+"#,
+        )
+        .unwrap();
+        let value = serde_json::json!({"id": "one", "audit": ["secret", "kept"]});
+
+        assert_eq!(
+            outbound(&value, &resource_type, None).unwrap(),
+            serde_json::json!({"id": "one", "audit": ["kept"]})
         );
     }
 }

@@ -54,6 +54,7 @@ pub(crate) fn list_inventory_with_resolved(
     }
     let root = git_root(root)?;
     let project = load_project(&root)?;
+    crate::hints::validate_project_placement(&root, &project)?;
     let environment = current_environment(&root, &project, selection.environment.as_deref())?;
     let env = &project.environments[&environment];
     let mut result = Vec::new();

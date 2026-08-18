@@ -185,23 +185,38 @@ pub(crate) fn validate_application_tree(
         );
     }
     let mut candidates = std::collections::BTreeMap::new();
-    for catalog in application.catalogs.values() {
-        for (name, definitions) in &catalog.resource_types {
-            for definition in definitions {
-                let candidate = candidates.entry(name.clone()).or_insert_with(|| {
-                    let mut candidate = definition.clone();
-                    if let Some(additions) = target_config.sensitive_fields.get(name) {
-                        candidate.sensitive_fields.extend(additions.iter().cloned());
-                    }
-                    candidate
-                });
-                if candidate.namespaced != definition.namespaced {
-                    bail!(
-                        "Resource Type {name} changes namespacing across versions; a Target Baseline is required before using Directory Hints"
-                    );
-                }
+    let Some(first_catalog) = application.catalogs.values().next() else {
+        bail!("Application has no Major Version Catalogs");
+    };
+    for name in first_catalog.resource_types.keys() {
+        let mut definitions = application.catalogs.values().map(|catalog| {
+            let definitions = catalog.resource_types.get(name)?;
+            if definitions.len() != 1 {
+                return None;
             }
+            let definition = &definitions[0];
+            if definition
+                .version
+                .as_deref()
+                .is_some_and(|constraint| constraint != catalog.application.version)
+            {
+                return None;
+            }
+            Some(definition)
+        });
+        let Some(first) = definitions.next().flatten() else {
+            continue;
+        };
+        if !definitions.all(|definition| {
+            definition.is_some_and(|definition| definition.namespaced == first.namespaced)
+        }) {
+            continue;
         }
+        let mut candidate = first.clone();
+        if let Some(additions) = target_config.sensitive_fields.get(name) {
+            candidate.sensitive_fields.extend(additions.iter().cloned());
+        }
+        candidates.insert(name.clone(), candidate);
     }
     validate_target_tree(root, project, environment, target, &candidates)?;
     validate_resolved_tracking(root, project, environment, target, &candidates)

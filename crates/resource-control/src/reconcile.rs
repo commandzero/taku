@@ -281,8 +281,18 @@ pub fn pull(
             .resources
             .get_mut(&item.id)
             .context("selected Resource is absent from Observed State")?;
+        let requires_hint_pull = resource.requires_pull;
+        let metadata_track = crate::hints::resolve(
+            &root,
+            &project,
+            &environment,
+            &item.target,
+            item.namespace.as_deref(),
+            &item.resource_type,
+        )?
+        .track;
         let current_hash = hash(&canonical_bytes(&item.value)?);
-        let outcome = if !resource.present {
+        let mut outcome = if !resource.present {
             match missing
                 .or(resource_type.missing.pull)
                 .unwrap_or(MissingPolicy::Conflict)
@@ -320,7 +330,7 @@ pub fn pull(
                     resource.local_value = Some(remote_at_current);
                     "pulled"
                 } else if canonical_bytes(&remote_at_current)? == canonical_bytes(&item.value)? {
-                    resource.local_hash = current_hash;
+                    resource.local_hash = current_hash.clone();
                     resource.local_value = Some(item.value.clone());
                     "unchanged"
                 } else {
@@ -344,10 +354,24 @@ pub fn pull(
                 }
             }
         };
-        if !matches!(outcome, "pull_conflict" | "presence_conflict") {
-            resource.requires_pull = false;
+        if requires_hint_pull
+            && !metadata_track
+            && !matches!(
+                outcome,
+                "pulled" | "deleted" | "pull_conflict" | "presence_conflict"
+            )
+        {
+            mutations.push((
+                root.join(&item.path),
+                Some(item.value.clone()),
+                resource_type.clone(),
+            ));
+            resource.local_hash = current_hash.clone();
+            resource.local_value = Some(item.value.clone());
+            outcome = "pulled";
         }
         if !matches!(outcome, "pull_conflict" | "presence_conflict") {
+            resource.requires_pull = false;
             baselines.insert(
                 baseline_path(&root, &environment, &item.target),
                 baseline_from(&crate::resolution::ResolvedApplication {
