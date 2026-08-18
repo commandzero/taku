@@ -72,6 +72,13 @@ pub(crate) fn list_inventory_with_resolved(
             resolved_fallback = for_local_use(&app, target, baseline.as_ref())?;
             &resolved_fallback
         };
+        crate::hints::validate_target_tree(
+            &root,
+            &project,
+            &environment,
+            target_name,
+            &resolved.resource_types,
+        )?;
         if let Some(baseline) = &baseline {
             let version = semver::Version::parse(&baseline.application_version)?;
             let catalog = &app.catalogs[&version.major];
@@ -135,6 +142,15 @@ pub(crate) fn list_inventory_with_resolved(
                 {
                     continue;
                 }
+                let hints = crate::hints::resolve(
+                    &root,
+                    &project,
+                    &environment,
+                    target_name,
+                    namespace.as_deref(),
+                    type_name,
+                )?;
+                crate::hints::validate_tracking(resource_type, &hints, type_name)?;
                 reject_symlink_components(&root, &directory)?;
                 for entry in fs::read_dir(&directory)? {
                     let entry = entry?;
@@ -146,7 +162,12 @@ pub(crate) fn list_inventory_with_resolved(
                             path.display()
                         );
                     }
-                    let value = if let Some(projection) = &resource_type.filesystem {
+                    if path.file_name().and_then(|name| name.to_str())
+                        == Some(crate::hints::RESOURCE_HINT_NAME)
+                    {
+                        continue;
+                    }
+                    let mut value = if let Some(projection) = &resource_type.filesystem {
                         if !metadata.is_dir() {
                             continue;
                         }
@@ -163,6 +184,9 @@ pub(crate) fn list_inventory_with_resolved(
                         }
                         parse_resource(&path)?
                     };
+                    if !hints.track {
+                        value = crate::transport::without_metadata(&value, resource_type)?;
+                    }
                     let encoded_name = path
                         .file_name()
                         .and_then(|name| name.to_str())
@@ -280,6 +304,8 @@ fn directory_has_recognized_input(
             );
         }
         if is_deletion_marker(&path)
+            || path.file_name().and_then(|name| name.to_str())
+                == Some(crate::hints::RESOURCE_HINT_NAME)
             || (metadata.is_dir()
                 && definitions
                     .iter()
@@ -323,6 +349,18 @@ pub fn resource_directory(
     }
 }
 
+pub(crate) fn target_root(
+    root: &Path,
+    project: &Project,
+    environment: &str,
+    target: &str,
+) -> PathBuf {
+    match project.layout {
+        RepositoryLayout::Single => root.join(target),
+        RepositoryLayout::Multi => root.join(environment).join(target),
+    }
+}
+
 pub fn resource_directory_in_namespace(
     root: &Path,
     project: &Project,
@@ -331,10 +369,7 @@ pub fn resource_directory_in_namespace(
     namespace: Option<&str>,
     resource_type: &str,
 ) -> PathBuf {
-    let target_root = match project.layout {
-        RepositoryLayout::Single => root.join(target),
-        RepositoryLayout::Multi => root.join(environment).join(target),
-    };
+    let target_root = target_root(root, project, environment, target);
     match namespace {
         Some(namespace) => target_root.join(namespace).join(resource_type),
         None => target_root.join(resource_type),
@@ -358,10 +393,7 @@ pub fn resource_directories(
             .collect());
     }
 
-    let target_root = match project.layout {
-        RepositoryLayout::Single => root.join(target),
-        RepositoryLayout::Multi => root.join(environment).join(target),
-    };
+    let target_root = target_root(root, project, environment, target);
     if !target_root.is_dir() {
         return Ok(Vec::new());
     }

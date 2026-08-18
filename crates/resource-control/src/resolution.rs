@@ -300,6 +300,7 @@ pub fn save_baseline(path: &Path, baseline: &TargetBaseline) -> Result<()> {
 pub fn validate_project(root: &Path) -> Result<serde_json::Value> {
     let root = git_root(root)?;
     let project = load_project(&root)?;
+    crate::hints::validate_project_placement(&root, &project)?;
     let mut applications = Vec::new();
     for entry in fs::read_dir(root.join(".taku/applications"))
         .unwrap_or_else(|_| fs::read_dir(root.join(".taku")).unwrap())
@@ -319,6 +320,16 @@ pub fn validate_project(root: &Path) -> Result<serde_json::Value> {
                     target_config.application
                 );
             }
+            let application = load_installed(&root, &target_config.application)?;
+            let baseline = load_baseline(&baseline_path(&root, environment, target)).ok();
+            let resolved = for_local_use(&application, target_config, baseline.as_ref())?;
+            crate::hints::validate_target_tree(
+                &root,
+                &project,
+                environment,
+                target,
+                &resolved.resource_types,
+            )?;
         }
     }
     Ok(serde_json::json!({

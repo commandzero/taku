@@ -1,7 +1,5 @@
 use crate::application::load_installed;
-use crate::canonical::{
-    Selection, canonical_bytes, list_inventory, list_inventory_with_resolved, pointer_string,
-};
+use crate::canonical::{Selection, canonical_bytes, list_inventory_with_resolved, pointer_string};
 use crate::project::current_environment;
 use crate::provider::resolve_auth;
 use crate::resolution::{
@@ -91,20 +89,25 @@ pub fn fetch(
     let project = load_project(&root)?;
     let environment = current_environment(&root, &project, selection.environment.as_deref())?;
     let mut resolved: BTreeMap<String, ResolvedApplication> = BTreeMap::new();
+    let mut missing_baselines = Vec::new();
     for (target_name, target) in &project.environments[&environment].targets {
         if !selection.targets.is_empty() && !selection.targets.contains(target_name) {
             continue;
         }
         let app = load_installed(&root, &target.application)?;
+        crate::hints::validate_application_tree(&root, &project, &environment, target_name, &app)?;
         let auth = resolve_auth(&root, &project, &environment, target, cli_provider)?;
         let discovered = discover(&app, target, &auth)?;
         let baseline = baseline_path(&root, &environment, target_name);
         if !baseline.exists() {
-            save_baseline(&baseline, &baseline_from(&discovered))?;
+            missing_baselines.push((baseline, baseline_from(&discovered)));
         }
         resolved.insert(target_name.clone(), discovered);
     }
-    let inventory = list_inventory(&root, selection)?;
+    let inventory = list_inventory_with_resolved(&root, selection, Some(&resolved))?;
+    for (path, baseline) in missing_baselines {
+        save_baseline(&path, &baseline)?;
+    }
     let mut reports = Vec::new();
     let mut bindings = BTreeMap::new();
     let mut observation_files: BTreeMap<PathBuf, ObservationFile> = BTreeMap::new();
@@ -122,6 +125,15 @@ pub fn fetch(
         }
         let discovered = &resolved[&item.target];
         let resource_type = &discovered.resource_types[&item.resource_type];
+        let metadata_track = crate::hints::resolve(
+            &root,
+            &project,
+            &environment,
+            &item.target,
+            item.namespace.as_deref(),
+            &item.resource_type,
+        )?
+        .track;
         let operation = resource_type
             .operations
             .read
@@ -142,6 +154,7 @@ pub fn fetch(
                     context: Some(&item.value),
                     body: None,
                     mutation: false,
+                    metadata_track,
                 },
                 &auth,
             ) {
@@ -181,10 +194,18 @@ pub fn fetch(
             item.namespace.as_deref(),
             &item.resource_type,
         );
-        if !bindings.contains_key(&item.target) {
+        if !bindings.contains_key(&path) {
             bindings.insert(
-                item.target.clone(),
-                binding(&root, &project, &environment, &item.target, &app)?,
+                path.clone(),
+                binding(
+                    &root,
+                    &project,
+                    &environment,
+                    &item.target,
+                    &app,
+                    item.namespace.as_deref(),
+                    &item.resource_type,
+                )?,
             );
         }
         if !observation_files.contains_key(&path) {
@@ -194,7 +215,7 @@ pub fn fetch(
                 ObservationFile {
                     schema_version: SCHEMA_VERSION,
                     observed_at: Utc::now(),
-                    binding: bindings[&item.target].clone(),
+                    binding: bindings[&path].clone(),
                     application_version: discovered.application_version.clone(),
                     catalog_version: discovered.catalog_version.clone(),
                     definitions: BTreeMap::new(),
@@ -205,7 +226,7 @@ pub fn fetch(
         }
         let file = observation_files.get_mut(&path).unwrap();
         file.observed_at = Utc::now();
-        file.binding = bindings[&item.target].clone();
+        file.binding = bindings[&path].clone();
         file.application_version = discovered.application_version.clone();
         file.catalog_version = discovered.catalog_version.clone();
         file.definitions = discovered.selected.clone();
@@ -251,6 +272,15 @@ pub fn fetch(
         }
         let discovered = &resolved[&marker.target];
         let resource_type = &discovered.resource_types[&marker.resource_type];
+        let metadata_track = crate::hints::resolve(
+            &root,
+            &project,
+            &environment,
+            &marker.target,
+            marker.namespace.as_deref(),
+            &marker.resource_type,
+        )?
+        .track;
         let operation = resource_type
             .operations
             .read
@@ -275,6 +305,7 @@ pub fn fetch(
                 context: Some(&marker_context),
                 body: None,
                 mutation: false,
+                metadata_track,
             },
             &auth,
         ) {
@@ -315,10 +346,18 @@ pub fn fetch(
             marker.namespace.as_deref(),
             &marker.resource_type,
         );
-        if !bindings.contains_key(&marker.target) {
+        if !bindings.contains_key(&path) {
             bindings.insert(
-                marker.target.clone(),
-                binding(&root, &project, &environment, &marker.target, &app)?,
+                path.clone(),
+                binding(
+                    &root,
+                    &project,
+                    &environment,
+                    &marker.target,
+                    &app,
+                    marker.namespace.as_deref(),
+                    &marker.resource_type,
+                )?,
             );
         }
         if !observation_files.contains_key(&path) {
@@ -328,7 +367,7 @@ pub fn fetch(
                 ObservationFile {
                     schema_version: SCHEMA_VERSION,
                     observed_at: Utc::now(),
-                    binding: bindings[&marker.target].clone(),
+                    binding: bindings[&path].clone(),
                     application_version: discovered.application_version.clone(),
                     catalog_version: discovered.catalog_version.clone(),
                     definitions: BTreeMap::new(),
@@ -339,7 +378,7 @@ pub fn fetch(
         }
         let file = observation_files.get_mut(&path).unwrap();
         file.observed_at = Utc::now();
-        file.binding = bindings[&marker.target].clone();
+        file.binding = bindings[&path].clone();
         file.application_version = discovered.application_version.clone();
         file.catalog_version = discovered.catalog_version.clone();
         file.definitions = discovered.selected.clone();
@@ -433,6 +472,7 @@ pub fn remote_resource_types_read_only(
         .get(target_name)
         .with_context(|| format!("unknown Target {target_name}"))?;
     let app = load_installed(&root, &target.application)?;
+    crate::hints::validate_application_tree(&root, &project, &environment, target_name, &app)?;
     let auth = resolve_auth(&root, &project, &environment, target, cli_provider)?;
     Ok(discover(&app, target, &auth)?
         .resource_types
@@ -474,6 +514,7 @@ fn discover_remote(
             continue;
         }
         let app = load_installed(&root, &target.application)?;
+        crate::hints::validate_application_tree(&root, &project, &environment, target_name, &app)?;
         let auth = resolve_auth(&root, &project, &environment, target, cli_provider)?;
         let discovered = discover(&app, target, &auth)?;
         let baseline = baseline_path(&root, &environment, target_name);
@@ -552,6 +593,15 @@ fn remote_query(
                 vec![None]
             };
             for namespace in namespaces {
+                let metadata_track = crate::hints::resolve(
+                    root,
+                    project,
+                    environment,
+                    target_name,
+                    namespace,
+                    type_name,
+                )?
+                .track;
                 let mut resources = Vec::new();
                 match &operation.pagination {
                     Some(crate::Pagination::PageSize {
@@ -571,6 +621,7 @@ fn remote_query(
                                 &op,
                                 OperationInput {
                                     namespace,
+                                    metadata_track,
                                     ..OperationInput::default()
                                 },
                                 &auth,
@@ -616,6 +667,7 @@ fn remote_query(
                                 &op,
                                 OperationInput {
                                     namespace,
+                                    metadata_track,
                                     ..OperationInput::default()
                                 },
                                 &auth,
@@ -656,6 +708,7 @@ fn remote_query(
                         operation,
                         OperationInput {
                             namespace,
+                            metadata_track,
                             ..OperationInput::default()
                         },
                         &auth,
@@ -763,6 +816,8 @@ pub fn binding(
     environment: &str,
     target: &str,
     app: &crate::ApplicationDefinition,
+    namespace: Option<&str>,
+    resource_type: &str,
 ) -> Result<String> {
     let mut digest = Sha256::new();
     digest.update(serde_yaml::to_string(project)?);
@@ -773,7 +828,9 @@ pub fn binding(
         digest.update(major.to_be_bytes());
         digest.update(serde_yaml::to_string(catalog)?);
     }
-    let _ = root;
+    let hints =
+        crate::hints::resolve(root, project, environment, target, namespace, resource_type)?;
+    digest.update(hints.binding_material(root)?);
     Ok(hex::encode(digest.finalize()))
 }
 pub fn hash(bytes: &[u8]) -> String {

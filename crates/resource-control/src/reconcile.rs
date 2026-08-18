@@ -102,14 +102,22 @@ pub fn compare(root: &Path, selection: &Selection) -> Result<Vec<Comparison>> {
                 load_observation(&observation_path)?,
             );
         }
-        if !bindings.contains_key(&item.target) {
+        if !bindings.contains_key(&observation_path) {
             bindings.insert(
-                item.target.clone(),
-                binding(&root, &project, &environment, &item.target, application)?,
+                observation_path.clone(),
+                binding(
+                    &root,
+                    &project,
+                    &environment,
+                    &item.target,
+                    application,
+                    item.namespace.as_deref(),
+                    &item.resource_type,
+                )?,
             );
         }
         let observation = &observations[&observation_path];
-        if observation.binding != bindings[&item.target] {
+        if observation.binding != bindings[&observation_path] {
             bail!("Observed State is structurally invalid; run `taku fetch`");
         }
         let resource = observation
@@ -177,14 +185,22 @@ pub fn diff(root: &Path, selection: &Selection) -> Result<Vec<DiffEntry>> {
                 load_observation(&observation_path)?,
             );
         }
-        if !bindings.contains_key(&item.target) {
+        if !bindings.contains_key(&observation_path) {
             bindings.insert(
-                item.target.clone(),
-                binding(&root, &project, &environment, &item.target, application)?,
+                observation_path.clone(),
+                binding(
+                    &root,
+                    &project,
+                    &environment,
+                    &item.target,
+                    application,
+                    item.namespace.as_deref(),
+                    &item.resource_type,
+                )?,
             );
         }
         let observation = &observations[&observation_path];
-        if observation.binding != bindings[&item.target] {
+        if observation.binding != bindings[&observation_path] {
             bail!("Observed State is structurally invalid; run `taku fetch`");
         }
         let resource = observation
@@ -249,7 +265,15 @@ pub fn pull(
         }
         let observation = observations.get_mut(&path).unwrap();
         if observation.binding
-            != binding(&root, &project, &environment, &item.target, &application)?
+            != binding(
+                &root,
+                &project,
+                &environment,
+                &item.target,
+                &application,
+                item.namespace.as_deref(),
+                &item.resource_type,
+            )?
         {
             bail!("Observed State is structurally invalid; run `taku fetch`");
         }

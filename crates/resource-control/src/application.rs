@@ -777,6 +777,7 @@ fn validate_resource_type(resource_type: &crate::ResourceType, name: &str) -> Re
     validate_operations(&resource_type.operations, name)?;
     validate_transformations(&resource_type.transformations, name)?;
     validate_filesystem(resource_type, name)?;
+    validate_metadata(resource_type, name)?;
     for pointer in &resource_type.sensitive_fields {
         if crate::model::sensitive_field_conflicts(resource_type, pointer) {
             bail!("Sensitive Field {pointer} overlaps required canonical state for {name}");
@@ -792,6 +793,108 @@ fn validate_resource_type(resource_type: &crate::ResourceType, name: &str) -> Re
         }
     } {
         bail!("Resource Type {name} cannot enforce configured Write Intent");
+    }
+    Ok(())
+}
+
+fn pointers_overlap(left: &str, right: &str) -> bool {
+    left == right
+        || left.starts_with(&format!("{right}/"))
+        || right.starts_with(&format!("{left}/"))
+}
+
+fn valid_json_pointer(pointer: &str) -> bool {
+    if !pointer.starts_with('/') {
+        return false;
+    }
+    let mut chars = pointer.chars();
+    while let Some(character) = chars.next() {
+        if character == '~' && !matches!(chars.next(), Some('0' | '1')) {
+            return false;
+        }
+    }
+    true
+}
+
+fn validate_metadata(resource_type: &crate::ResourceType, name: &str) -> Result<()> {
+    let Some(metadata) = &resource_type.metadata else {
+        return Ok(());
+    };
+    if metadata.fields.is_empty() {
+        bail!("Resource Type {name} metadata fields cannot be empty");
+    }
+    for (index, pointer) in metadata.fields.iter().enumerate() {
+        if !valid_json_pointer(pointer) {
+            bail!(
+                "Resource Type {name} metadata field {pointer:?} is not a canonical JSON pointer"
+            );
+        }
+        if metadata.fields[..index]
+            .iter()
+            .any(|other| pointers_overlap(pointer, other))
+        {
+            bail!("Resource Type {name} metadata fields overlap at {pointer}");
+        }
+        if pointers_overlap(pointer, &resource_type.id.pointer)
+            || resource_type
+                .display_name
+                .pointers()
+                .any(|required| pointers_overlap(pointer, required))
+            || resource_type
+                .sensitive_fields
+                .iter()
+                .any(|sensitive| pointers_overlap(pointer, sensitive))
+        {
+            bail!(
+                "Resource Type {name} metadata field {pointer} overlaps required or sensitive canonical state"
+            );
+        }
+        if resource_type
+            .transformations
+            .iter()
+            .any(|transformation| match transformation {
+                crate::Transformation::Extract { pointer: other }
+                | crate::Transformation::Remove { pointer: other }
+                | crate::Transformation::Omit { pointer: other }
+                | crate::Transformation::Insert { pointer: other, .. }
+                | crate::Transformation::EmbeddedJson { pointer: other }
+                | crate::Transformation::Frame { pointer: other } => {
+                    pointers_overlap(pointer, other)
+                }
+                crate::Transformation::SingletonMap {
+                    pointer: other,
+                    key_pointer,
+                    value_pointer,
+                } => {
+                    pointers_overlap(pointer, other)
+                        || pointers_overlap(pointer, key_pointer)
+                        || pointers_overlap(pointer, value_pointer)
+                }
+            })
+        {
+            bail!("Resource Type {name} metadata field {pointer} overlaps a Transformation");
+        }
+        if let Some(frontmatter) = resource_type
+            .filesystem
+            .as_ref()
+            .and_then(|filesystem| filesystem.frontmatter_markdown.as_ref())
+        {
+            let referenced = &frontmatter.referenced_files;
+            if [
+                &frontmatter.body_pointer,
+                &referenced.pointer,
+                &referenced.path_pointer,
+                &referenced.name_pointer,
+                &referenced.content_pointer,
+            ]
+            .into_iter()
+            .any(|structural| pointers_overlap(pointer, structural))
+            {
+                bail!(
+                    "Resource Type {name} metadata field {pointer} overlaps filesystem projection state"
+                );
+            }
+        }
     }
     Ok(())
 }
@@ -1013,4 +1116,52 @@ fn supported_versions(definition: &ApplicationDefinition) -> Vec<String> {
         .values()
         .map(|catalog| catalog.application.version.clone())
         .collect()
+}
+
+#[cfg(test)]
+mod metadata_validation_tests {
+    use super::validate_resource_type;
+
+    fn resource_type(extra: &str) -> crate::ResourceType {
+        serde_yaml::from_str(&format!(
+            r#"
+id: {{ pointer: /id, scope: universal }}
+display_name: {{ strategy: id }}
+{extra}
+operations:
+  read: {{ method: GET, path: "/items/{{id}}", cardinality: one }}
+  upsert: {{ method: PUT, path: "/items/{{id}}", cardinality: one }}
+"#
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn accepts_distinct_canonical_metadata_pointers() {
+        validate_resource_type(
+            &resource_type("metadata: { fields: [/created_by, /updated_at] }"),
+            "item",
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn rejects_invalid_or_ambiguous_metadata_declarations() {
+        for extra in [
+            "metadata: { fields: [] }",
+            "metadata: { fields: [''] }",
+            "metadata: { fields: [/bad~2escape] }",
+            "metadata: { fields: [/audit, /audit] }",
+            "metadata: { fields: [/audit, /audit/user] }",
+            "metadata: { fields: [/id] }",
+            "metadata: { fields: [/name] }",
+            "sensitive_fields: [/secret]\nmetadata: { fields: [/secret/owner] }",
+            "transformations: [{ kind: remove, pointer: /server }]\nmetadata: { fields: [/server/time] }",
+        ] {
+            assert!(
+                validate_resource_type(&resource_type(extra), "item").is_err(),
+                "{extra}"
+            );
+        }
+    }
 }

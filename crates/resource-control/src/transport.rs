@@ -28,6 +28,7 @@ pub struct OperationInput<'a> {
     pub context: Option<&'a Value>,
     pub body: Option<&'a [Value]>,
     pub mutation: bool,
+    pub metadata_track: bool,
 }
 pub const INTERNAL_GUARD_POINTER: &str = "/_taku_internal_guard";
 pub const INTERNAL_CURSOR_POINTER: &str = "/_taku_internal_cursor";
@@ -164,6 +165,7 @@ pub fn execute(
         resource_type,
         input.id,
         !input.mutation || operation.trustworthy_response,
+        input.metadata_track,
     )
     .context("Transformation Conflict while converting successful response")
 }
@@ -283,6 +285,7 @@ fn map_response(
     resource_type: &ResourceType,
     id: Option<&str>,
     normalize_success: bool,
+    metadata_track: bool,
 ) -> Result<RemoteResult> {
     let status = response.status();
     let outcome = operation
@@ -352,7 +355,7 @@ fn map_response(
                 for pointer in &resource_type.sensitive_fields {
                     remove_pointer(&mut value, pointer)?;
                 }
-                apply_inbound(&mut value, resource_type)?;
+                value = inbound(&value, resource_type, metadata_track)?;
                 if let Some(id) = id
                     && pointer_string(&value, &resource_type.id.pointer).is_none()
                     && !operation.skip_unidentified
@@ -496,15 +499,40 @@ fn apply_inbound(value: &mut Value, resource_type: &ResourceType) -> Result<()> 
     Ok(())
 }
 
+pub(crate) fn inbound(
+    value: &Value,
+    resource_type: &ResourceType,
+    metadata_track: bool,
+) -> Result<Value> {
+    let mut value = value.clone();
+    apply_inbound(&mut value, resource_type)?;
+    if !metadata_track && let Some(metadata) = &resource_type.metadata {
+        for pointer in &metadata.fields {
+            remove_pointer(&mut value, pointer)?;
+        }
+    }
+    Ok(value)
+}
+
 pub fn outbound(
     value: &Value,
     resource_type: &ResourceType,
     operation: Option<&Operation>,
 ) -> Result<Value> {
-    let mut value = value.clone();
+    let mut value = without_metadata(value, resource_type)?;
     apply_outbound(&mut value, &resource_type.transformations)?;
     if let Some(operation) = operation {
         apply_outbound(&mut value, &operation.transformations)?;
+    }
+    Ok(value)
+}
+
+pub(crate) fn without_metadata(value: &Value, resource_type: &ResourceType) -> Result<Value> {
+    let mut value = value.clone();
+    if let Some(metadata) = &resource_type.metadata {
+        for pointer in &metadata.fields {
+            remove_pointer(&mut value, pointer)?;
+        }
     }
     Ok(value)
 }
@@ -648,8 +676,8 @@ pub fn remove_pointer(root: &mut Value, pointer: &str) -> Result<()> {
 
 #[cfg(test)]
 mod namespace_path_tests {
-    use super::{operation_path, render_path};
-    use crate::Operation;
+    use super::{inbound, operation_path, outbound, render_path};
+    use crate::{Operation, ResourceType};
 
     #[test]
     fn namespace_suffix_wraps_only_named_namespaces() {
@@ -670,5 +698,54 @@ cardinality: many
         );
         assert_eq!(operation_path(&operation, Some("default")), "/api/widgets");
         assert_eq!(operation_path(&operation, None), "/api/widgets");
+    }
+
+    fn metadata_type() -> ResourceType {
+        serde_yaml::from_str(
+            r#"
+id: { pointer: /id, scope: universal }
+display_name: { strategy: id }
+metadata: { fields: [/audit/created_by, /updated_at] }
+transformations: [{ kind: extract, pointer: /document }]
+operations: {}
+"#,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn inbound_metadata_is_removed_only_when_directory_tracking_is_disabled() {
+        let response = serde_json::json!({
+            "document": {"id": "one", "name": "One", "audit": {"created_by": "sam"}}
+        });
+        assert_eq!(
+            inbound(&response, &metadata_type(), false).unwrap(),
+            serde_json::json!({"id": "one", "name": "One", "audit": {}})
+        );
+        assert_eq!(
+            inbound(&response, &metadata_type(), true).unwrap(),
+            serde_json::json!({"id": "one", "name": "One", "audit": {"created_by": "sam"}})
+        );
+    }
+
+    #[test]
+    fn outbound_metadata_is_removed_before_resource_and_operation_framing() {
+        let operation: Operation = serde_yaml::from_str(
+            r#"
+method: PUT
+path: /items
+cardinality: one
+transformations: [{ kind: extract, pointer: /payload }]
+"#,
+        )
+        .unwrap();
+        let value = serde_json::json!({
+            "id": "one", "name": "One", "audit": {"created_by": "sam"}, "updated_at": "today"
+        });
+
+        assert_eq!(
+            outbound(&value, &metadata_type(), Some(&operation)).unwrap(),
+            serde_json::json!({"payload": {"document": {"id": "one", "name": "One", "audit": {}}}})
+        );
     }
 }

@@ -65,6 +65,15 @@ pub fn add_remote(
         let auth = resolve_auth(&root, &project, &item.environment, target, provider)?;
         let discovered = discover(&app, target, &auth)?;
         let rt = &discovered.resource_types[&item.resource_type];
+        let metadata_track = crate::hints::resolve(
+            &root,
+            &project,
+            &item.environment,
+            &item.target,
+            item.namespace.as_deref(),
+            &item.resource_type,
+        )?
+        .track;
         if let Some(read) = &rt.operations.read {
             item.value = match execute_retry_safe(
                 target,
@@ -77,6 +86,7 @@ pub fn add_remote(
                     context: Some(&item.value),
                     body: None,
                     mutation: false,
+                    metadata_track,
                 },
                 &auth,
             )? {
@@ -505,7 +515,21 @@ pub fn promote(
             )
             .join(filename);
             let resource_type = &destination_application.resource_types[&item.resource_type];
-            write_canonical_resource(&destination_path, &item.value, resource_type)?;
+            let hints = crate::hints::resolve(
+                &root,
+                &project,
+                &destination,
+                &to,
+                item.namespace.as_deref(),
+                &item.resource_type,
+            )?;
+            crate::hints::validate_tracking(resource_type, &hints, &item.resource_type)?;
+            let value = if hints.track {
+                item.value.clone()
+            } else {
+                crate::transport::without_metadata(&item.value, resource_type)?
+            };
+            write_canonical_resource(&destination_path, &value, resource_type)?;
             out.push(PromotionResult {
                 from_environment: source.clone(),
                 to_environment: destination.clone(),
@@ -601,7 +625,21 @@ pub fn promote_projects(
         )
         .join(filename);
         let resource_type = &destination_resolved.resource_types[&item.resource_type];
-        write_canonical_resource(&path, &item.value, resource_type)?;
+        let hints = crate::hints::resolve(
+            &destination_root,
+            &destination_project,
+            &destination_environment,
+            to_target,
+            item.namespace.as_deref(),
+            &item.resource_type,
+        )?;
+        crate::hints::validate_tracking(resource_type, &hints, &item.resource_type)?;
+        let value = if hints.track {
+            item.value.clone()
+        } else {
+            crate::transport::without_metadata(&item.value, resource_type)?
+        };
+        write_canonical_resource(&path, &value, resource_type)?;
         out.push(PromotionResult {
             from_environment: source_environment.clone(),
             to_environment: destination_environment.clone(),

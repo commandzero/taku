@@ -3,6 +3,7 @@
 mod application;
 mod canonical;
 mod completion;
+mod hints;
 mod lifecycle;
 mod model;
 mod observe;

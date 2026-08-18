@@ -11,7 +11,7 @@ use crate::reconcile::PushResult;
 use crate::resolution::{baseline_from, baseline_path, discover, from_baseline, load_baseline};
 use crate::transport::{
     INTERNAL_GUARD_POINTER, OperationInput, RemoteResult, execute, execute_retry_safe, outbound,
-    remove_pointer,
+    remove_pointer, without_metadata,
 };
 use crate::{
     ApplicationDefinition, ConcurrencyClass, GitPolicy, MissingPolicy, Operation, ResourceType,
@@ -38,6 +38,7 @@ struct PreparedResource {
     operation: Operation,
     auth: SecretFields,
     observation_path: PathBuf,
+    metadata_track: bool,
 }
 impl PreparedResource {
     fn group(&self) -> GroupKey {
@@ -173,6 +174,15 @@ pub fn push(
             );
         }
         let resource_type = discovered.resource_types[&item.resource_type].clone();
+        let hints = crate::hints::resolve(
+            &root,
+            &project,
+            &environment,
+            &item.target,
+            item.namespace.as_deref(),
+            &item.resource_type,
+        )?;
+        binding_parts.push(hex::encode(hints.binding_material(&root)?));
         binding_parts.push(format!(
             "{}:{}:{}:{}",
             item.target,
@@ -197,7 +207,17 @@ pub fn push(
             );
         }
         let observation_file = &observation_files[&observation_path];
-        if observation_file.binding != binding(&root, &project, &environment, &item.target, &app)? {
+        if observation_file.binding
+            != binding(
+                &root,
+                &project,
+                &environment,
+                &item.target,
+                &app,
+                item.namespace.as_deref(),
+                &item.resource_type,
+            )?
+        {
             bail!("Observed State is structurally invalid; run `taku fetch`");
         }
         let observation = observation_file
@@ -212,9 +232,13 @@ pub fn push(
                 &app,
                 &resource_type,
                 &auth,
-                item.namespace.as_deref(),
-                &item.id,
-                Some(&item.value),
+                OperationInput {
+                    namespace: item.namespace.as_deref(),
+                    id: Some(&item.id),
+                    context: Some(&item.value),
+                    metadata_track: hints.track,
+                    ..OperationInput::default()
+                },
             ) {
                 Ok(current) => current,
                 Err(_) => {
@@ -233,14 +257,14 @@ pub fn push(
         if current.present
             && resource_type.write_intent != WriteIntent::Create
             && current.value.as_ref().is_some_and(|value| {
-                hash(
-                    &canonical_bytes(&owned_value(
-                        value,
-                        &item.value,
-                        resource_type.mutation_mode,
-                    ))
-                    .unwrap_or_default(),
-                ) == hash(&canonical_bytes(&item.value).unwrap_or_default())
+                let desired = without_metadata(&item.value, &resource_type).unwrap_or_default();
+                let observed = without_metadata(
+                    &owned_value(value, &item.value, resource_type.mutation_mode),
+                    &resource_type,
+                )
+                .unwrap_or_default();
+                hash(&canonical_bytes(&observed).unwrap_or_default())
+                    == hash(&canonical_bytes(&desired).unwrap_or_default())
             })
         {
             reports.push(report(
@@ -332,6 +356,7 @@ pub fn push(
             operation,
             auth,
             observation_path,
+            metadata_track: hints.track,
         });
     }
     let mut prepared_deletions = Vec::new();
@@ -355,6 +380,15 @@ pub fn push(
             );
         }
         let resource_type = discovered.resource_types[&marker.resource_type].clone();
+        let hints = crate::hints::resolve(
+            &root,
+            &project,
+            &environment,
+            &marker.target,
+            marker.namespace.as_deref(),
+            &marker.resource_type,
+        )?;
+        binding_parts.push(hex::encode(hints.binding_material(&root)?));
         let read = resource_type
             .operations
             .read
@@ -743,6 +777,7 @@ fn execute_resource(
                 context: Some(&task.item.value),
                 body: Some(std::slice::from_ref(&wire)),
                 mutation: true,
+                metadata_track: task.metadata_track,
             },
             &task.auth,
         )
@@ -880,6 +915,7 @@ fn execute_many(
                 context: Some(&first.item.value),
                 body: Some(&wires),
                 mutation: true,
+                metadata_track: first.metadata_track,
             },
             &first.auth,
         )
@@ -975,29 +1011,15 @@ fn read_current(
     app: &ApplicationDefinition,
     resource_type: &ResourceType,
     auth: &SecretFields,
-    namespace: Option<&str>,
-    id: &str,
-    desired: Option<&serde_json::Value>,
+    input: OperationInput<'_>,
 ) -> Result<CurrentRemote> {
+    let id = input.id.context("targeted Read Operation requires an ID")?;
     let read = resource_type
         .operations
         .read
         .as_ref()
         .context("Write Intent or guarded concurrency requires a Read Operation")?;
-    match execute_retry_safe(
-        target,
-        app,
-        resource_type,
-        read,
-        OperationInput {
-            namespace,
-            id: Some(id),
-            context: desired,
-            body: None,
-            mutation: false,
-        },
-        auth,
-    )? {
+    match execute_retry_safe(target, app, resource_type, read, input, auth)? {
         RemoteResult::NotFound => Ok(CurrentRemote {
             present: false,
             value: None,
@@ -1038,6 +1060,7 @@ fn verify_deletion(task: &PreparedDeletion) -> Result<DeletionVerification> {
             context: Some(&parameters),
             body: None,
             mutation: false,
+            metadata_track: false,
         },
         &task.auth,
     )? {
@@ -1106,6 +1129,7 @@ fn execute_deletion(
                     context: Some(&parameters),
                     body: None,
                     mutation: true,
+                    metadata_track: false,
                 },
                 &task.auth,
             )?
@@ -1346,8 +1370,52 @@ fn selected_git_changes(
     items: &[InventoryEntry],
     marker_paths: &[String],
 ) -> Result<(bool, bool)> {
-    let mut paths: Vec<&str> = items.iter().map(|item| item.path.as_str()).collect();
-    paths.extend(marker_paths.iter().map(String::as_str));
+    let project = load_project(root)?;
+    let mut paths = std::collections::BTreeSet::new();
+    for item in items {
+        paths.insert(item.path.clone());
+        let target_hint =
+            crate::canonical::target_root(root, &project, &item.environment, &item.target)
+                .join(crate::hints::TARGET_HINT_NAME);
+        paths.insert(target_hint.strip_prefix(root)?.display().to_string());
+        if let Some(parent) = root.join(&item.path).parent() {
+            paths.insert(
+                parent
+                    .join(crate::hints::RESOURCE_HINT_NAME)
+                    .strip_prefix(root)?
+                    .display()
+                    .to_string(),
+            );
+        }
+    }
+    for marker in marker_paths {
+        paths.insert(marker.clone());
+        let marker_path = root.join(marker);
+        if let Some(parent) = marker_path.parent() {
+            paths.insert(
+                parent
+                    .join(crate::hints::RESOURCE_HINT_NAME)
+                    .strip_prefix(root)?
+                    .display()
+                    .to_string(),
+            );
+        }
+        let components = Path::new(marker).components().collect::<Vec<_>>();
+        let target_hint = match project.layout {
+            crate::RepositoryLayout::Single => components.first().map(|component| {
+                root.join(component.as_os_str())
+                    .join(crate::hints::TARGET_HINT_NAME)
+            }),
+            crate::RepositoryLayout::Multi => (components.len() >= 2).then(|| {
+                root.join(components[0].as_os_str())
+                    .join(components[1].as_os_str())
+                    .join(crate::hints::TARGET_HINT_NAME)
+            }),
+        };
+        if let Some(target_hint) = target_hint {
+            paths.insert(target_hint.strip_prefix(root)?.display().to_string());
+        }
+    }
     if paths.is_empty() {
         return Ok((false, false));
     }

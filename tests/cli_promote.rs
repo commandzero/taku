@@ -101,21 +101,41 @@ fn promotes_complete_universal_resources_through_destination_owned_mapping() {
     let source = project.path().join("dev/source/ingest_pipelines");
     std::fs::create_dir_all(&source).unwrap();
     std::fs::write(
-        source.join("Pipeline.json"),
-        serde_json::to_string_pretty(&json!({"id":"pipe-1","name":"Pipeline","processors":[]}))
-            .unwrap(),
+        source.join(".resource.yaml"),
+        "schema_version: 1\nmetadata: { track: true }\n",
     )
     .unwrap();
+    std::fs::write(
+        source.join("Pipeline.json"),
+        serde_json::to_string_pretty(&json!({
+            "id":"pipe-1",
+            "name":"Pipeline",
+            "processors":[],
+            "created_date_millis": 1000
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    let destination_directory = project.path().join("prod/destination/ingest_pipelines");
+    std::fs::create_dir_all(&destination_directory).unwrap();
+    let destination_hint = destination_directory.join(".resource.yaml");
+    let destination_hint_bytes = "schema_version: 1\nmetadata: { track: false }\n";
+    std::fs::write(&destination_hint, destination_hint_bytes).unwrap();
     let result = run(&project, &["promote"]);
     assert_eq!(result["result"][0]["outcome"], "promoted");
     let destination = project
         .path()
         .join("prod/destination/ingest_pipelines/Pipeline.json");
     assert!(destination.is_file());
+    let promoted =
+        serde_json::from_str::<Value>(&std::fs::read_to_string(destination).unwrap()).unwrap();
+    assert_eq!(promoted["id"], "pipe-1");
+    assert!(promoted.get("created_date_millis").is_none());
     assert_eq!(
-        serde_json::from_str::<Value>(&std::fs::read_to_string(destination).unwrap()).unwrap()["id"],
-        "pipe-1"
+        std::fs::read_to_string(destination_hint).unwrap(),
+        destination_hint_bytes
     );
+    assert!(source.join(".resource.yaml").is_file());
 }
 
 #[test]

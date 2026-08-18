@@ -948,3 +948,157 @@ fn fetch_status_pull_and_push_use_generic_operations_without_leaking_secrets() {
     assert!(!put.body.contains("modified_date_millis"));
     assert!(!put.body.contains("NEVER-PERSIST"));
 }
+
+#[test]
+fn target_hint_tracks_metadata_for_git_but_push_never_sends_it() {
+    let target = FakeTarget::start();
+    let project = setup(&target);
+    std::fs::write(
+        project.path().join("es/.target.yaml"),
+        "schema_version: 1\nmetadata: { track: true }\n",
+    )
+    .unwrap();
+    let desired = project.path().join("es/ingest_pipelines/Pipeline.json");
+
+    run(&project, &["fetch"]);
+    let cache = std::fs::read_to_string(
+        project
+            .path()
+            .join(".taku/cache/dev/es/ingest_pipelines.yml"),
+    )
+    .unwrap();
+    assert!(cache.contains("created_date_millis"));
+    assert!(cache.contains("modified_date_millis"));
+    run(&project, &["pull", "--yes"]);
+
+    let mut changed: Value =
+        serde_json::from_str(&std::fs::read_to_string(&desired).unwrap()).unwrap();
+    changed["created_date_millis"] = json!(9999);
+    std::fs::write(&desired, serde_json::to_string_pretty(&changed).unwrap()).unwrap();
+    let pushed = run(
+        &project,
+        &["push", "--uncommitted", "allow", "--untracked", "allow"],
+    );
+    assert_eq!(pushed["result"][0]["outcome"], "in_sync");
+    assert!(
+        target
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|request| request.method != "PUT")
+    );
+
+    changed["description"] = json!("published with provenance");
+    std::fs::write(&desired, serde_json::to_string_pretty(&changed).unwrap()).unwrap();
+    run(
+        &project,
+        &["push", "--uncommitted", "allow", "--untracked", "allow"],
+    );
+    let requests = target.requests.lock().unwrap();
+    let put = requests
+        .iter()
+        .find(|request| request.method == "PUT")
+        .unwrap();
+    assert!(put.body.contains("published with provenance"));
+    assert!(!put.body.contains("created_date_millis"));
+    assert!(!put.body.contains("modified_date_millis"));
+}
+
+#[test]
+fn changing_an_applicable_hint_after_fetch_invalidates_observed_state() {
+    let target = FakeTarget::start();
+    let project = setup(&target);
+    run(&project, &["fetch"]);
+    std::fs::write(
+        project.path().join("es/.target.yaml"),
+        "schema_version: 1\nmetadata: { track: true }\n",
+    )
+    .unwrap();
+
+    let pushed = output(
+        &project,
+        &["push", "--uncommitted", "allow", "--untracked", "allow"],
+    );
+    assert!(!pushed.status.success());
+    assert!(
+        String::from_utf8_lossy(&pushed.stderr).contains("Observed State is structurally invalid")
+    );
+}
+
+#[test]
+fn scoped_push_checks_only_applicable_hint_git_state() {
+    let target = FakeTarget::start();
+    let project = setup(&target);
+    let target_hint = project.path().join("es/.target.yaml");
+    std::fs::write(
+        &target_hint,
+        "schema_version: 1\nmetadata: { track: false }\n",
+    )
+    .unwrap();
+    run(&project, &["fetch", "es", "ingest_pipelines"]);
+    run(&project, &["pull", "es", "ingest_pipelines", "--yes"]);
+    assert!(
+        StdCommand::new("git")
+            .args(["add", "-A"])
+            .current_dir(project.path())
+            .status()
+            .unwrap()
+            .success()
+    );
+    assert!(
+        StdCommand::new("git")
+            .args([
+                "-c",
+                "user.name=Taku Tests",
+                "-c",
+                "user.email=taku@example.test",
+                "commit",
+                "-qm",
+                "fixture",
+            ])
+            .current_dir(project.path())
+            .status()
+            .unwrap()
+            .success()
+    );
+
+    std::fs::write(
+        &target_hint,
+        "schema_version: 1\nmetadata:\n  track: false\n",
+    )
+    .unwrap();
+    let blocked = output(&project, &["push", "es", "ingest_pipelines"]);
+    assert!(!blocked.status.success());
+    assert!(String::from_utf8_lossy(&blocked.stderr).contains("uncommitted"));
+
+    std::fs::write(
+        &target_hint,
+        "schema_version: 1\nmetadata: { track: false }\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(project.path().join("es/roles")).unwrap();
+    std::fs::write(
+        project.path().join("es/roles/.resource.yaml"),
+        "schema_version: 1\nmetadata: { track: true }\n",
+    )
+    .unwrap();
+    let pushed = run(&project, &["push", "es", "ingest_pipelines"]);
+    assert_eq!(pushed["result"][0]["outcome"], "in_sync");
+}
+
+#[test]
+fn forgetting_the_last_resource_preserves_a_hint_only_type_directory() {
+    let target = FakeTarget::start();
+    let project = setup(&target);
+    let directory = project.path().join("es/ingest_pipelines");
+    let hint = directory.join(".resource.yaml");
+    let bytes = "schema_version: 1\nmetadata: { track: false }\n";
+    std::fs::write(&hint, bytes).unwrap();
+
+    run(&project, &["forget", "es", "ingest_pipelines", "pipe-1"]);
+
+    assert!(directory.is_dir());
+    assert_eq!(std::fs::read_to_string(hint).unwrap(), bytes);
+    assert_eq!(std::fs::read_dir(directory).unwrap().count(), 1);
+}

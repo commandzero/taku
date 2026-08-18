@@ -12,6 +12,14 @@ _Avoid_: Git repository, working directory
 A schema-valid Project file that Taku identifies as selected configuration, an installed Application definition, a Resource, or a Deletion Marker. Git-state policies and remote operations ignore unrelated repository files.
 _Avoid_: arbitrary repository file, glob match
 
+**Directory Hint**:
+A repository-owned policy attached to one physical Target or Resource Type directory, with its scope and identity supplied by that directory's location.
+_Avoid_: Project overlay, Application default
+
+**Resource Metadata**:
+API-owned information in a Resource's Canonical Representation that may be retained for provenance but is never locally authoritative or writable.
+_Avoid_: Managed Field, local metadata
+
 **Repository Layout**:
 The Project structure selected at initialization: Single omits an Environment directory and records its name in project metadata, while Multi begins each Resource tree with its Environment name.
 _Avoid_: Overlay, auto-detected layout

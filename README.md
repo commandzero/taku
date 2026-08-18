@@ -57,6 +57,48 @@ Tracked Taku metadata lives under `.taku/`:
 
 Context, Application Source cache, Observed State, and Push Journals are ignored. In a Single layout, non-namespaced Resources normally use `target/type/name.json`; in a Multi layout they normally use `environment/target/type/name.json`. Resource Types that opt into namespacing add an explicit Namespace segment, including a literal `default` directory. A Resource Type may instead configure a Filesystem Projection, making one Resource a directory tree such as `target/namespace/skills/skill-id/SKILL.md`. The stable Resource ID remains in the merged Resource Object and is never inferred from the filesystem path. Namespace lifecycle is managed by an ordinary non-namespaced Resource Type defined by the Application, such as Kibana `spaces`.
 
+### Directory hints and Resource metadata
+
+An Application catalog may classify API-owned Canonical fields that are useful for provenance but must never be sent back:
+
+```yaml
+metadata:
+  fields: [/created_by, /updated_at]
+```
+
+Repositories opt into tracking those fields with closed, versioned Directory Hints. A Target default lives at its Target root:
+
+```text
+# Single                         # Multi
+<target>/.target.yaml           <environment>/<target>/.target.yaml
+```
+
+A physical Resource Type override lives beside its Resources. Namespaced Types therefore have an independent override per Namespace:
+
+```text
+# Non-namespaced Single / Multi
+<target>/<type>/.resource.yaml
+<environment>/<target>/<type>/.resource.yaml
+
+# Namespaced Single / Multi
+<target>/<namespace>/<type>/.resource.yaml
+<environment>/<target>/<namespace>/<type>/.resource.yaml
+```
+
+Both files have the same minimal shape and reject unknown fields:
+
+```yaml
+schema_version: 1
+metadata:
+  track: true
+```
+
+The closest value wins: `.resource.yaml`, then `.target.yaml`, then the default `false`. The path supplies all identity; hints contain no Environment, Target, Namespace, Application, or Resource Type selectors. For a projected Resource, `.resource.yaml` belongs in the parent Type directory, never inside an individual Resource directory.
+
+With tracking disabled, Fetch removes declared metadata before comparison and Pull persistence. With tracking enabled, Status and Diff expose remote metadata drift and Pull writes it to the Canonical Resource. Push always removes declared metadata from equality and from create, update, upsert, and bundled wire payloads, so metadata remains remote-owned under either policy.
+
+Hints are tracked configuration inputs: applicable files participate in Push Git-state checks and raw observation/journal bindings, while hints outside a scoped Push do not. Add, Fetch, Pull, Remove, and Forget never create, rewrite, or delete hints; forgetting the last Resource may leave a hint-only Type directory. Target Rename moves the complete directory. Promotion never copies source hints and normalizes the promoted Resource using only the destination hints.
+
 Project metadata defines Environments and their named Targets:
 
 ```yaml

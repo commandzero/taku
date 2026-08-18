@@ -1,5 +1,5 @@
 schema_version: 1
-version: "1.2.0"
+version: "1.3.0"
 application:
   name: elasticsearch
   version: ">=9.0.0, <10.0.0"
@@ -10,9 +10,8 @@ resource_types:
       write_intent: upsert
       mutation_mode: replace
       sensitive_fields: [/_secret]
+      metadata: { fields: [/created_date_millis, /modified_date_millis] }
       transformations:
-        - { kind: remove, pointer: /created_date_millis }
-        - { kind: remove, pointer: /modified_date_millis }
         - { kind: omit, pointer: /id }
       operations:
         read: { method: GET, path: "/_ingest/pipeline/{id}", cardinality: one, extract: "/{id}" }
@@ -26,11 +25,8 @@ resource_types:
       display_name: { pointer: /id, strategy: name, unique: true }
       write_intent: update
       mutation_mode: replace
+      metadata: { fields: [/version, /modified_date, /modified_date_millis, /in_use_by] }
       transformations:
-        - { kind: remove, pointer: /version }
-        - { kind: remove, pointer: /modified_date }
-        - { kind: remove, pointer: /modified_date_millis }
-        - { kind: remove, pointer: /in_use_by }
         - { kind: omit, pointer: /id }
       operations:
         read: { method: GET, path: "/_ilm/policy/{id}", cardinality: one, extract: "/{id}", retry_safe: true, concurrency: parallel }
@@ -48,9 +44,7 @@ resource_types:
       display_name: { pointer: /name, strategy: name, unique: true }
       write_intent: upsert
       mutation_mode: replace
-      transformations:
-        - { kind: remove, pointer: /component_template/created_date_millis }
-        - { kind: remove, pointer: /component_template/modified_date_millis }
+      metadata: { fields: [/component_template/created_date_millis, /component_template/modified_date_millis] }
       operations:
         read: { method: GET, path: "/_component_template/{id}", cardinality: one, extract: "/component_templates/0", retry_safe: true, concurrency: parallel }
         list: { method: GET, path: "/_component_template", cardinality: many, extract: "/component_templates", retry_safe: true, concurrency: parallel }
@@ -73,9 +67,7 @@ resource_types:
       write_intent: upsert
       mutation_mode: replace
       dependencies: [component_templates]
-      transformations:
-        - { kind: remove, pointer: /index_template/created_date_millis }
-        - { kind: remove, pointer: /index_template/modified_date_millis }
+      metadata: { fields: [/index_template/created_date_millis, /index_template/modified_date_millis] }
       operations:
         read: { method: GET, path: "/_index_template/{id}", cardinality: one, extract: "/index_templates/0", retry_safe: true, concurrency: parallel }
         list: { method: GET, path: "/_index_template", cardinality: many, extract: "/index_templates", retry_safe: true, concurrency: parallel }
@@ -97,8 +89,8 @@ resource_types:
       display_name: { pointer: /id, strategy: name, unique: true }
       write_intent: upsert
       mutation_mode: replace
+      metadata: { fields: [/transient_metadata] }
       transformations:
-        - { kind: remove, pointer: /transient_metadata }
         - { kind: omit, pointer: /id }
       operations:
         read: { method: GET, path: "/_security/role/{id}", cardinality: one, extract: "/{id}", retry_safe: true, concurrency: parallel }
@@ -110,10 +102,8 @@ resource_types:
       display_name: { pointer: /id, strategy: name, unique: true }
       write_intent: upsert
       mutation_mode: replace
+      metadata: { fields: [/uuid, /generation, /pending_generation] }
       transformations:
-        - { kind: remove, pointer: /uuid }
-        - { kind: remove, pointer: /generation }
-        - { kind: remove, pointer: /pending_generation }
         - { kind: omit, pointer: /id }
       operations:
         read: { method: GET, path: "/_snapshot/{id}", cardinality: one, extract: "/{id}", retry_safe: true, concurrency: parallel }
@@ -151,14 +141,8 @@ resource_types:
       write_intent: upsert
       mutation_mode: replace
       dependencies: [snapshot_repositories]
+      metadata: { fields: [/version, /modified_date, /modified_date_millis, /next_execution, /next_execution_millis, /stats, /in_progress] }
       transformations:
-        - { kind: remove, pointer: /version }
-        - { kind: remove, pointer: /modified_date }
-        - { kind: remove, pointer: /modified_date_millis }
-        - { kind: remove, pointer: /next_execution }
-        - { kind: remove, pointer: /next_execution_millis }
-        - { kind: remove, pointer: /stats }
-        - { kind: remove, pointer: /in_progress }
         - { kind: omit, pointer: /id }
       operations:
         read: { method: GET, path: "/_slm/policy/{id}", cardinality: one, extract: "/{id}", retry_safe: true, concurrency: parallel }
@@ -176,8 +160,7 @@ resource_types:
       display_name: { pointer: /name, strategy: name, unique: true }
       write_intent: upsert
       mutation_mode: replace
-      transformations:
-        - { kind: remove, pointer: /pattern/active }
+      metadata: { fields: [/pattern/active] }
       operations:
         read: { method: GET, path: "/_ccr/auto_follow/{id}", cardinality: one, extract: "/patterns/0", retry_safe: true, concurrency: parallel }
         list: { method: GET, path: "/_ccr/auto_follow", cardinality: many, extract: "/patterns", retry_safe: true, concurrency: parallel }

@@ -255,6 +255,56 @@ fn manages_an_elasticsearch_ingest_pipeline_through_its_real_api() {
 
 #[test]
 #[ignore = "requires Elasticsearch on localhost:9200 and ELASTIC_API_KEY in .env"]
+fn tracks_elasticsearch_metadata_with_a_resource_type_hint() {
+    let authorization = authorization();
+    let id = unique_id("metadata-pipeline");
+    let client = Client::new();
+    let url = format!("{ELASTICSEARCH_URL}/_ingest/pipeline/{id}");
+    assert!(
+        client
+            .put(&url)
+            .header(AUTHORIZATION, &authorization)
+            .json(&json!({"description": "metadata fixture", "processors": []}))
+            .send()
+            .unwrap()
+            .status()
+            .is_success()
+    );
+    let fixture = RemoteFixture {
+        client,
+        authorization: authorization.clone(),
+        delete_url: url,
+        kibana: false,
+    };
+    let project = project("elasticsearch", "es", ELASTICSEARCH_URL, &authorization);
+    let directory = project.path().join("es/ingest_pipelines");
+    std::fs::create_dir_all(&directory).unwrap();
+    std::fs::write(
+        directory.join(".resource.yaml"),
+        "schema_version: 1\nmetadata: { track: true }\n",
+    )
+    .unwrap();
+
+    run(
+        &project,
+        &authorization,
+        &["add", "es", "ingest_pipelines", &id],
+    );
+    let resource = std::fs::read_dir(&directory)
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .find(|path| path.file_name().and_then(|name| name.to_str()) != Some(".resource.yaml"))
+        .unwrap();
+    let value: Value = serde_json::from_str(&std::fs::read_to_string(resource).unwrap()).unwrap();
+    assert!(value.get("created_date_millis").is_some());
+    assert!(value.get("modified_date_millis").is_some());
+
+    drop(fixture);
+}
+
+#[test]
+#[ignore = "requires Elasticsearch on localhost:9200 and ELASTIC_API_KEY in .env"]
 fn reads_all_declarative_elasticsearch_resource_types_from_real_apis() {
     let authorization = authorization();
     let project = project("elasticsearch", "es", ELASTICSEARCH_URL, &authorization);

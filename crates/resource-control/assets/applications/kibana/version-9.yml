@@ -1,5 +1,5 @@
 schema_version: 1
-version: "1.5.0"
+version: "1.6.0"
 application:
   name: kibana
   version: ">=9.0.0, <10.0.0"
@@ -70,14 +70,7 @@ resource_types:
       namespaced: true
       write_intent: upsert
       dependencies: [spaces]
-      transformations:
-        - { kind: remove, pointer: /createdAt }
-        - { kind: remove, pointer: /createdBy }
-        - { kind: remove, pointer: /lastUpdatedAt }
-        - { kind: remove, pointer: /lastUpdatedBy }
-        - { kind: remove, pointer: /valid }
-        - { kind: remove, pointer: /validationErrors }
-        - { kind: remove, pointer: /history }
+      metadata: { fields: [/createdAt, /createdBy, /lastUpdatedAt, /lastUpdatedBy, /valid, /validationErrors, /history] }
       operations:
         read:
           method: GET
@@ -124,9 +117,7 @@ resource_types:
       namespaced: true
       write_intent: upsert
       dependencies: [spaces, workflows]
-      transformations:
-        - { kind: remove, pointer: /readonly }
-        - { kind: remove, pointer: /schema }
+      metadata: { fields: [/readonly, /schema] }
       operations:
         read: { method: GET, path: "/api/agent_builder/tools/{id}", namespace: { prefix: "/s/{namespace}" }, cardinality: one, retry_safe: true, concurrency: parallel }
         list: { method: GET, path: "/api/agent_builder/tools", namespace: { prefix: "/s/{namespace}" }, cardinality: many, extract: /results, retry_safe: true, concurrency: parallel }
@@ -159,13 +150,7 @@ resource_types:
             name_pointer: /name
             content_pointer: /content
             extension: md
-      transformations:
-        - { kind: remove, pointer: /readonly }
-        - { kind: remove, pointer: /schema }
-        - { kind: remove, pointer: /built_in }
-        - { kind: remove, pointer: /source }
-        - { kind: remove, pointer: /created_at }
-        - { kind: remove, pointer: /updated_at }
+      metadata: { fields: [/readonly, /schema, /built_in, /source, /created_at, /updated_at] }
       operations:
         read: { method: GET, path: "/api/agent_builder/skills/{id}", namespace: { prefix: "/s/{namespace}" }, cardinality: one, retry_safe: true, concurrency: parallel }
         list: { method: GET, path: "/api/agent_builder/skills", namespace: { prefix: "/s/{namespace}" }, cardinality: many, extract: /results, retry_safe: true, concurrency: parallel }
@@ -185,14 +170,7 @@ resource_types:
       namespaced: true
       write_intent: create
       dependencies: [spaces]
-      transformations:
-        - { kind: remove, pointer: /created_at }
-        - { kind: remove, pointer: /updated_at }
-        - { kind: remove, pointer: /description }
-        - { kind: remove, pointer: /manifest }
-        - { kind: remove, pointer: /skill_ids }
-        - { kind: remove, pointer: /unmanaged_assets }
-        - { kind: remove, pointer: /version }
+      metadata: { fields: [/created_at, /updated_at, /description, /manifest, /skill_ids, /unmanaged_assets, /version] }
       operations:
         read: { method: GET, path: "/api/agent_builder/plugins/{id}", namespace: { prefix: "/s/{namespace}" }, cardinality: one, retry_safe: true, concurrency: parallel }
         list: { method: GET, path: "/api/agent_builder/plugins", namespace: { prefix: "/s/{namespace}" }, cardinality: many, extract: /results, retry_safe: true, concurrency: parallel }
@@ -211,9 +189,7 @@ resource_types:
       namespaced: true
       write_intent: upsert
       dependencies: [spaces, tools, skills, plugins]
-      transformations:
-        - { kind: remove, pointer: /readonly }
-        - { kind: remove, pointer: /schema }
+      metadata: { fields: [/readonly, /schema] }
       operations:
         read: { method: GET, path: "/api/agent_builder/agents/{id}", namespace: { prefix: "/s/{namespace}" }, cardinality: one, retry_safe: true, concurrency: parallel }
         list: { method: GET, path: "/api/agent_builder/agents", namespace: { prefix: "/s/{namespace}" }, cardinality: many, extract: /results, retry_safe: true, concurrency: parallel }

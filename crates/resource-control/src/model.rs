@@ -193,6 +193,8 @@ pub struct ResourceType {
     pub missing: MissingDefaults,
     #[serde(default)]
     pub sensitive_fields: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<ResourceTypeMetadata>,
     #[serde(default)]
     pub transformations: Vec<Transformation>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -200,6 +202,12 @@ pub struct ResourceType {
     #[serde(default)]
     pub dependencies: Vec<String>,
     pub operations: Operations,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ResourceTypeMetadata {
+    pub fields: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -420,7 +428,9 @@ pub struct Multipart {
 
 #[cfg(test)]
 mod configuration_tests {
-    use super::{ApplicationDefinition, Operation, PayloadFormat};
+    use super::{
+        ApplicationDefinition, Operation, PayloadFormat, ResourceType, ResourceTypeMetadata,
+    };
 
     #[test]
     fn parses_explicit_multipart_bundle_and_query() {
@@ -469,6 +479,48 @@ application: { name: example }
 target_profile: {}
 version_endpoints: []
 "#;
+        assert!(serde_yaml::from_str::<ApplicationDefinition>(yaml).is_err());
+    }
+
+    #[test]
+    fn resource_type_metadata_round_trips_without_repository_policy() {
+        let yaml = r#"
+id: { pointer: /id, scope: universal }
+display_name: { strategy: id }
+metadata:
+  fields: [/created_by, /updated_at]
+operations: {}
+"#;
+
+        let resource_type: ResourceType = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(
+            resource_type.metadata,
+            Some(ResourceTypeMetadata {
+                fields: vec!["/created_by".into(), "/updated_at".into()],
+            })
+        );
+        let serialized = serde_yaml::to_string(&resource_type).unwrap();
+        assert!(serialized.contains("metadata:"));
+        assert!(!serialized.contains("track:"));
+        assert_eq!(
+            serde_yaml::from_str::<ResourceType>(&serialized)
+                .unwrap()
+                .metadata,
+            resource_type.metadata
+        );
+    }
+
+    #[test]
+    fn application_definition_rejects_repository_metadata_policy() {
+        let yaml = r#"
+schema_version: 1
+version: 1.0.0
+application: { name: example }
+target_profile: {}
+version_endpoints: []
+metadata: { track: true }
+"#;
+
         assert!(serde_yaml::from_str::<ApplicationDefinition>(yaml).is_err());
     }
 }

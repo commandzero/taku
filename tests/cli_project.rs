@@ -120,12 +120,33 @@ fn adds_and_renames_environment_scoped_targets() {
             "http://127.0.0.1:9201",
         ],
     );
+    std::fs::create_dir_all(project.path().join("dev/es1/ingest_pipelines")).unwrap();
+    std::fs::write(
+        project.path().join("dev/es1/.target.yaml"),
+        "schema_version: 1\nmetadata: { track: true }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        project
+            .path()
+            .join("dev/es1/ingest_pipelines/.resource.yaml"),
+        "schema_version: 1\nmetadata: { track: false }\n",
+    )
+    .unwrap();
     json(&project, &["target", "rename", "es1", "cluster"]);
 
     let metadata = std::fs::read_to_string(project.path().join(".taku/project.yml")).unwrap();
     assert!(metadata.contains("cluster:"));
     assert!(metadata.contains("es2:"));
     assert!(!metadata.contains("es1:"));
+    assert!(project.path().join("dev/cluster/.target.yaml").is_file());
+    assert!(
+        project
+            .path()
+            .join("dev/cluster/ingest_pipelines/.resource.yaml")
+            .is_file()
+    );
+    assert!(!project.path().join("dev/es1").exists());
 }
 
 #[test]
