@@ -224,6 +224,9 @@ pub fn push(
             .resources
             .get(&item.id)
             .context("selected Resource is absent from Observed State")?;
+        if observation.requires_pull {
+            bail!("Observed State requires Pull after a Directory Hint change; run `taku pull`");
+        }
         let current = if resource_type.write_intent != WriteIntent::Upsert
             || resource_type.concurrency_mode == crate::ConcurrencyMode::Guarded
         {

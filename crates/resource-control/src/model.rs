@@ -597,11 +597,7 @@ pub enum Transformation {
 }
 
 pub(crate) fn sensitive_field_conflicts(resource_type: &ResourceType, pointer: &str) -> bool {
-    let overlaps = |required: &str| {
-        pointer == required
-            || required.starts_with(&format!("{pointer}/"))
-            || pointer.starts_with(&format!("{required}/"))
-    };
+    let overlaps = |required: &str| json_pointers_overlap(pointer, required);
     overlaps(&resource_type.id.pointer)
         || resource_type.display_name.pointers().any(&overlaps)
         || resource_type.transformations.iter().any(|transformation| {
@@ -620,4 +616,10 @@ pub(crate) fn sensitive_field_conflicts(resource_type: &ResourceType, pointer: &
                 } if overlaps(key_pointer) || overlaps(value_pointer)
             )
         })
+}
+
+pub(crate) fn json_pointers_overlap(left: &str, right: &str) -> bool {
+    left == right
+        || left.starts_with(&format!("{right}/"))
+        || right.starts_with(&format!("{left}/"))
 }

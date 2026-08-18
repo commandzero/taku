@@ -797,12 +797,6 @@ fn validate_resource_type(resource_type: &crate::ResourceType, name: &str) -> Re
     Ok(())
 }
 
-fn pointers_overlap(left: &str, right: &str) -> bool {
-    left == right
-        || left.starts_with(&format!("{right}/"))
-        || right.starts_with(&format!("{left}/"))
-}
-
 fn valid_json_pointer(pointer: &str) -> bool {
     if !pointer.starts_with('/') {
         return false;
@@ -817,6 +811,7 @@ fn valid_json_pointer(pointer: &str) -> bool {
 }
 
 fn validate_metadata(resource_type: &crate::ResourceType, name: &str) -> Result<()> {
+    use crate::model::json_pointers_overlap as pointers_overlap;
     let Some(metadata) = &resource_type.metadata else {
         return Ok(());
     };

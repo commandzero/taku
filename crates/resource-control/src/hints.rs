@@ -28,6 +28,12 @@ pub(crate) struct MetadataTrackingHint {
     pub track: bool,
 }
 
+#[derive(Clone, Copy)]
+enum HintKind {
+    Target,
+    ResourceType,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct HintResolution {
     pub track: bool,
@@ -82,21 +88,25 @@ pub(crate) fn parse_resource_hints(bytes: &[u8]) -> Result<ResourceHints> {
     Ok(hints)
 }
 
-fn read_hint(root: &Path, path: &Path, kind: &str) -> Result<Option<(Vec<u8>, Option<bool>)>> {
+fn read_hint(root: &Path, path: &Path, kind: HintKind) -> Result<Option<(Vec<u8>, Option<bool>)>> {
     crate::canonical::reject_symlink_components(root, path)?;
     if !path.exists() {
         return Ok(None);
     }
     let metadata = fs::symlink_metadata(path)?;
     if !metadata.is_file() || metadata.file_type().is_symlink() {
-        bail!("{kind} hint is not a regular file: {}", path.display());
+        let label = match kind {
+            HintKind::Target => "Target",
+            HintKind::ResourceType => "Resource Type",
+        };
+        bail!("{label} hint is not a regular file: {}", path.display());
     }
     let bytes = fs::read(path)?;
     let track = match kind {
-        "Target" => parse_target_hints(&bytes)?
+        HintKind::Target => parse_target_hints(&bytes)?
             .metadata
             .map(|value| value.track),
-        _ => parse_resource_hints(&bytes)?
+        HintKind::ResourceType => parse_resource_hints(&bytes)?
             .metadata
             .map(|value| value.track),
     };
@@ -122,8 +132,8 @@ pub(crate) fn resolve(
         resource_type,
     )
     .join(RESOURCE_HINT_NAME);
-    let target_hint = read_hint(root, &target_path, "Target")?;
-    let resource_hint = read_hint(root, &resource_path, "Resource Type")?;
+    let target_hint = read_hint(root, &target_path, HintKind::Target)?;
+    let resource_hint = read_hint(root, &resource_path, HintKind::ResourceType)?;
     let track = resource_hint
         .as_ref()
         .and_then(|(_, track)| *track)
@@ -160,17 +170,41 @@ pub(crate) fn validate_application_tree(
     target: &str,
     application: &crate::ApplicationDefinition,
 ) -> Result<()> {
+    let target_config = &project.environments[environment].targets[target];
+    let baseline_path = crate::resolution::baseline_path(root, environment, target);
+    if baseline_path.is_file() {
+        let baseline = crate::resolution::load_baseline(&baseline_path)?;
+        let resolved = crate::resolution::from_baseline(application, target_config, &baseline)?;
+        validate_target_tree(root, project, environment, target, &resolved.resource_types)?;
+        return validate_resolved_tracking(
+            root,
+            project,
+            environment,
+            target,
+            &resolved.resource_types,
+        );
+    }
     let mut candidates = std::collections::BTreeMap::new();
     for catalog in application.catalogs.values() {
         for (name, definitions) in &catalog.resource_types {
             for definition in definitions {
-                candidates
-                    .entry(name.clone())
-                    .or_insert_with(|| definition.clone());
+                let candidate = candidates.entry(name.clone()).or_insert_with(|| {
+                    let mut candidate = definition.clone();
+                    if let Some(additions) = target_config.sensitive_fields.get(name) {
+                        candidate.sensitive_fields.extend(additions.iter().cloned());
+                    }
+                    candidate
+                });
+                if candidate.namespaced != definition.namespaced {
+                    bail!(
+                        "Resource Type {name} changes namespacing across versions; a Target Baseline is required before using Directory Hints"
+                    );
+                }
             }
         }
     }
-    validate_target_tree(root, project, environment, target, &candidates)
+    validate_target_tree(root, project, environment, target, &candidates)?;
+    validate_resolved_tracking(root, project, environment, target, &candidates)
 }
 
 pub(crate) fn validate_project_placement(root: &Path, project: &crate::Project) -> Result<()> {
@@ -233,7 +267,7 @@ pub(crate) fn validate_tracking(
         if resource_type
             .sensitive_fields
             .iter()
-            .any(|sensitive| pointers_overlap(pointer, sensitive))
+            .any(|sensitive| crate::model::json_pointers_overlap(pointer, sensitive))
         {
             bail!(
                 "tracked metadata field {pointer} overlaps a Target Sensitive Field for Resource Type {type_name}"
@@ -243,10 +277,38 @@ pub(crate) fn validate_tracking(
     Ok(())
 }
 
-fn pointers_overlap(left: &str, right: &str) -> bool {
-    left == right
-        || left.starts_with(&format!("{right}/"))
-        || right.starts_with(&format!("{left}/"))
+pub(crate) fn validate_resolved_tracking(
+    root: &Path,
+    project: &crate::Project,
+    environment: &str,
+    target: &str,
+    resource_types: &std::collections::BTreeMap<String, crate::ResourceType>,
+) -> Result<()> {
+    for (type_name, resource_type) in resource_types {
+        let target_default = resolve(root, project, environment, target, None, type_name)?;
+        validate_tracking(resource_type, &target_default, type_name)?;
+        if resource_type.namespaced {
+            for (namespace, _) in crate::canonical::resource_directories(
+                root,
+                project,
+                environment,
+                target,
+                type_name,
+                true,
+            )? {
+                let hints = resolve(
+                    root,
+                    project,
+                    environment,
+                    target,
+                    namespace.as_deref(),
+                    type_name,
+                )?;
+                validate_tracking(resource_type, &hints, type_name)?;
+            }
+        }
+    }
+    Ok(())
 }
 
 fn validate_tree_entries(
@@ -273,6 +335,18 @@ fn validate_tree_entries(
                 .components()
                 .map(|component| component.as_os_str().to_string_lossy().into_owned())
                 .collect::<Vec<_>>();
+            if name == RESOURCE_HINT_NAME {
+                let hinted_type = match components.as_slice() {
+                    [type_name, hint] if hint == RESOURCE_HINT_NAME => Some(type_name),
+                    [_, type_name, hint] if hint == RESOURCE_HINT_NAME => Some(type_name),
+                    _ => None,
+                };
+                if let Some(type_name) = hinted_type
+                    && !resource_types.contains_key(type_name)
+                {
+                    bail!("Resource Type {type_name} is unavailable but has a Directory Hint");
+                }
+            }
             let valid = if name == TARGET_HINT_NAME {
                 components == [TARGET_HINT_NAME]
             } else {
@@ -306,9 +380,9 @@ fn validate_tree_entries(
                 root,
                 &path,
                 if name == TARGET_HINT_NAME {
-                    "Target"
+                    HintKind::Target
                 } else {
-                    "Resource Type"
+                    HintKind::ResourceType
                 },
             )?;
         } else if metadata.is_dir() {

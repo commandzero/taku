@@ -330,6 +330,13 @@ pub fn validate_project(root: &Path) -> Result<serde_json::Value> {
                 target,
                 &resolved.resource_types,
             )?;
+            crate::hints::validate_resolved_tracking(
+                &root,
+                &project,
+                environment,
+                target,
+                &resolved.resource_types,
+            )?;
         }
     }
     Ok(serde_json::json!({

@@ -78,6 +78,10 @@ pub struct Observation {
     pub value: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub guard: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub requires_pull: bool,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub hint_binding: String,
 }
 
 pub fn fetch(
@@ -125,15 +129,16 @@ pub fn fetch(
         }
         let discovered = &resolved[&item.target];
         let resource_type = &discovered.resource_types[&item.resource_type];
-        let metadata_track = crate::hints::resolve(
+        let hint_resolution = crate::hints::resolve(
             &root,
             &project,
             &environment,
             &item.target,
             item.namespace.as_deref(),
             &item.resource_type,
-        )?
-        .track;
+        )?;
+        let metadata_track = hint_resolution.track;
+        let hint_binding = hash(&hint_resolution.binding_material(&root)?);
         let operation = resource_type
             .operations
             .read
@@ -225,6 +230,15 @@ pub fn fetch(
             observation_files.insert(path.clone(), file);
         }
         let file = observation_files.get_mut(&path).unwrap();
+        let requires_pull = file.resources.get(&item.id).is_some_and(|observation| {
+            observation.requires_pull
+                || if observation.hint_binding.is_empty() {
+                    hint_resolution.target_bytes.is_some()
+                        || hint_resolution.resource_bytes.is_some()
+                } else {
+                    observation.hint_binding != hint_binding
+                }
+        });
         file.observed_at = Utc::now();
         file.binding = bindings[&path].clone();
         file.application_version = discovered.application_version.clone();
@@ -247,6 +261,8 @@ pub fn fetch(
                 present,
                 value,
                 guard,
+                requires_pull,
+                hint_binding,
             },
         );
         reports.push(FetchResult {
@@ -402,6 +418,8 @@ pub fn fetch(
                 present,
                 value,
                 guard,
+                requires_pull: false,
+                hint_binding: String::new(),
             },
         );
         reports.push(FetchResult {

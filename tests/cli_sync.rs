@@ -1024,6 +1024,20 @@ fn changing_an_applicable_hint_after_fetch_invalidates_observed_state() {
     assert!(
         String::from_utf8_lossy(&pushed.stderr).contains("Observed State is structurally invalid")
     );
+
+    run(&project, &["fetch"]);
+    let still_blocked = output(
+        &project,
+        &["push", "--uncommitted", "allow", "--untracked", "allow"],
+    );
+    assert!(!still_blocked.status.success());
+    assert!(String::from_utf8_lossy(&still_blocked.stderr).contains("requires Pull"));
+    run(&project, &["pull", "--yes"]);
+    let pushed = run(
+        &project,
+        &["push", "--uncommitted", "allow", "--untracked", "allow"],
+    );
+    assert_eq!(pushed["result"][0]["outcome"], "in_sync");
 }
 
 #[test]
@@ -1101,4 +1115,27 @@ fn forgetting_the_last_resource_preserves_a_hint_only_type_directory() {
     assert!(directory.is_dir());
     assert_eq!(std::fs::read_to_string(hint).unwrap(), bytes);
     assert_eq!(std::fs::read_dir(directory).unwrap().count(), 1);
+}
+
+#[test]
+fn validate_rejects_tracked_metadata_overlapping_target_sensitive_fields_without_network() {
+    let target = FakeTarget::start();
+    let project = setup(&target);
+    std::fs::remove_dir_all(project.path().join("es/ingest_pipelines")).unwrap();
+    std::fs::write(
+        project.path().join("es/.target.yaml"),
+        "schema_version: 1\nmetadata: { track: true }\n",
+    )
+    .unwrap();
+    let project_path = project.path().join(".taku/project.yml");
+    let mut config: serde_yaml::Value =
+        serde_yaml::from_str(&std::fs::read_to_string(&project_path).unwrap()).unwrap();
+    config["environments"]["dev"]["targets"]["es"]["sensitive_fields"] =
+        serde_yaml::from_str("ingest_pipelines: [/created_date_millis]\n").unwrap();
+    std::fs::write(project_path, serde_yaml::to_string(&config).unwrap()).unwrap();
+
+    let validated = output(&project, &["validate"]);
+    assert!(!validated.status.success());
+    assert!(String::from_utf8_lossy(&validated.stderr).contains("tracked metadata field"));
+    assert!(target.requests.lock().unwrap().is_empty());
 }

@@ -345,6 +345,9 @@ pub fn pull(
             }
         };
         if !matches!(outcome, "pull_conflict" | "presence_conflict") {
+            resource.requires_pull = false;
+        }
+        if !matches!(outcome, "pull_conflict" | "presence_conflict") {
             baselines.insert(
                 baseline_path(&root, &environment, &item.target),
                 baseline_from(&crate::resolution::ResolvedApplication {

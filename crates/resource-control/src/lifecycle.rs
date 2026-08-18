@@ -422,6 +422,37 @@ pub struct PromotionResult {
     pub id: String,
     pub outcome: String,
 }
+
+struct DestinationScope<'a> {
+    root: &'a Path,
+    project: &'a crate::Project,
+    environment: &'a str,
+    target: &'a str,
+    namespace: Option<&'a str>,
+    type_name: &'a str,
+}
+
+fn normalize_for_destination(
+    scope: DestinationScope<'_>,
+    resource_type: &crate::ResourceType,
+    value: &serde_json::Value,
+) -> Result<serde_json::Value> {
+    let hints = crate::hints::resolve(
+        scope.root,
+        scope.project,
+        scope.environment,
+        scope.target,
+        scope.namespace,
+        scope.type_name,
+    )?;
+    crate::hints::validate_tracking(resource_type, &hints, scope.type_name)?;
+    if hints.track {
+        Ok(value.clone())
+    } else {
+        crate::transport::without_metadata(value, resource_type)
+    }
+}
+
 pub fn promote(
     root: &Path,
     from_environment: Option<&str>,
@@ -515,20 +546,18 @@ pub fn promote(
             )
             .join(filename);
             let resource_type = &destination_application.resource_types[&item.resource_type];
-            let hints = crate::hints::resolve(
-                &root,
-                &project,
-                &destination,
-                &to,
-                item.namespace.as_deref(),
-                &item.resource_type,
+            let value = normalize_for_destination(
+                DestinationScope {
+                    root: &root,
+                    project: &project,
+                    environment: &destination,
+                    target: &to,
+                    namespace: item.namespace.as_deref(),
+                    type_name: &item.resource_type,
+                },
+                resource_type,
+                &item.value,
             )?;
-            crate::hints::validate_tracking(resource_type, &hints, &item.resource_type)?;
-            let value = if hints.track {
-                item.value.clone()
-            } else {
-                crate::transport::without_metadata(&item.value, resource_type)?
-            };
             write_canonical_resource(&destination_path, &value, resource_type)?;
             out.push(PromotionResult {
                 from_environment: source.clone(),
@@ -625,20 +654,18 @@ pub fn promote_projects(
         )
         .join(filename);
         let resource_type = &destination_resolved.resource_types[&item.resource_type];
-        let hints = crate::hints::resolve(
-            &destination_root,
-            &destination_project,
-            &destination_environment,
-            to_target,
-            item.namespace.as_deref(),
-            &item.resource_type,
+        let value = normalize_for_destination(
+            DestinationScope {
+                root: &destination_root,
+                project: &destination_project,
+                environment: &destination_environment,
+                target: to_target,
+                namespace: item.namespace.as_deref(),
+                type_name: &item.resource_type,
+            },
+            resource_type,
+            &item.value,
         )?;
-        crate::hints::validate_tracking(resource_type, &hints, &item.resource_type)?;
-        let value = if hints.track {
-            item.value.clone()
-        } else {
-            crate::transport::without_metadata(&item.value, resource_type)?
-        };
         write_canonical_resource(&path, &value, resource_type)?;
         out.push(PromotionResult {
             from_environment: source_environment.clone(),
