@@ -84,13 +84,15 @@ pub struct Observation {
     pub hint_binding: Option<String>,
 }
 
-fn requires_pull_after_hint_change(
+fn requires_pull_after_configuration_change(
     previous: Option<&Observation>,
     hints: &crate::hints::HintResolution,
     current_binding: &str,
+    structural_binding_changed: bool,
 ) -> bool {
     previous.is_some_and(|observation| {
         observation.requires_pull
+            || structural_binding_changed
             || observation.hint_binding.as_ref().map_or_else(
                 || hints.target_bytes.is_some() || hints.resource_bytes.is_some(),
                 |binding| binding != current_binding,
@@ -129,6 +131,7 @@ pub fn fetch(
     }
     let mut reports = Vec::new();
     let mut bindings = BTreeMap::new();
+    let mut binding_changes = BTreeMap::new();
     let mut observation_files: BTreeMap<PathBuf, ObservationFile> = BTreeMap::new();
     for item in inventory {
         let target = &project.environments[&environment].targets[&item.target];
@@ -173,6 +176,7 @@ pub fn fetch(
                     id: Some(&item.id),
                     context: Some(&item.value),
                     body: None,
+                    resource_ids: None,
                     mutation: false,
                     metadata_track,
                 },
@@ -242,20 +246,30 @@ pub fn fetch(
                     resources: BTreeMap::new(),
                 }
             };
+            binding_changes.insert(path.clone(), file.binding != bindings[&path]);
             observation_files.insert(path.clone(), file);
         }
         let file = observation_files.get_mut(&path).unwrap();
-        let requires_pull = requires_pull_after_hint_change(
+        let requires_pull = requires_pull_after_configuration_change(
             file.resources.get(&item.id),
             &hint_resolution,
             &hint_binding,
+            binding_changes[&path],
         );
+        let previous_local = requires_pull.then(|| {
+            file.resources
+                .get(&item.id)
+                .map(|resource| (resource.local_hash.clone(), resource.local_value.clone()))
+        });
         file.observed_at = Utc::now();
         file.binding = bindings[&path].clone();
         file.application_version = discovered.application_version.clone();
         file.catalog_version = discovered.catalog_version.clone();
         file.definitions = discovered.selected.clone();
-        let local_hash = hash(&canonical_bytes(&item.value)?);
+        let current_local_hash = hash(&canonical_bytes(&item.value)?);
+        let (local_hash, local_value) = previous_local
+            .flatten()
+            .unwrap_or_else(|| (current_local_hash, Some(item.value.clone())));
         let guard = value.as_ref().map(|value| {
             pointer_string(value, INTERNAL_GUARD_POINTER)
                 .unwrap_or_else(|| hash(&canonical_bytes(value).unwrap_or_default()))
@@ -267,7 +281,7 @@ pub fn fetch(
             item.id.clone(),
             Observation {
                 local_hash,
-                local_value: Some(item.value.clone()),
+                local_value,
                 path: item.path.clone(),
                 present,
                 value,
@@ -332,6 +346,7 @@ pub fn fetch(
                 id: Some(&marker.id),
                 context: Some(&marker_context),
                 body: None,
+                resource_ids: None,
                 mutation: false,
                 metadata_track,
             },
@@ -402,13 +417,15 @@ pub fn fetch(
                     resources: BTreeMap::new(),
                 }
             };
+            binding_changes.insert(path.clone(), file.binding != bindings[&path]);
             observation_files.insert(path.clone(), file);
         }
         let file = observation_files.get_mut(&path).unwrap();
-        let requires_pull = requires_pull_after_hint_change(
+        let requires_pull = requires_pull_after_configuration_change(
             file.resources.get(&marker.id),
             &hint_resolution,
             &hint_binding,
+            binding_changes[&path],
         );
         file.observed_at = Utc::now();
         file.binding = bindings[&path].clone();

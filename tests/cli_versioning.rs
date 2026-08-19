@@ -201,18 +201,18 @@ resource_types:
     - id: { pointer: /id, scope: universal }
       display_name: { pointer: /name, strategy: name }
       operations:
-        read: { method: GET, path: "/widgets/{id}", cardinality: one }
-        list: { method: GET, path: /widgets, cardinality: many }
-        upsert: { method: PUT, path: "/widgets/{id}", cardinality: one }
+        read: { method: GET, path: "/widgets/{id}" }
+        list: { method: GET, path: /widgets, cardinality: many, response: { collection: list } }
+        upsert: { method: PUT, path: "/widgets/{id}" }
   future_widgets:
     - version: ">=9.5.0, <10.0.0"
       stability: preview
       id: { pointer: /id, scope: universal }
       display_name: { pointer: /name, strategy: name }
       operations:
-        read: { method: GET, path: "/future/{id}", cardinality: one }
-        list: { method: GET, path: /future, cardinality: many }
-        upsert: { method: PUT, path: "/future/{id}", cardinality: one }
+        read: { method: GET, path: "/future/{id}" }
+        list: { method: GET, path: /future, cardinality: many, response: { collection: list } }
+        upsert: { method: PUT, path: "/future/{id}" }
 "#,
     )
     .unwrap();
@@ -228,9 +228,9 @@ resource_types:
     - id: { pointer: /id, scope: universal }
       display_name: { pointer: /name, strategy: name }
       operations:
-        read: { method: GET, path: "/widgets/{id}", cardinality: one }
-        list: { method: GET, path: /widgets, cardinality: many }
-        upsert: { method: PUT, path: "/widgets/{id}", cardinality: one }
+        read: { method: GET, path: "/widgets/{id}" }
+        list: { method: GET, path: /widgets, cardinality: many, response: { collection: list } }
+        upsert: { method: PUT, path: "/widgets/{id}" }
 "#,
     )
     .unwrap();

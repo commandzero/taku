@@ -27,6 +27,7 @@ pub struct OperationInput<'a> {
     pub id: Option<&'a str>,
     pub context: Option<&'a Value>,
     pub body: Option<&'a [Value]>,
+    pub resource_ids: Option<&'a [String]>,
     pub mutation: bool,
     pub metadata_track: bool,
 }
@@ -103,6 +104,7 @@ pub fn execute(
         input.id,
         input.context,
         input.body,
+        input.resource_ids,
     )?;
     let base_url = auth
         .get("url")
@@ -164,7 +166,7 @@ pub fn execute(
         operation,
         resource_type,
         input.id,
-        !input.mutation || operation.trustworthy_response,
+        !input.mutation || operation.consumes_response_body(),
         input.metadata_track,
     )
     .context("Transformation Conflict while converting successful response")
@@ -213,9 +215,13 @@ fn build_request_body(
     id: Option<&str>,
     context: Option<&Value>,
     resources: Option<&[Value]>,
+    resource_ids: Option<&[String]>,
 ) -> Result<Option<Vec<Value>>> {
-    let Some(template) = operation.body.as_ref() else {
-        return Ok(resources.map(<[Value]>::to_vec));
+    let shaped_resources = resources
+        .map(|resources| shape_request_resources(operation, resources, resource_ids))
+        .transpose()?;
+    let Some(crate::OperationBody::Template(template)) = operation.body.as_ref() else {
+        return Ok(shaped_resources);
     };
     let mut body = render_body_template(
         template,
@@ -223,20 +229,50 @@ fn build_request_body(
         id,
         context.or_else(|| resources.and_then(|values| values.first())),
     );
-    if let Some(resources) = resources
+    if let Some(resources) = shaped_resources.as_deref()
         && let Some(pointer) = operation.body_pointer.as_deref()
     {
-        let inserted = if operation.cardinality == crate::Cardinality::Many {
-            Value::Array(resources.to_vec())
-        } else {
-            resources
-                .first()
-                .cloned()
-                .context("One Operation has no Resource payload")?
-        };
+        let inserted =
+            if operation.cardinality == crate::Cardinality::Many && operation.bundle.is_none() {
+                Value::Array(resources.to_vec())
+            } else {
+                resources
+                    .first()
+                    .cloned()
+                    .context("One Operation has no Resource payload")?
+            };
         insert_pointer(&mut body, pointer, inserted)?;
     }
     Ok(Some(vec![body]))
+}
+
+fn shape_request_resources(
+    operation: &Operation,
+    resources: &[Value],
+    resource_ids: Option<&[String]>,
+) -> Result<Vec<Value>> {
+    match operation.bundle.as_ref() {
+        Some(bundle) if bundle.shape == crate::CollectionShape::Map => {
+            let ids = resource_ids.context("map bundle requires Resource IDs")?;
+            if ids.len() != resources.len() {
+                bail!("map bundle Resource IDs do not match its values");
+            }
+            let mut map = Map::new();
+            for (id, value) in ids.iter().zip(resources) {
+                if map.insert(id.clone(), value.clone()).is_some() {
+                    bail!("map bundle contains duplicate Resource ID {id}");
+                }
+            }
+            Ok(vec![Value::Object(map)])
+        }
+        Some(bundle)
+            if bundle.shape == crate::CollectionShape::List
+                && bundle.format == PayloadFormat::Json =>
+        {
+            Ok(vec![Value::Array(resources.to_vec())])
+        }
+        _ => Ok(resources.to_vec()),
+    }
 }
 
 fn render_body_template(
@@ -345,9 +381,10 @@ fn map_response(
                 };
                 values = vec![extracted];
             }
-            values = expand_many(values, resource_type, id)?;
-            let mut normalized = Vec::with_capacity(values.len());
-            for mut value in values {
+            let decoded_values = decode_response(values, operation)?;
+            let mut normalized = Vec::with_capacity(decoded_values.len());
+            for decoded in decoded_values {
+                let mut value = decoded.value;
                 let guard = resource_type
                     .guard_pointer
                     .as_deref()
@@ -356,28 +393,27 @@ fn map_response(
                     remove_pointer(&mut value, pointer)?;
                 }
                 value = inbound(&value, resource_type, metadata_track)?;
-                if let Some(id) = id
-                    && pointer_string(&value, &resource_type.id.pointer).is_none()
-                    && !operation.skip_unidentified
-                {
-                    insert_pointer(
-                        &mut value,
-                        &resource_type.id.pointer,
-                        Value::String(id.into()),
-                    )?;
-                }
+                let identity = reconcile_identity(
+                    &mut value,
+                    &resource_type.id.pointer,
+                    decoded.identity.as_deref(),
+                    (operation.cardinality == crate::Cardinality::One)
+                        .then_some(id)
+                        .flatten(),
+                )?;
                 if pointer_string(&value, &resource_type.id.pointer).is_none() {
                     if operation.skip_unidentified {
                         continue;
                     }
                     bail!("remote Resource has no configured ID");
                 }
+                debug_assert!(identity.is_some());
                 if let Some(guard) = guard {
                     insert_pointer(&mut value, INTERNAL_GUARD_POINTER, Value::String(guard))?;
                 }
                 normalized.push(sort_value(&value));
             }
-            values = normalized;
+            let mut values = normalized;
             if let Some(cursor) = next_cursor {
                 let last = values
                     .last_mut()
@@ -418,34 +454,105 @@ fn parse_values(bytes: &[u8], format: Option<PayloadFormat>) -> Result<Vec<Value
     }
 }
 
-fn expand_many(
-    values: Vec<Value>,
-    resource_type: &ResourceType,
-    requested_id: Option<&str>,
-) -> Result<Vec<Value>> {
-    if requested_id.is_some() {
-        return Ok(values);
-    }
-    let mut out = Vec::new();
-    for value in values {
-        match value {
-            Value::Array(items) => out.extend(items),
-            Value::Object(map)
-                if pointer_string(&Value::Object(map.clone()), &resource_type.id.pointer)
-                    .is_none() =>
-            {
-                for (id, mut item) in map {
-                    if !item.is_object() {
-                        continue;
-                    }
-                    insert_pointer(&mut item, &resource_type.id.pointer, Value::String(id))?;
-                    out.push(item);
-                }
+struct DecodedResponse {
+    value: Value,
+    identity: Option<String>,
+}
+
+fn decode_response(values: Vec<Value>, operation: &Operation) -> Result<Vec<DecodedResponse>> {
+    let response = operation.response_mapping();
+    let candidates: Vec<(Option<String>, Value)> = match response.and_then(|r| r.collection) {
+        Some(crate::CollectionShape::List) => {
+            if operation.unbundle == Some(crate::PayloadFormat::Ndjson) {
+                values.into_iter().map(|value| (None, value)).collect()
+            } else {
+                let [value]: [Value; 1] = values
+                    .try_into()
+                    .map_err(|_| anyhow::anyhow!("list response must contain one JSON value"))?;
+                value
+                    .as_array()
+                    .context("configured list response is not an array")?
+                    .iter()
+                    .cloned()
+                    .map(|value| (None, value))
+                    .collect()
             }
-            value => out.push(value),
         }
+        Some(crate::CollectionShape::Map) => {
+            let [value]: [Value; 1] = values
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("map response must contain one JSON value"))?;
+            let map = value
+                .as_object()
+                .context("configured map response is not an object")?;
+            let mut entries = map.iter().collect::<Vec<_>>();
+            entries.sort_by_key(|(id, _)| *id);
+            entries
+                .into_iter()
+                .map(|(id, value)| (Some(id.clone()), value.clone()))
+                .collect()
+        }
+        None => values.into_iter().map(|value| (None, value)).collect(),
+    };
+    candidates
+        .into_iter()
+        .map(|(map_identity, item)| {
+            let pointer_identity = response
+                .and_then(|mapping| mapping.identity_pointer.as_deref())
+                .map(|pointer| {
+                    item.pointer(pointer)
+                        .and_then(Value::as_str)
+                        .map(str::to_owned)
+                        .with_context(|| {
+                            format!("response identity pointer {pointer} did not match")
+                        })
+                })
+                .transpose()?;
+            let identity = match (map_identity, pointer_identity) {
+                (Some(map), Some(pointer)) if map != pointer => {
+                    bail!("response identities disagree: {map} != {pointer}")
+                }
+                (Some(identity), _) | (_, Some(identity)) => Some(identity),
+                (None, None) => None,
+            };
+            let value = if let Some(pointer) =
+                response.and_then(|mapping| mapping.resource_pointer.as_deref())
+            {
+                item.pointer(pointer)
+                    .cloned()
+                    .with_context(|| format!("response Resource pointer {pointer} did not match"))?
+            } else {
+                item
+            };
+            Ok(DecodedResponse { value, identity })
+        })
+        .collect()
+}
+
+fn reconcile_identity(
+    value: &mut Value,
+    pointer: &str,
+    decoded: Option<&str>,
+    requested: Option<&str>,
+) -> Result<Option<String>> {
+    if let (Some(decoded), Some(requested)) = (decoded, requested)
+        && decoded != requested
+    {
+        bail!("decoded Resource identity {decoded} disagrees with requested identity {requested}");
     }
-    Ok(out)
+    let identity = decoded.or(requested);
+    let existing = pointer_string(value, pointer);
+    if let (Some(existing), Some(identity)) = (existing.as_deref(), identity)
+        && existing != identity
+    {
+        bail!("decoded Resource identity {identity} disagrees with canonical identity {existing}");
+    }
+    if existing.is_none()
+        && let Some(identity) = identity
+    {
+        insert_pointer(value, pointer, Value::String(identity.into()))?;
+    }
+    Ok(existing.or_else(|| identity.map(str::to_owned)))
 }
 
 fn apply_inbound(value: &mut Value, resource_type: &ResourceType) -> Result<()> {
@@ -469,11 +576,6 @@ fn apply_inbound(value: &mut Value, resource_type: &ResourceType) -> Result<()> 
                         json5::from_str(text).context("embedded JSON is malformed")?;
                     insert_pointer(value, pointer, sort_value(&parsed))?;
                 }
-            }
-            crate::Transformation::Frame { pointer } => {
-                let document = value.clone();
-                *value = Value::Object(Map::new());
-                insert_pointer(value, pointer, document)?;
             }
             crate::Transformation::SingletonMap {
                 pointer,
@@ -518,9 +620,18 @@ pub fn outbound(
     operation: Option<&Operation>,
 ) -> Result<Value> {
     let mut value = without_metadata(value, resource_type)?;
+    if operation.is_some_and(|operation| !operation.includes_identity_in_body()) {
+        remove_pointer(&mut value, &resource_type.id.pointer)?;
+    }
     apply_outbound(&mut value, &resource_type.transformations)?;
     if let Some(operation) = operation {
         apply_outbound(&mut value, &operation.transformations)?;
+        if let Some(crate::OperationBody::Pointer(pointer)) = &operation.body {
+            value = value
+                .pointer(pointer)
+                .cloned()
+                .with_context(|| format!("Operation body selector {pointer} did not match"))?;
+        }
     }
     Ok(value)
 }
@@ -553,12 +664,6 @@ fn apply_outbound(value: &mut Value, transformations: &[crate::Transformation]) 
                 let document = value.clone();
                 *value = Value::Object(Map::new());
                 insert_pointer(value, pointer, document)?;
-            }
-            crate::Transformation::Frame { pointer } => {
-                *value = value
-                    .pointer(pointer)
-                    .cloned()
-                    .context("outbound framing pointer did not match")?;
             }
             crate::Transformation::Insert { pointer, .. } => remove_pointer(value, pointer)?,
             crate::Transformation::Omit { pointer } => remove_pointer(value, pointer)?,
@@ -713,7 +818,10 @@ fn remove_pointers(root: &mut Value, pointers: &[String]) -> Result<()> {
 
 #[cfg(test)]
 mod namespace_path_tests {
-    use super::{inbound, operation_path, outbound, render_path};
+    use super::{
+        build_request_body, decode_response, encode_payload, inbound, operation_path, outbound,
+        reconcile_identity, render_path, shape_request_resources,
+    };
     use crate::{Operation, ResourceType};
 
     #[test]
@@ -766,12 +874,11 @@ operations: {}
     }
 
     #[test]
-    fn outbound_metadata_is_removed_before_resource_and_operation_framing() {
+    fn outbound_metadata_is_removed_before_resource_and_operation_conversion() {
         let operation: Operation = serde_yaml::from_str(
             r#"
 method: PUT
 path: /items
-cardinality: one
 transformations: [{ kind: extract, pointer: /payload }]
 "#,
         )
@@ -802,6 +909,247 @@ operations: {}
         assert_eq!(
             outbound(&value, &resource_type, None).unwrap(),
             serde_json::json!({"id": "one", "audit": ["kept"]})
+        );
+    }
+
+    #[test]
+    fn response_decoding_supports_direct_list_and_keyed_map_shapes() {
+        let direct: Operation = serde_yaml::from_str("method: GET\npath: /items/{id}\n").unwrap();
+        let decoded = decode_response(vec![serde_json::json!({"value": 1})], &direct).unwrap();
+        assert_eq!(decoded.len(), 1);
+        assert_eq!(decoded[0].value, serde_json::json!({"value": 1}));
+        assert_eq!(decoded[0].identity, None);
+
+        let list: Operation = serde_yaml::from_str(
+            r#"
+method: GET
+path: /items
+cardinality: many
+response:
+  collection: list
+  identity_pointer: /name
+  resource_pointer: /item
+"#,
+        )
+        .unwrap();
+        let decoded = decode_response(
+            vec![serde_json::json!([
+                {"name": "two", "item": {"value": 2}},
+                {"name": "one", "item": {"value": 1}}
+            ])],
+            &list,
+        )
+        .unwrap();
+        assert_eq!(decoded[0].identity.as_deref(), Some("two"));
+        assert_eq!(decoded[0].value, serde_json::json!({"value": 2}));
+
+        let map: Operation = serde_yaml::from_str(
+            "method: GET\npath: /items\ncardinality: many\nresponse: {collection: map}\n",
+        )
+        .unwrap();
+        let decoded = decode_response(
+            vec![serde_json::json!({
+                "two": {"version": 2},
+                "one": {"version": 1}
+            })],
+            &map,
+        )
+        .unwrap();
+        assert_eq!(decoded[0].identity.as_deref(), Some("one"));
+        assert_eq!(decoded[0].value, serde_json::json!({"version": 1}));
+        assert_eq!(decoded[1].identity.as_deref(), Some("two"));
+    }
+
+    #[test]
+    fn response_decoding_rejects_shape_pointer_and_identity_conflicts() {
+        let list: Operation = serde_yaml::from_str(
+            "method: GET\npath: /items\ncardinality: many\nresponse: {collection: list}\n",
+        )
+        .unwrap();
+        assert!(decode_response(vec![serde_json::json!({})], &list).is_err());
+
+        let map: Operation = serde_yaml::from_str(
+            "method: GET\npath: /items\ncardinality: many\nresponse: {collection: map, resource_pointer: /item}\n",
+        )
+        .unwrap();
+        assert!(decode_response(vec![serde_json::json!({"one": {}})], &map).is_err());
+
+        let pointer: Operation = serde_yaml::from_str(
+            "method: GET\npath: /items\ncardinality: many\nresponse: {collection: list, identity_pointer: /id}\n",
+        )
+        .unwrap();
+        assert!(decode_response(vec![serde_json::json!([{"id": 42}])], &pointer).is_err());
+
+        let mut value = serde_json::json!({"id": "inside"});
+        assert!(reconcile_identity(&mut value, "/id", Some("outside"), None).is_err());
+        assert!(reconcile_identity(&mut value, "/id", Some("inside"), Some("requested")).is_err());
+    }
+
+    #[test]
+    fn requested_identity_is_persisted_in_canonical_resource() {
+        let mut value = serde_json::json!({"version": 1, "policy": {"phases": {}}});
+        let identity = reconcile_identity(&mut value, "/id", None, Some("logs")).unwrap();
+        assert_eq!(identity.as_deref(), Some("logs"));
+        assert_eq!(value["id"], "logs");
+    }
+
+    #[test]
+    fn path_identity_metadata_and_body_wrapper_are_omitted_from_mutation() {
+        let resource_type: ResourceType = serde_yaml::from_str(
+            r#"
+id: { pointer: /id, scope: universal }
+display_name: { strategy: id }
+metadata: { fields: [/version, /modified_date] }
+operations: {}
+"#,
+        )
+        .unwrap();
+        let operation: Operation =
+            serde_yaml::from_str("method: PUT\npath: /policies/{id}\nbody: /policy\n").unwrap();
+        let canonical = serde_json::json!({
+            "id": "logs",
+            "version": 1,
+            "modified_date": "2026-01-01",
+            "policy": {"phases": {"hot": {}}}
+        });
+        assert_eq!(
+            outbound(&canonical, &resource_type, Some(&operation)).unwrap(),
+            serde_json::json!({"phases": {"hot": {}}})
+        );
+    }
+
+    #[test]
+    fn identity_body_defaults_and_overrides_are_honored() {
+        let resource_type: ResourceType = serde_yaml::from_str(
+            r#"
+id: { pointer: /identity/id, scope: universal }
+display_name: { strategy: id }
+operations: {}
+"#,
+        )
+        .unwrap();
+        let value = serde_json::json!({"identity": {"id": "one"}, "value": 1});
+
+        let path_default: Operation =
+            serde_yaml::from_str("method: PUT\npath: /items/{id}\n").unwrap();
+        assert_eq!(
+            outbound(&value, &resource_type, Some(&path_default)).unwrap(),
+            serde_json::json!({"identity": {}, "value": 1})
+        );
+
+        let path_override: Operation =
+            serde_yaml::from_str("method: PUT\npath: /items/{id}\nidentity_in_body: true\n")
+                .unwrap();
+        assert_eq!(
+            outbound(&value, &resource_type, Some(&path_override)).unwrap(),
+            value
+        );
+
+        let body_override: Operation =
+            serde_yaml::from_str("method: POST\npath: /items\nidentity_in_body: false\n").unwrap();
+        assert_eq!(
+            outbound(&value, &resource_type, Some(&body_override)).unwrap(),
+            serde_json::json!({"identity": {}, "value": 1})
+        );
+    }
+
+    #[test]
+    fn list_and_map_request_bundles_are_explicit_and_deterministic() {
+        let values = vec![
+            serde_json::json!({"value": 2}),
+            serde_json::json!({"value": 1}),
+        ];
+        let ids = vec!["two".to_owned(), "one".to_owned()];
+        let list: Operation = serde_yaml::from_str(
+            "method: POST\npath: /items\ncardinality: many\nbundle: {shape: list, format: json}\n",
+        )
+        .unwrap();
+        assert_eq!(
+            shape_request_resources(&list, &values, Some(&ids)).unwrap(),
+            vec![serde_json::json!([{"value": 2}, {"value": 1}])]
+        );
+        assert_eq!(
+            shape_request_resources(&list, &values[..1], Some(&ids[..1])).unwrap(),
+            vec![serde_json::json!([{"value": 2}])]
+        );
+
+        let map: Operation = serde_yaml::from_str(
+            "method: POST\npath: /items\ncardinality: many\nbundle: {shape: map, format: json}\n",
+        )
+        .unwrap();
+        let shaped = shape_request_resources(&map, &values, Some(&ids)).unwrap();
+        assert_eq!(
+            shaped,
+            vec![serde_json::json!({"one": {"value": 1}, "two": {"value": 2}})]
+        );
+        assert!(
+            shape_request_resources(&map, &values, Some(&["same".into(), "same".into()])).is_err()
+        );
+
+        let map_override: Operation = serde_yaml::from_str(
+            "method: POST\npath: /items\ncardinality: many\nidentity_in_body: true\nbundle: {shape: map, format: json}\n",
+        )
+        .unwrap();
+        let resource_type: ResourceType = serde_yaml::from_str(
+            "id: {pointer: /id, scope: universal}\ndisplay_name: {strategy: id}\noperations: {}\n",
+        )
+        .unwrap();
+        let value = serde_json::json!({"id": "one", "value": 1});
+        let wire = outbound(&value, &resource_type, Some(&map_override)).unwrap();
+        assert_eq!(
+            shape_request_resources(&map_override, &[wire], Some(&["one".into()])).unwrap(),
+            vec![serde_json::json!({"one": {"id": "one", "value": 1}})]
+        );
+    }
+
+    #[test]
+    fn list_bundles_support_json_ndjson_static_envelopes_and_multipart_carriage() {
+        let values = vec![
+            serde_json::json!({"id": "one"}),
+            serde_json::json!({"id": "two"}),
+        ];
+        let json: Operation = serde_yaml::from_str(
+            r#"
+method: POST
+path: /items
+cardinality: many
+bundle: {shape: list, format: json}
+body: {items: []}
+body_pointer: /items
+"#,
+        )
+        .unwrap();
+        assert_eq!(
+            build_request_body(&json, None, None, None, Some(&values), None).unwrap(),
+            Some(vec![serde_json::json!({"items": values})])
+        );
+
+        let ndjson: Operation = serde_yaml::from_str(
+            "method: POST\npath: /items\ncardinality: many\nbundle: {shape: list, format: ndjson}\n",
+        )
+        .unwrap();
+        let encoded =
+            encode_payload(&values, ndjson.bundle.as_ref().map(|bundle| bundle.format)).unwrap();
+        assert_eq!(
+            std::str::from_utf8(&encoded).unwrap(),
+            "{\"id\":\"one\"}\n{\"id\":\"two\"}\n"
+        );
+
+        let multipart: Operation = serde_yaml::from_str(
+            r#"
+method: POST
+path: /items
+cardinality: many
+bundle:
+  shape: list
+  format: ndjson
+  multipart: {name: file, filename: items.ndjson, content_type: application/x-ndjson}
+"#,
+        )
+        .unwrap();
+        assert_eq!(
+            build_request_body(&multipart, None, None, None, Some(&values), None).unwrap(),
+            Some(values)
         );
     }
 }

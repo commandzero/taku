@@ -152,6 +152,18 @@ _Avoid_: Resource, endpoint
 The number of Resources an Operation handles in one remote interaction: One or Many.
 _Avoid_: Single, bulk
 
+**Response Mapping**:
+The declared conversion from one remote response into one or more Resource Objects, including collection boundaries, response-owned identity, and any envelope around each Resource.
+_Avoid_: Response Transformation, structural guessing
+
+**Operation Response**:
+The declared meaning of a successful Operation result: Status when only completion matters, Resource when the body is already one Resource Object, or a Response Mapping when the body requires structural interpretation.
+_Avoid_: Trustworthy response, response confidence
+
+**Collection Shape**:
+The declared organization of a Many Operation's Resources as either an ordered List or an ID-keyed Map, independently of their transport encoding.
+_Avoid_: Payload format, frame
+
 **Outcome Mapping**:
 The conversion of remote responses into Taku outcomes using conventional HTTP defaults with Resource Type overrides for exceptional APIs.
 _Avoid_: Raw status code, error log
@@ -181,7 +193,7 @@ A human-readable, potentially mutable label used to make a Resource easy to loca
 _Avoid_: Resource ID
 
 **Canonical Representation**:
-The deterministic, human-reviewable file or directory tree for one Resource stored in the repository. It may differ from the representation required by a remote system.
+The deterministic, human-reviewable file or directory tree for exactly one Resource stored in the repository, including its Resource ID. Remote collection envelopes and request-only wrappers are excluded.
 _Avoid_: Wire Representation, raw response
 
 **Canonical Equality**:
@@ -205,7 +217,7 @@ The reconstruction of one Resource Object from its configured Canonical Represen
 _Avoid_: Bundling, import
 
 **Bundling**:
-The encoding of a collection of Resource Objects into one operation payload, such as NDJSON.
+The declared List or Map organization and encoding of multiple Resource Objects into one operation payload, such as JSON or NDJSON.
 _Avoid_: Merging, serialization
 
 **Unbundling**:

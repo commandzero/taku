@@ -85,6 +85,7 @@ pub fn add_remote(
                     id: Some(&item.id),
                     context: Some(&item.value),
                     body: None,
+                    resource_ids: None,
                     mutation: false,
                     metadata_track,
                 },

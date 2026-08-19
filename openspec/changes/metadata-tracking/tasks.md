@@ -37,7 +37,7 @@
 - [x] 5.3 Integrate unconditional metadata omission into single and bundled create, update, and upsert payload construction before Operation transformations.
 - [x] 5.4 Normalize declared metadata out of desired and observed values before Replace/Patch Push equality so metadata-only differences never schedule a mutation.
 - [x] 5.5 Preserve tracked metadata in Status, Diff, Add, and Pull while ensuring untracked or manually added metadata is never sent.
-- [x] 5.6 Add transport and reconciliation tests for missing/nested pointers, structural extraction, operation framing, bundles, metadata-only drift, mixed changes, Pull conflicts, and manually added untracked metadata.
+- [x] 5.6 Add transport and reconciliation tests for missing/nested pointers, structural extraction, Operation body selection, bundles, metadata-only drift, mixed changes, Pull conflicts, and manually added untracked metadata.
 
 ## 6. Resource Lifecycle, Projections, and Promotion
 

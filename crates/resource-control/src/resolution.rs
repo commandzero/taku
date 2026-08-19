@@ -371,9 +371,9 @@ resource_types:
     - id: { pointer: /id, scope: universal }
       display_name: { pointer: /name, strategy: name }
       operations:
-        read: { method: GET, path: "/things/{id}", cardinality: one }
-        create: { method: POST, path: /things, cardinality: one }
-        update: { method: PUT, path: "/things/{id}", cardinality: one }
+        read: { method: GET, path: "/things/{id}" }
+        create: { method: POST, path: /things }
+        update: { method: PUT, path: "/things/{id}" }
 "#;
         let catalog: ResourceTypeCatalog = serde_yaml::from_str(yaml).unwrap();
         let target: TargetConfig =
@@ -402,9 +402,9 @@ version: ">=9.5.0"
 id: { pointer: /id, scope: universal }
 display_name: { pointer: /name, strategy: name }
 operations:
-  read: { method: GET, path: "/things/{id}", cardinality: one }
-  create: { method: POST, path: /things, cardinality: one }
-  update: { method: PUT, path: "/things/{id}", cardinality: one }
+  read: { method: GET, path: "/things/{id}" }
+  create: { method: POST, path: /things }
+  update: { method: PUT, path: "/things/{id}" }
 "#,
         )
         .unwrap();

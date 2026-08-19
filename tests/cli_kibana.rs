@@ -562,6 +562,138 @@ fn kibana_ndjson_is_unbundled_to_canonical_resources_and_rebuilt_only_for_push()
 }
 
 #[test]
+fn json_list_and_map_bundles_keep_their_declared_shape() {
+    let fake = Fake::start();
+    let project = tempfile::tempdir().unwrap();
+    assert!(
+        StdCommand::new("git")
+            .args(["init", "-q"])
+            .current_dir(project.path())
+            .status()
+            .unwrap()
+            .success()
+    );
+    run(
+        &project,
+        &["init", "--layout", "single", "--environment", "dev"],
+    );
+    run(&project, &["install", "kibana"]);
+    run(
+        &project,
+        &["target", "add", "kibana", "kb", "--url", &fake.url],
+    );
+    let definition_path = project
+        .path()
+        .join(".taku/applications/kibana/version-9.yml");
+    let mut definition: serde_yaml::Value =
+        serde_yaml::from_str(&std::fs::read_to_string(&definition_path).unwrap()).unwrap();
+    definition["resource_types"]["map_items"] = serde_yaml::to_value(json!([{
+        "id": {"pointer": "/id", "scope": "universal"},
+        "display_name": {"pointer": "/name", "strategy": "name"},
+        "write_intent": "upsert",
+        "operations": {
+            "read": {"method": "GET", "path": "/api/map_items/{id}", "cardinality": "one"},
+            "upsert": {
+                "method": "POST",
+                "path": "/api/saved_objects/_import",
+                "cardinality": "many",
+                "bundle": {"shape": "map", "format": "json"}
+            }
+        }
+    }]))
+    .unwrap();
+    definition["resource_types"]["list_items"] = serde_yaml::to_value(json!([{
+        "id": {"pointer": "/id", "scope": "universal"},
+        "display_name": {"pointer": "/name", "strategy": "name"},
+        "write_intent": "upsert",
+        "operations": {
+            "read": {"method": "GET", "path": "/api/list_items/{id}", "cardinality": "one"},
+            "upsert": {
+                "method": "POST",
+                "path": "/api/saved_objects/_import",
+                "cardinality": "many",
+                "bundle": {"shape": "list", "format": "json"}
+            }
+        }
+    }]))
+    .unwrap();
+    std::fs::write(
+        &definition_path,
+        serde_yaml::to_string(&definition).unwrap(),
+    )
+    .unwrap();
+    let directory = project.path().join("kb/map_items");
+    std::fs::create_dir_all(&directory).unwrap();
+    std::fs::write(
+        directory.join("Two.json"),
+        serde_json::to_string_pretty(&json!({"id": "two", "name": "Two", "value": 2})).unwrap(),
+    )
+    .unwrap();
+    std::fs::write(
+        directory.join("One.json"),
+        serde_json::to_string_pretty(&json!({"id": "one", "name": "One", "value": 1})).unwrap(),
+    )
+    .unwrap();
+    let list_directory = project.path().join("kb/list_items");
+    std::fs::create_dir_all(&list_directory).unwrap();
+    std::fs::write(
+        list_directory.join("Only.json"),
+        serde_json::to_string_pretty(&json!({"id": "only", "name": "Only", "value": 1})).unwrap(),
+    )
+    .unwrap();
+    run(&project, &["fetch", "kb", "map_items"]);
+    run(&project, &["fetch", "kb", "list_items"]);
+    run(
+        &project,
+        &[
+            "push",
+            "kb",
+            "map_items",
+            "--missing",
+            "restore",
+            "--untracked",
+            "allow",
+            "--uncommitted",
+            "allow",
+        ],
+    );
+    run(
+        &project,
+        &[
+            "push",
+            "kb",
+            "list_items",
+            "--missing",
+            "restore",
+            "--untracked",
+            "allow",
+            "--uncommitted",
+            "allow",
+        ],
+    );
+
+    let bodies = fake.bodies.lock().unwrap();
+    let body: Value = bodies
+        .iter()
+        .filter_map(|body| serde_json::from_str(body).ok())
+        .find(|body: &Value| body.get("one").is_some())
+        .unwrap();
+    assert_eq!(
+        body,
+        json!({
+            "one": {"name": "One", "value": 1},
+            "two": {"name": "Two", "value": 2}
+        })
+    );
+    let list: Value = bodies
+        .iter()
+        .filter_map(|body| serde_json::from_str(body).ok())
+        .find(|body: &Value| body.is_array())
+        .unwrap();
+    assert_eq!(list, json!([{"id": "only", "name": "Only", "value": 1}]));
+}
+
+#[test]
 fn saved_object_filenames_use_the_first_available_display_name_pointer() {
     let fake = Fake::start();
     let project = tempfile::tempdir().unwrap();
@@ -1205,6 +1337,7 @@ fn selected_write_operation_applies_its_own_outbound_transformations() {
                 "namespace": {"prefix": "/s/{namespace}"},
                 "cardinality": "many",
                 "extract": "/results",
+                "response": {"collection": "list"},
                 "pagination": {
                     "kind": "page_size",
                     "page_parameter": "page",

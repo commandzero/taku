@@ -213,13 +213,7 @@ fn project_at(url: &str) -> TempDir {
 }
 
 fn run(project: &TempDir, args: &[&str]) -> Value {
-    let output = Command::cargo_bin("taku")
-        .unwrap()
-        .current_dir(project.path())
-        .args(["--output", "json"])
-        .args(args)
-        .output()
-        .unwrap();
+    let output = output(project, args);
     assert!(
         output.status.success(),
         "taku {args:?} failed\nstdout: {}\nstderr: {}",
@@ -227,6 +221,16 @@ fn run(project: &TempDir, args: &[&str]) -> Value {
         String::from_utf8_lossy(&output.stderr)
     );
     serde_json::from_slice(&output.stdout).unwrap()
+}
+
+fn output(project: &TempDir, args: &[&str]) -> std::process::Output {
+    Command::cargo_bin("taku")
+        .unwrap()
+        .current_dir(project.path())
+        .args(["--output", "json"])
+        .args(args)
+        .output()
+        .unwrap()
 }
 
 struct UpsertExercise<'a> {
@@ -496,6 +500,254 @@ fn enrich_policy_types_round_trip_from_dynamic_response_keys() {
     assert!(resource.contains(r#""policy_type": "match""#));
     assert!(resource.contains(r#""name": "users""#));
     assert!(!resource.contains("elasticsearch_version"));
+}
+
+#[test]
+fn component_templates_are_flat_canonical_resources_and_put_the_direct_api_body() {
+    let response = r#"{
+  "component_templates": [{
+    "name": "logs",
+    "component_template": {
+      "version": 1,
+      "created_date_millis": 100,
+      "modified_date_millis": 200,
+      "_meta": {"description": "Logs"},
+      "template": {"settings": {"number_of_shards": 1}}
+    }
+  }]
+}"#;
+    let api = ScriptedApi::start();
+    api.respond("GET", "/_component_template", 200, response);
+    api.respond("GET", "/_component_template/logs", 200, response);
+    api.respond(
+        "PUT",
+        "/_component_template/logs",
+        200,
+        r#"{"acknowledged":true}"#,
+    );
+    let project = project_at(&api.url);
+    let directory = project.path().join("es/component_templates");
+    std::fs::create_dir_all(&directory).unwrap();
+    std::fs::write(
+        directory.join(".resource.yaml"),
+        "schema_version: 1\nmetadata: { track: true }\n",
+    )
+    .unwrap();
+
+    run(&project, &["add", "es", "component_templates", "logs"]);
+    run(&project, &["fetch", "es", "component_templates", "logs"]);
+    let resource = std::fs::read_dir(&directory)
+        .unwrap()
+        .filter_map(Result::ok)
+        .find(|entry| !entry.file_name().to_string_lossy().starts_with('.'))
+        .unwrap()
+        .path();
+    let mut canonical: Value =
+        serde_json::from_str(&std::fs::read_to_string(&resource).unwrap()).unwrap();
+    assert_eq!(canonical["name"], "logs");
+    assert_eq!(canonical["created_date_millis"], 100);
+    assert!(canonical.get("component_template").is_none());
+    canonical["version"] = json!(2);
+    canonical["template"]["settings"]["number_of_shards"] = json!(2);
+    std::fs::write(&resource, serde_json::to_string_pretty(&canonical).unwrap()).unwrap();
+
+    run(
+        &project,
+        &[
+            "push",
+            "es",
+            "component_templates",
+            "logs",
+            "--uncommitted",
+            "allow",
+            "--untracked",
+            "allow",
+        ],
+    );
+
+    let requests = api.requests.lock().unwrap();
+    let put = requests
+        .iter()
+        .find(|request| request.method == "PUT")
+        .unwrap();
+    assert_eq!(put.path, "/_component_template/logs");
+    assert_eq!(
+        serde_json::from_str::<Value>(&put.body).unwrap(),
+        json!({
+            "version": 2,
+            "_meta": {"description": "Logs"},
+            "template": {"settings": {"number_of_shards": 2}}
+        })
+    );
+}
+
+fn install_wrapped_component_template_definition(
+    project: &TempDir,
+) -> (std::path::PathBuf, String) {
+    let definition_path = project
+        .path()
+        .join(".taku/applications/elasticsearch/version-9.yml");
+    let normalized = std::fs::read_to_string(&definition_path).unwrap();
+    let mut definition: serde_yaml::Value = serde_yaml::from_str(&normalized).unwrap();
+    let component = &mut definition["resource_types"]["component_templates"][0];
+    component["metadata"] = serde_yaml::to_value(json!({
+        "fields": [
+            "/component_template/created_date_millis",
+            "/component_template/modified_date_millis"
+        ]
+    }))
+    .unwrap();
+    component["operations"]["read"]["response"] = serde_yaml::Value::Null;
+    component["operations"]["list"]["response"] =
+        serde_yaml::to_value(json!({"collection": "list"})).unwrap();
+    std::fs::write(
+        &definition_path,
+        serde_yaml::to_string(&definition).unwrap(),
+    )
+    .unwrap();
+    (definition_path, normalized)
+}
+
+#[test]
+fn response_mapping_change_requires_fetch_and_pull_before_rewriting_wrapped_resources() {
+    let response = r#"{
+  "component_templates": [{
+    "name": "logs",
+    "component_template": {
+      "version": 1,
+      "created_date_millis": 100,
+      "modified_date_millis": 200,
+      "template": {"settings": {"number_of_shards": 1}}
+    }
+  }]
+}"#;
+    let api = ScriptedApi::start();
+    api.respond("GET", "/_component_template", 200, response);
+    api.respond("GET", "/_component_template/logs", 200, response);
+    let project = project_at(&api.url);
+    let (definition_path, normalized) = install_wrapped_component_template_definition(&project);
+    let directory = project.path().join("es/component_templates");
+    std::fs::create_dir_all(&directory).unwrap();
+    std::fs::write(
+        directory.join(".resource.yaml"),
+        "schema_version: 1\nmetadata: { track: true }\n",
+    )
+    .unwrap();
+
+    run(&project, &["add", "es", "component_templates", "logs"]);
+    run(&project, &["fetch", "es", "component_templates", "logs"]);
+    let resource = std::fs::read_dir(&directory)
+        .unwrap()
+        .filter_map(Result::ok)
+        .find(|entry| !entry.file_name().to_string_lossy().starts_with('.'))
+        .unwrap()
+        .path();
+    let wrapped: Value =
+        serde_json::from_str(&std::fs::read_to_string(&resource).unwrap()).unwrap();
+    assert_eq!(wrapped["name"], "logs");
+    assert_eq!(wrapped["component_template"]["created_date_millis"], 100);
+    assert!(wrapped.get("component_template").is_some());
+
+    std::fs::write(&definition_path, normalized).unwrap();
+    let blocked = output(
+        &project,
+        &[
+            "push",
+            "es",
+            "component_templates",
+            "logs",
+            "--uncommitted",
+            "allow",
+            "--untracked",
+            "allow",
+        ],
+    );
+    assert!(!blocked.status.success());
+    assert!(
+        String::from_utf8_lossy(&blocked.stderr).contains("structurally invalid")
+            || String::from_utf8_lossy(&blocked.stderr).contains("different Resource Type")
+    );
+    assert!(
+        api.requests
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|request| request.method != "PUT")
+    );
+
+    run(&project, &["fetch", "es", "component_templates", "logs"]);
+    let still_blocked = output(
+        &project,
+        &[
+            "push",
+            "es",
+            "component_templates",
+            "logs",
+            "--uncommitted",
+            "allow",
+            "--untracked",
+            "allow",
+        ],
+    );
+    assert!(!still_blocked.status.success());
+    assert!(String::from_utf8_lossy(&still_blocked.stderr).contains("requires Pull"));
+
+    run(
+        &project,
+        &["pull", "--yes", "es", "component_templates", "logs"],
+    );
+    let normalized: Value =
+        serde_json::from_str(&std::fs::read_to_string(&resource).unwrap()).unwrap();
+    assert_eq!(normalized["name"], "logs");
+    assert_eq!(normalized["version"], 1);
+    assert_eq!(normalized["created_date_millis"], 100);
+    assert!(normalized.get("component_template").is_none());
+}
+
+#[test]
+fn response_mapping_change_conflicts_with_a_locally_modified_wrapped_resource() {
+    let response = r#"{
+  "component_templates": [{
+    "name": "logs",
+    "component_template": {
+      "version": 1,
+      "template": {"settings": {"number_of_shards": 1}}
+    }
+  }]
+}"#;
+    let api = ScriptedApi::start();
+    api.respond("GET", "/_component_template", 200, response);
+    api.respond("GET", "/_component_template/logs", 200, response);
+    let project = project_at(&api.url);
+    let (definition_path, normalized) = install_wrapped_component_template_definition(&project);
+    run(&project, &["add", "es", "component_templates", "logs"]);
+    run(&project, &["fetch", "es", "component_templates", "logs"]);
+    let resource = std::fs::read_dir(project.path().join("es/component_templates"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let mut wrapped: Value =
+        serde_json::from_str(&std::fs::read_to_string(&resource).unwrap()).unwrap();
+    wrapped["component_template"]["template"]["settings"]["number_of_shards"] = json!(2);
+    std::fs::write(&resource, serde_json::to_string_pretty(&wrapped).unwrap()).unwrap();
+
+    std::fs::write(&definition_path, normalized).unwrap();
+    run(&project, &["fetch", "es", "component_templates", "logs"]);
+    let pulled = output(
+        &project,
+        &["pull", "--yes", "es", "component_templates", "logs"],
+    );
+    assert_eq!(pulled.status.code(), Some(4));
+    let pulled: Value = serde_json::from_slice(&pulled.stdout).unwrap();
+    assert_eq!(pulled["result"][0]["outcome"], "pull_conflict");
+    let retained: Value =
+        serde_json::from_str(&std::fs::read_to_string(&resource).unwrap()).unwrap();
+    assert_eq!(
+        retained["component_template"]["template"]["settings"]["number_of_shards"],
+        2
+    );
 }
 
 #[test]

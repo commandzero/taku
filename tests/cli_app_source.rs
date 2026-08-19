@@ -96,8 +96,8 @@ resource_types:
     - id: {{ pointer: /id, scope: universal }}
       display_name: {{ pointer: /name, strategy: name }}
       operations:
-        read: {{ method: GET, path: "/widgets/{{id}}", cardinality: one }}
-        upsert: {{ method: PUT, path: "/widgets/{{id}}", cardinality: one }}
+        read: {{ method: GET, path: "/widgets/{{id}}" }}
+        upsert: {{ method: PUT, path: "/widgets/{{id}}" }}
 "#
     )
 }

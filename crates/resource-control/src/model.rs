@@ -317,6 +317,14 @@ fn default_mutation_mode() -> MutationMode {
     MutationMode::Replace
 }
 
+fn default_true() -> bool {
+    true
+}
+
+fn is_true(value: &bool) -> bool {
+    *value
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct MissingDefaults {
@@ -352,6 +360,7 @@ pub struct Operation {
     pub path: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub namespace: Option<NamespacePath>,
+    #[serde(default, skip_serializing_if = "Cardinality::is_one")]
     pub cardinality: Cardinality,
     #[serde(default)]
     pub headers: BTreeMap<String, String>,
@@ -361,30 +370,106 @@ pub struct Operation {
     pub extract: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub extract_missing: Option<Outcome>,
+    #[serde(default, skip_serializing_if = "is_default_response")]
+    pub response: Option<ResponseDefinition>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bundle: Option<Bundle>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub unbundle: Option<PayloadFormat>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub body: Option<serde_json::Value>,
+    pub body: Option<OperationBody>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub query: BTreeMap<String, serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub body_pointer: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub identity_in_body: Option<bool>,
     #[serde(default)]
     pub skip_unidentified: bool,
     #[serde(default)]
     pub outcomes: BTreeMap<u16, Outcome>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pagination: Option<Pagination>,
-    #[serde(default)]
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
     pub retry_safe: bool,
-    #[serde(default)]
-    pub trustworthy_response: bool,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "ConcurrencyClass::is_parallel")]
     pub concurrency: ConcurrencyClass,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub guard_header: Option<String>,
+}
+
+impl Operation {
+    pub fn includes_identity_in_body(&self) -> bool {
+        self.identity_in_body.unwrap_or_else(|| {
+            !self.path.contains("{id}")
+                && !self
+                    .bundle
+                    .as_ref()
+                    .is_some_and(|bundle| bundle.shape == CollectionShape::Map)
+        })
+    }
+
+    pub fn consumes_response_body(&self) -> bool {
+        self.response
+            .as_ref()
+            .is_some_and(ResponseDefinition::consumes_body)
+    }
+
+    pub fn response_mapping(&self) -> Option<&ResponseMapping> {
+        self.response.as_ref().and_then(ResponseDefinition::mapping)
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(untagged)]
+pub enum ResponseDefinition {
+    Kind(ResponseKind),
+    Mapping(ResponseMapping),
+}
+
+impl ResponseDefinition {
+    pub fn consumes_body(&self) -> bool {
+        !matches!(self, Self::Kind(ResponseKind::Status))
+    }
+
+    pub fn mapping(&self) -> Option<&ResponseMapping> {
+        match self {
+            Self::Mapping(mapping) => Some(mapping),
+            Self::Kind(_) => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ResponseKind {
+    Status,
+    Resource,
+}
+
+fn is_default_response(response: &Option<ResponseDefinition>) -> bool {
+    matches!(
+        response,
+        None | Some(ResponseDefinition::Kind(ResponseKind::Status))
+    )
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResponseMapping {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub collection: Option<CollectionShape>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub identity_pointer: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resource_pointer: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(untagged)]
+pub enum OperationBody {
+    Pointer(String),
+    Template(serde_json::Value),
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -396,11 +481,18 @@ pub struct NamespacePath {
     pub suffix: Option<String>,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum Cardinality {
+    #[default]
     One,
     Many,
+}
+
+impl Cardinality {
+    fn is_one(&self) -> bool {
+        *self == Self::One
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -410,9 +502,17 @@ pub enum PayloadFormat {
     Ndjson,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum CollectionShape {
+    List,
+    Map,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Bundle {
+    pub shape: CollectionShape,
     pub format: PayloadFormat,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub multipart: Option<Multipart>,
@@ -429,7 +529,9 @@ pub struct Multipart {
 #[cfg(test)]
 mod configuration_tests {
     use super::{
-        ApplicationDefinition, Operation, PayloadFormat, ResourceType, ResourceTypeMetadata,
+        ApplicationDefinition, Cardinality, CollectionShape, ConcurrencyClass, Operation,
+        OperationBody, PayloadFormat, ResourceType, ResourceTypeMetadata, ResponseDefinition,
+        ResponseKind,
     };
 
     #[test]
@@ -441,6 +543,7 @@ path: /import
 cardinality: many
 query: { overwrite: true }
 bundle:
+  shape: list
   format: ndjson
   multipart:
     name: file
@@ -451,12 +554,145 @@ bundle:
         .unwrap();
 
         let bundle = operation.bundle.unwrap();
+        assert_eq!(bundle.shape, CollectionShape::List);
         assert_eq!(bundle.format, PayloadFormat::Ndjson);
         let multipart = bundle.multipart.unwrap();
         assert_eq!(multipart.name, "file");
         assert_eq!(multipart.filename, "saved_objects.ndjson");
         assert_eq!(multipart.content_type, "application/x-ndjson");
         assert_eq!(operation.query["overwrite"], true);
+    }
+
+    #[test]
+    fn parses_static_and_pointer_operation_bodies() {
+        let selector: Operation =
+            serde_yaml::from_str("method: PUT\npath: /items/{id}\nbody: /policy\n").unwrap();
+        assert!(matches!(
+            selector.body,
+            Some(OperationBody::Pointer(ref pointer)) if pointer == "/policy"
+        ));
+
+        let template: Operation =
+            serde_yaml::from_str("method: POST\npath: /search\nbody: {query: '{id}'}\n").unwrap();
+        assert!(matches!(template.body, Some(OperationBody::Template(_))));
+    }
+
+    #[test]
+    fn identity_body_default_follows_path_and_map_binding() {
+        let path_bound: Operation =
+            serde_yaml::from_str("method: PUT\npath: /items/{id}\n").unwrap();
+        assert!(!path_bound.includes_identity_in_body());
+
+        let body_bound: Operation = serde_yaml::from_str("method: POST\npath: /items\n").unwrap();
+        assert!(body_bound.includes_identity_in_body());
+
+        let map: Operation = serde_yaml::from_str(
+            "method: POST\npath: /items\ncardinality: many\nbundle: {shape: map, format: json}\n",
+        )
+        .unwrap();
+        assert!(!map.includes_identity_in_body());
+    }
+
+    #[test]
+    fn retry_safety_defaults_true_and_only_serializes_false() {
+        let default: Operation = serde_yaml::from_str("method: GET\npath: /items\n").unwrap();
+        assert!(default.retry_safe);
+        assert!(
+            !serde_yaml::to_string(&default)
+                .unwrap()
+                .contains("retry_safe")
+        );
+
+        let unsafe_operation: Operation =
+            serde_yaml::from_str("method: POST\npath: /items\nretry_safe: false\n").unwrap();
+        assert!(!unsafe_operation.retry_safe);
+        assert!(
+            serde_yaml::to_string(&unsafe_operation)
+                .unwrap()
+                .contains("retry_safe: false")
+        );
+    }
+
+    #[test]
+    fn concurrency_defaults_parallel_and_only_serializes_serial() {
+        let default: Operation = serde_yaml::from_str("method: GET\npath: /items\n").unwrap();
+        assert_eq!(default.concurrency, ConcurrencyClass::Parallel);
+        assert!(
+            !serde_yaml::to_string(&default)
+                .unwrap()
+                .contains("concurrency")
+        );
+
+        let serial: Operation =
+            serde_yaml::from_str("method: POST\npath: /expensive\nconcurrency: serial\n").unwrap();
+        assert_eq!(serial.concurrency, ConcurrencyClass::Serial);
+        assert!(
+            serde_yaml::to_string(&serial)
+                .unwrap()
+                .contains("concurrency: serial")
+        );
+    }
+
+    #[test]
+    fn cardinality_defaults_one_and_only_serializes_many() {
+        let default: Operation = serde_yaml::from_str("method: GET\npath: /items\n").unwrap();
+        assert_eq!(default.cardinality, Cardinality::One);
+        assert!(
+            !serde_yaml::to_string(&default)
+                .unwrap()
+                .contains("cardinality")
+        );
+
+        let many: Operation =
+            serde_yaml::from_str("method: GET\npath: /items\ncardinality: many\n").unwrap();
+        assert_eq!(many.cardinality, Cardinality::Many);
+        assert!(
+            serde_yaml::to_string(&many)
+                .unwrap()
+                .contains("cardinality: many")
+        );
+    }
+
+    #[test]
+    fn parses_closed_response_semantics_and_rejects_trustworthiness() {
+        let omitted: Operation = serde_yaml::from_str("method: POST\npath: /items\n").unwrap();
+        assert!(omitted.response.is_none());
+
+        let status: Operation =
+            serde_yaml::from_str("method: POST\npath: /items\nresponse: status\n").unwrap();
+        assert!(matches!(
+            status.response.as_ref(),
+            Some(ResponseDefinition::Kind(ResponseKind::Status))
+        ));
+        assert!(!status.consumes_response_body());
+        assert!(!serde_yaml::to_string(&status).unwrap().contains("response"));
+
+        let resource: Operation =
+            serde_yaml::from_str("method: POST\npath: /items\nresponse: resource\n").unwrap();
+        assert!(matches!(
+            resource.response.as_ref(),
+            Some(ResponseDefinition::Kind(ResponseKind::Resource))
+        ));
+        assert!(resource.consumes_response_body());
+
+        let mapped: Operation = serde_yaml::from_str(
+            "method: GET\npath: /items\ncardinality: many\nresponse: {collection: list}\n",
+        )
+        .unwrap();
+        assert_eq!(
+            mapped
+                .response_mapping()
+                .and_then(|mapping| mapping.collection),
+            Some(CollectionShape::List)
+        );
+        assert!(mapped.consumes_response_body());
+
+        assert!(
+            serde_yaml::from_str::<Operation>(
+                "method: POST\npath: /items\ntrustworthy_response: true\n"
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -554,9 +790,15 @@ pub enum Pagination {
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum ConcurrencyClass {
-    #[default]
     Serial,
+    #[default]
     Parallel,
+}
+
+impl ConcurrencyClass {
+    fn is_parallel(&self) -> bool {
+        *self == Self::Parallel
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -584,9 +826,6 @@ pub enum Transformation {
         value: serde_json::Value,
     },
     EmbeddedJson {
-        pointer: String,
-    },
-    Frame {
         pointer: String,
     },
     SingletonMap {

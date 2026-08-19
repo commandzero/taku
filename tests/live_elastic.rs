@@ -255,6 +255,110 @@ fn manages_an_elasticsearch_ingest_pipeline_through_its_real_api() {
 
 #[test]
 #[ignore = "requires Elasticsearch on localhost:9200 and ELASTIC_API_KEY in .env"]
+fn round_trips_a_flat_component_template_through_fetch_pull_and_push() {
+    let authorization = authorization();
+    let id = unique_id("component-template");
+    let client = Client::new();
+    let url = format!("{ELASTICSEARCH_URL}/_component_template/{id}");
+    let create_body = json!({
+        "version": 1,
+        "_meta": {"description": "initial"},
+        "template": {"settings": {"number_of_shards": 1}}
+    });
+    let response = client
+        .put(&url)
+        .header(AUTHORIZATION, &authorization)
+        .json(&create_body)
+        .send()
+        .unwrap();
+    assert!(response.status().is_success(), "fixture creation failed");
+    let fixture = RemoteFixture {
+        client: client.clone(),
+        authorization: authorization.clone(),
+        delete_url: url.clone(),
+        kibana: false,
+    };
+    let project = project("elasticsearch", "es", ELASTICSEARCH_URL, &authorization);
+
+    run(
+        &project,
+        &authorization,
+        &["add", "es", "component_templates", &id],
+    );
+    run(
+        &project,
+        &authorization,
+        &["fetch", "es", "component_templates", &id],
+    );
+    let resource = std::fs::read_dir(project.path().join("es/component_templates"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let initial: Value =
+        serde_json::from_str(&std::fs::read_to_string(&resource).unwrap()).unwrap();
+    assert_eq!(initial["name"], id);
+    assert_eq!(initial["_meta"]["description"], "initial");
+    assert!(initial.get("component_template").is_none());
+
+    let response = client
+        .put(&url)
+        .header(AUTHORIZATION, &authorization)
+        .json(&json!({
+            "version": 1,
+            "_meta": {"description": "remote"},
+            "template": {"settings": {"number_of_shards": 1}}
+        }))
+        .send()
+        .unwrap();
+    assert!(response.status().is_success(), "remote update failed");
+    run(
+        &project,
+        &authorization,
+        &["fetch", "es", "component_templates", &id],
+    );
+    run(
+        &project,
+        &authorization,
+        &["pull", "--yes", "es", "component_templates", &id],
+    );
+    let mut canonical: Value =
+        serde_json::from_str(&std::fs::read_to_string(&resource).unwrap()).unwrap();
+    assert_eq!(canonical["_meta"]["description"], "remote");
+    canonical["_meta"]["description"] = json!("local");
+    std::fs::write(&resource, serde_json::to_string_pretty(&canonical).unwrap()).unwrap();
+    run(
+        &project,
+        &authorization,
+        &[
+            "push",
+            "es",
+            "component_templates",
+            &id,
+            "--uncommitted",
+            "allow",
+            "--untracked",
+            "allow",
+        ],
+    );
+    let remote: Value = client
+        .get(&url)
+        .header(AUTHORIZATION, &authorization)
+        .send()
+        .unwrap()
+        .json()
+        .unwrap();
+    assert_eq!(
+        remote["component_templates"][0]["component_template"]["_meta"]["description"],
+        "local"
+    );
+
+    drop(fixture);
+}
+
+#[test]
+#[ignore = "requires Elasticsearch on localhost:9200 and ELASTIC_API_KEY in .env"]
 fn tracks_elasticsearch_metadata_with_a_resource_type_hint() {
     let authorization = authorization();
     let id = unique_id("metadata-pipeline");

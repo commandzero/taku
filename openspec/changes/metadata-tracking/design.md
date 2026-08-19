@@ -116,7 +116,7 @@ Metadata pointers address the value after configured inbound Resource Type trans
 - when effective `track` is `false`, also append `remove` so inbound canonicalization drops it;
 - when effective `track` is `true`, do not add the inbound removal.
 
-Appending preserves the required order. Inbound structural transformations run first, then untracked metadata is removed. Outbound processing reverses the synthetic list first, removing metadata before Resource Type transformations are reversed and before Operation framing or bundling.
+Appending preserves the required order. Inbound structural transformations run first, then untracked metadata is removed. Outbound processing reverses the synthetic list first, removing metadata before Resource Type transformations, Operation body selection, or collection bundling.
 
 Implement this through metadata-aware canonical helpers parameterized by the resolved hints rather than mutating serialized catalog transformations. Missing pointers are no-ops. General Status/Diff/Pull compares the resulting Canonical Representation: tracked metadata remains observable and pullable. Push equality removes declared metadata from both desired and observed values for Replace and Patch modes, preventing metadata-only no-op writes even if an untracked field was manually added to a Canonical file.
 

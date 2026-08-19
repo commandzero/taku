@@ -1,5 +1,5 @@
 schema_version: 1
-version: "1.6.0"
+version: "1.7.0"
 application:
   name: kibana
   version: ">=9.0.0, <10.0.0"
@@ -9,11 +9,11 @@ resource_types:
       display_name: { pointer: /name, strategy: name }
       write_intent: upsert
       operations:
-        read: { method: GET, path: "/api/spaces/space/{id}", cardinality: one }
-        list: { method: GET, path: "/api/spaces/space", cardinality: many }
-        create: { method: POST, path: "/api/spaces/space", cardinality: one }
-        update: { method: PUT, path: "/api/spaces/space/{id}", cardinality: one }
-        delete: { method: DELETE, path: "/api/spaces/space/{id}", cardinality: one, retry_safe: true }
+        read: { method: GET, path: "/api/spaces/space/{id}" }
+        list: { method: GET, path: "/api/spaces/space", cardinality: many, response: { collection: list } }
+        create: { method: POST, path: "/api/spaces/space" }
+        update: { method: PUT, path: "/api/spaces/space/{id}" }
+        delete: { method: DELETE, path: "/api/spaces/space/{id}" }
   saved_objects:
     - id: { pointer: /id, scope: universal }
       display_name: { pointers: [/attributes/title, /attributes/name], strategy: name_id }
@@ -36,6 +36,7 @@ resource_types:
           namespace: { prefix: "/s/{namespace}" }
           cardinality: many
           unbundle: ndjson
+          response: { collection: list }
           skip_unidentified: true
           body: { objects: [{ id: "{id}", type: "{type}" }] }
         list:
@@ -44,6 +45,7 @@ resource_types:
           namespace: { prefix: "/s/{namespace}" }
           cardinality: many
           unbundle: ndjson
+          response: { collection: list }
           skip_unidentified: true
           body: { type: ["*"] }
         upsert:
@@ -53,6 +55,7 @@ resource_types:
           cardinality: many
           query: { overwrite: true }
           bundle:
+            shape: list
             format: ndjson
             multipart:
               name: file
@@ -62,7 +65,6 @@ resource_types:
           method: DELETE
           path: "/api/saved_objects/{type}/{id}"
           namespace: { prefix: "/s/{namespace}" }
-          cardinality: one
   workflows:
     - version: ">=9.4.0, <10.0.0"
       id: { pointer: /id, scope: universal }
@@ -76,9 +78,6 @@ resource_types:
           method: GET
           path: "/api/workflows/workflow/{id}"
           namespace: { prefix: "/s/{namespace}" }
-          cardinality: one
-          retry_safe: true
-          concurrency: parallel
           headers: { x-elastic-internal-origin: Kibana }
         list:
           method: GET
@@ -86,29 +85,23 @@ resource_types:
           namespace: { prefix: "/s/{namespace}" }
           cardinality: many
           extract: /results
-          retry_safe: true
-          concurrency: parallel
+          response: { collection: list }
           headers: { x-elastic-internal-origin: Kibana }
           pagination: { kind: page_size, page_parameter: page, size_parameter: size, size: 100, max_pages: 100 }
         create:
           method: POST
           path: "/api/workflows/workflow"
           namespace: { prefix: "/s/{namespace}" }
-          cardinality: one
           headers: { x-elastic-internal-origin: Kibana }
         update:
           method: PUT
           path: "/api/workflows/workflow/{id}"
           namespace: { prefix: "/s/{namespace}" }
-          cardinality: one
           headers: { x-elastic-internal-origin: Kibana }
-          transformations: [{ kind: omit, pointer: /id }]
         delete:
           method: DELETE
           path: "/api/workflows/workflow/{id}"
           namespace: { prefix: "/s/{namespace}" }
-          cardinality: one
-          retry_safe: true
           headers: { x-elastic-internal-origin: Kibana }
   tools:
     - version: ">=9.4.0, <10.0.0"
@@ -119,18 +112,16 @@ resource_types:
       dependencies: [spaces, workflows]
       metadata: { fields: [/readonly, /schema] }
       operations:
-        read: { method: GET, path: "/api/agent_builder/tools/{id}", namespace: { prefix: "/s/{namespace}" }, cardinality: one, retry_safe: true, concurrency: parallel }
-        list: { method: GET, path: "/api/agent_builder/tools", namespace: { prefix: "/s/{namespace}" }, cardinality: many, extract: /results, retry_safe: true, concurrency: parallel }
-        create: { method: POST, path: "/api/agent_builder/tools", namespace: { prefix: "/s/{namespace}" }, cardinality: one }
+        read: { method: GET, path: "/api/agent_builder/tools/{id}", namespace: { prefix: "/s/{namespace}" } }
+        list: { method: GET, path: "/api/agent_builder/tools", namespace: { prefix: "/s/{namespace}" }, cardinality: many, extract: /results, response: { collection: list } }
+        create: { method: POST, path: "/api/agent_builder/tools", namespace: { prefix: "/s/{namespace}" } }
         update:
           method: PUT
           path: "/api/agent_builder/tools/{id}"
           namespace: { prefix: "/s/{namespace}" }
-          cardinality: one
           transformations:
-            - { kind: omit, pointer: /id }
             - { kind: omit, pointer: /type }
-        delete: { method: DELETE, path: "/api/agent_builder/tools/{id}", namespace: { prefix: "/s/{namespace}" }, cardinality: one, retry_safe: true }
+        delete: { method: DELETE, path: "/api/agent_builder/tools/{id}", namespace: { prefix: "/s/{namespace}" } }
   skills:
     - version: ">=9.4.0, <10.0.0"
       id: { pointer: /id, scope: universal }
@@ -152,16 +143,14 @@ resource_types:
             extension: md
       metadata: { fields: [/readonly, /schema, /built_in, /source, /created_at, /updated_at] }
       operations:
-        read: { method: GET, path: "/api/agent_builder/skills/{id}", namespace: { prefix: "/s/{namespace}" }, cardinality: one, retry_safe: true, concurrency: parallel }
-        list: { method: GET, path: "/api/agent_builder/skills", namespace: { prefix: "/s/{namespace}" }, cardinality: many, extract: /results, retry_safe: true, concurrency: parallel }
-        create: { method: POST, path: "/api/agent_builder/skills", namespace: { prefix: "/s/{namespace}" }, cardinality: one }
+        read: { method: GET, path: "/api/agent_builder/skills/{id}", namespace: { prefix: "/s/{namespace}" } }
+        list: { method: GET, path: "/api/agent_builder/skills", namespace: { prefix: "/s/{namespace}" }, cardinality: many, extract: /results, response: { collection: list } }
+        create: { method: POST, path: "/api/agent_builder/skills", namespace: { prefix: "/s/{namespace}" } }
         update:
           method: PUT
           path: "/api/agent_builder/skills/{id}"
           namespace: { prefix: "/s/{namespace}" }
-          cardinality: one
-          transformations: [{ kind: omit, pointer: /id }]
-        delete: { method: DELETE, path: "/api/agent_builder/skills/{id}", namespace: { prefix: "/s/{namespace}" }, cardinality: one, retry_safe: true }
+        delete: { method: DELETE, path: "/api/agent_builder/skills/{id}", namespace: { prefix: "/s/{namespace}" } }
   plugins:
     - version: ">=9.4.0, <10.0.0"
       stability: experimental
@@ -172,16 +161,15 @@ resource_types:
       dependencies: [spaces]
       metadata: { fields: [/created_at, /updated_at, /description, /manifest, /skill_ids, /unmanaged_assets, /version] }
       operations:
-        read: { method: GET, path: "/api/agent_builder/plugins/{id}", namespace: { prefix: "/s/{namespace}" }, cardinality: one, retry_safe: true, concurrency: parallel }
-        list: { method: GET, path: "/api/agent_builder/plugins", namespace: { prefix: "/s/{namespace}" }, cardinality: many, extract: /results, retry_safe: true, concurrency: parallel }
+        read: { method: GET, path: "/api/agent_builder/plugins/{id}", namespace: { prefix: "/s/{namespace}" } }
+        list: { method: GET, path: "/api/agent_builder/plugins", namespace: { prefix: "/s/{namespace}" }, cardinality: many, extract: /results, response: { collection: list } }
         create:
           method: POST
           path: "/api/agent_builder/plugins/install"
           namespace: { prefix: "/s/{namespace}" }
-          cardinality: one
-          trustworthy_response: true
+          response: resource
           body: { url: "{source_url}", plugin_name: "{name}" }
-        delete: { method: DELETE, path: "/api/agent_builder/plugins/{id}", namespace: { prefix: "/s/{namespace}" }, cardinality: one, retry_safe: true }
+        delete: { method: DELETE, path: "/api/agent_builder/plugins/{id}", namespace: { prefix: "/s/{namespace}" } }
   agents:
     - version: ">=9.4.0, <10.0.0"
       id: { pointer: /id, scope: universal }
@@ -191,13 +179,11 @@ resource_types:
       dependencies: [spaces, tools, skills, plugins]
       metadata: { fields: [/readonly, /schema] }
       operations:
-        read: { method: GET, path: "/api/agent_builder/agents/{id}", namespace: { prefix: "/s/{namespace}" }, cardinality: one, retry_safe: true, concurrency: parallel }
-        list: { method: GET, path: "/api/agent_builder/agents", namespace: { prefix: "/s/{namespace}" }, cardinality: many, extract: /results, retry_safe: true, concurrency: parallel }
-        create: { method: POST, path: "/api/agent_builder/agents", namespace: { prefix: "/s/{namespace}" }, cardinality: one }
+        read: { method: GET, path: "/api/agent_builder/agents/{id}", namespace: { prefix: "/s/{namespace}" } }
+        list: { method: GET, path: "/api/agent_builder/agents", namespace: { prefix: "/s/{namespace}" }, cardinality: many, extract: /results, response: { collection: list } }
+        create: { method: POST, path: "/api/agent_builder/agents", namespace: { prefix: "/s/{namespace}" } }
         update:
           method: PUT
           path: "/api/agent_builder/agents/{id}"
           namespace: { prefix: "/s/{namespace}" }
-          cardinality: one
-          transformations: [{ kind: omit, pointer: /id }]
-        delete: { method: DELETE, path: "/api/agent_builder/agents/{id}", namespace: { prefix: "/s/{namespace}" }, cardinality: one, retry_safe: true }
+        delete: { method: DELETE, path: "/api/agent_builder/agents/{id}", namespace: { prefix: "/s/{namespace}" } }

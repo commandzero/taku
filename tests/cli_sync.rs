@@ -139,14 +139,14 @@ resource_types:
       id: { pointer: /id, scope: universal }
       display_name: { pointer: /name, strategy: name }
       operations:
-        read: { method: GET, path: "/_ingest/pipeline/{id}", cardinality: one, extract: "/{id}" }
-        upsert: { method: PUT, path: "/_ingest/pipeline/{id}", cardinality: one }
+        read: { method: GET, path: "/_ingest/pipeline/{id}", extract: "/{id}" }
+        upsert: { method: PUT, path: "/_ingest/pipeline/{id}" }
     - version: ">=9.2.0, <10.0.0"
       id: { pointer: /id, scope: universal }
       display_name: { pointer: /name, strategy: name }
       operations:
-        read: { method: GET, path: "/_ingest/pipeline/{id}", cardinality: one, extract: "/{id}" }
-        upsert: { method: PUT, path: "/_ingest/pipeline/{id}", cardinality: one }
+        read: { method: GET, path: "/_ingest/pipeline/{id}", extract: "/{id}" }
+        upsert: { method: PUT, path: "/_ingest/pipeline/{id}" }
 "#;
     std::fs::write(
         project
@@ -197,8 +197,8 @@ resource_types:
       display_name: { pointer: /name, strategy: name }
       write_intent: create
       operations:
-        read: { method: GET, path: "/jobs/{id}", cardinality: one }
-        create: { method: POST, path: "/jobs", cardinality: one, trustworthy_response: true }
+        read: { method: GET, path: "/jobs/{id}" }
+        create: { method: POST, path: "/jobs", response: resource }
 "#;
     std::fs::write(
         project
@@ -360,6 +360,7 @@ fn remote_completion_lists_untracked_ids_without_persisting_operational_state() 
         serde_yaml::from_str(&std::fs::read_to_string(&definition_path).unwrap()).unwrap();
     let mut non_many = definition["resource_types"]["ingest_pipelines"][0].clone();
     non_many["operations"]["list"]["cardinality"] = serde_yaml::Value::String("one".into());
+    non_many["operations"]["list"]["response"] = serde_yaml::Value::Null;
     definition["resource_types"]["single_list"] = serde_yaml::Value::Sequence(vec![non_many]);
     std::fs::write(
         &definition_path,
@@ -639,8 +640,8 @@ resource_types:
       guard_pointer: /version
       transformations: [{ kind: remove, pointer: /version }]
       operations:
-        read: { method: GET, path: "/_ingest/pipeline/{id}", cardinality: one, extract: "/{id}" }
-        upsert: { method: PUT, path: "/_ingest/pipeline/{id}", cardinality: one, guard_header: if-match }
+        read: { method: GET, path: "/_ingest/pipeline/{id}", extract: "/{id}" }
+        upsert: { method: PUT, path: "/_ingest/pipeline/{id}", guard_header: if-match }
 "#;
     std::fs::write(
         project

@@ -96,18 +96,19 @@ resource_types:
     - id: { pointer: /id, scope: universal }
       display_name: { pointer: /name, strategy: name }
       operations:
-        read: { method: GET, path: "/widgets/{id}", cardinality: one }
+        read: { method: GET, path: "/widgets/{id}" }
         list:
           method: GET
           path: /widgets
           cardinality: many
           extract: /items
+          response: { collection: list }
           pagination:
             kind: cursor
             cursor_parameter: cursor
             next_pointer: /next
             max_pages: 3
-        upsert: { method: PUT, path: "/widgets/{id}", cardinality: one }
+        upsert: { method: PUT, path: "/widgets/{id}" }
 "#,
     )
     .unwrap();

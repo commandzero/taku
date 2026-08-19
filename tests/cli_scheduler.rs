@@ -185,8 +185,8 @@ fn setup(fake: &Fake, include_heavy: bool, include_dependent: bool) -> TempDir {
     - id: { pointer: /id, scope: universal }
       display_name: { pointer: /name, strategy: name }
       operations:
-        read: { method: GET, path: "/light/{id}", cardinality: one }
-        upsert: { method: PUT, path: "/light/{id}", cardinality: one, concurrency: parallel, trustworthy_response: true }
+        read: { method: GET, path: "/light/{id}" }
+        upsert: { method: PUT, path: "/light/{id}", response: resource, retry_safe: false }
 "#,
     );
     if include_heavy {
@@ -194,8 +194,8 @@ fn setup(fake: &Fake, include_heavy: bool, include_dependent: bool) -> TempDir {
     - id: { pointer: /id, scope: universal }
       display_name: { pointer: /name, strategy: name }
       operations:
-        read: { method: GET, path: "/heavy/{id}", cardinality: one }
-        upsert: { method: PUT, path: "/heavy/{id}", cardinality: one, concurrency: serial, trustworthy_response: true }
+        read: { method: GET, path: "/heavy/{id}" }
+        upsert: { method: PUT, path: "/heavy/{id}", concurrency: serial, response: resource, retry_safe: false }
 "#);
     }
     if include_dependent {
@@ -205,9 +205,9 @@ fn setup(fake: &Fake, include_heavy: bool, include_dependent: bool) -> TempDir {
       display_name: { pointer: /name, strategy: name }
       dependencies: [heavy]
       operations:
-        read: { method: GET, path: "/dependent/{id}", cardinality: one }
-        upsert: { method: PUT, path: "/dependent/{id}", cardinality: one, concurrency: parallel, trustworthy_response: true }
-        delete: { method: DELETE, path: "/dependent/{id}", cardinality: one, retry_safe: true }
+        read: { method: GET, path: "/dependent/{id}" }
+        upsert: { method: PUT, path: "/dependent/{id}", response: resource, retry_safe: false }
+        delete: { method: DELETE, path: "/dependent/{id}" }
 "#,
         );
     }
@@ -444,8 +444,8 @@ fn outbound_transformation_conflicts_are_reported_before_any_network_call() {
         .join(".taku/applications/elasticsearch/version-9.yml");
     let mut definition: serde_yaml::Value =
         serde_yaml::from_str(&std::fs::read_to_string(&definition_path).unwrap()).unwrap();
-    definition["resource_types"]["light"][0]["transformations"] =
-        serde_yaml::from_str("- { kind: frame, pointer: /missing }\n").unwrap();
+    definition["resource_types"]["light"][0]["operations"]["upsert"]["body"] =
+        serde_yaml::Value::String("/missing".into());
     std::fs::write(
         &definition_path,
         serde_yaml::to_string(&definition).unwrap(),
@@ -458,20 +458,26 @@ fn outbound_transformation_conflicts_are_reported_before_any_network_call() {
         &["push", "--untracked", "allow", "--uncommitted", "allow"],
     );
 
-    assert_eq!(output.status.code(), Some(4));
+    assert_eq!(
+        output.status.code(),
+        Some(4),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let report: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert!(
         report["result"]
             .as_array()
             .unwrap()
             .iter()
-            .all(|item| item["outcome"] == "transformation_conflict")
+            .all(|item| item["outcome"] == "transformation_conflict"),
+        "{report}"
     );
     assert!(fake.metrics.counts.lock().unwrap().is_empty());
 }
 
 #[test]
-fn retry_safe_create_with_client_owned_id_may_retry() {
+fn retry_safe_by_default_create_with_client_owned_id_may_retry() {
     let fake = Fake::start(Some("/light/l1"));
     let project = setup(&fake, false, false);
     let definition_path = project
@@ -481,15 +487,15 @@ fn retry_safe_create_with_client_owned_id_may_retry() {
         serde_yaml::from_str(&std::fs::read_to_string(&definition_path).unwrap()).unwrap();
     let light = &mut definition["resource_types"]["light"][0];
     light["write_intent"] = serde_yaml::Value::String("create".into());
-    light["operations"]["create"] = serde_yaml::from_str(
-        "{ method: PUT, path: \"/light/{id}\", cardinality: one, retry_safe: true }\n",
-    )
-    .unwrap();
+    light["operations"]["create"] =
+        serde_yaml::from_str("{ method: PUT, path: \"/light/{id}\" }\n").unwrap();
     std::fs::write(
         &definition_path,
         serde_yaml::to_string(&definition).unwrap(),
     )
     .unwrap();
+    std::fs::remove_file(project.path().join(".taku/cache/dev/es/light.yml")).unwrap();
+    std::fs::remove_file(project.path().join(".taku/baselines/dev/es.yml")).unwrap();
     fake.metrics.reads_absent.store(true, Ordering::SeqCst);
     run(&project, &["fetch"]);
     fake.metrics.counts.lock().unwrap().clear();

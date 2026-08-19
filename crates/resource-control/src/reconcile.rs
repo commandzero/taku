@@ -282,7 +282,7 @@ pub fn pull(
             .resources
             .get_mut(&item.id)
             .context("selected Resource is absent from Observed State")?;
-        let requires_hint_pull = resource.requires_pull;
+        let requires_reconciliation = resource.requires_pull;
         let metadata_track = crate::hints::resolve(
             &root,
             &project,
@@ -355,7 +355,7 @@ pub fn pull(
                 }
             }
         };
-        if requires_hint_pull
+        if requires_reconciliation
             && !metadata_track
             && !matches!(
                 outcome,

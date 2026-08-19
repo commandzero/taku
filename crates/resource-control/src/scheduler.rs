@@ -226,7 +226,7 @@ pub fn push(
             .get(&item.id)
             .context("selected Resource is absent from Observed State")?;
         if observation.requires_pull {
-            bail!("Observed State requires Pull after a Directory Hint change; run `taku pull`");
+            bail!("Observed State requires Pull after a configuration change; run `taku pull`");
         }
         let current = if resource_type.write_intent != WriteIntent::Upsert
             || resource_type.concurrency_mode == crate::ConcurrencyMode::Guarded
@@ -408,7 +408,7 @@ pub fn push(
             .get(&marker.id)
             .context("selected deletion marker is absent from Observed State")?;
         if observation.requires_pull {
-            bail!("Observed State requires Pull after a Directory Hint change; run `taku pull`");
+            bail!("Observed State requires Pull after a configuration change; run `taku pull`");
         }
         let auth = resolve_auth(&root, &project, &environment, target, cli_provider)?;
         let discovered = match discover(&app, target, &auth) {
@@ -728,7 +728,33 @@ fn preflight_transformations(
             }
         }
         let resource_type = &effective.resource_types[&item.resource_type];
-        if outbound(&item.value, resource_type, None).is_err() {
+        let operation = match resource_type.write_intent {
+            WriteIntent::Create => resource_type.operations.create.as_ref(),
+            WriteIntent::Update => resource_type.operations.update.as_ref(),
+            WriteIntent::Upsert => {
+                if let Some(operation) = resource_type.operations.upsert.as_ref() {
+                    Some(operation)
+                } else {
+                    let observation = load_observation(&cache_path(
+                        root,
+                        environment,
+                        &item.target,
+                        item.namespace.as_deref(),
+                        &item.resource_type,
+                    ))?;
+                    if observation
+                        .resources
+                        .get(&item.id)
+                        .is_some_and(|resource| resource.present)
+                    {
+                        resource_type.operations.update.as_ref()
+                    } else {
+                        resource_type.operations.create.as_ref()
+                    }
+                }
+            }
+        };
+        if outbound(&item.value, resource_type, operation).is_err() {
             reports.push(report(
                 environment,
                 item,
@@ -799,7 +825,17 @@ fn execute_resource(
             &format!("{:?}", task.resource_type.concurrency_mode).to_ascii_lowercase(),
         ));
     }
-    let wire = outbound(&task.item.value, &task.resource_type, Some(&task.operation))?;
+    let wire = match outbound(&task.item.value, &task.resource_type, Some(&task.operation)) {
+        Ok(wire) => wire,
+        Err(_) => {
+            return Ok(report(
+                environment,
+                &task.item,
+                "transformation_conflict",
+                &format!("{:?}", task.resource_type.concurrency_mode).to_ascii_lowercase(),
+            ));
+        }
+    };
     let request = || {
         execute(
             &task.target,
@@ -815,6 +851,7 @@ fn execute_resource(
                 },
                 context: Some(&task.item.value),
                 body: Some(std::slice::from_ref(&wire)),
+                resource_ids: None,
                 mutation: true,
                 metadata_track: task.metadata_track,
             },
@@ -859,7 +896,7 @@ fn execute_resource(
                 remove_pointer(value, INTERNAL_GUARD_POINTER)?;
             }
             if task.item.pending {
-                if !task.operation.trustworthy_response
+                if !task.operation.consumes_response_body()
                     || values.len() != 1
                     || pointer_string(&values[0], &task.resource_type.id.pointer).is_none()
                 {
@@ -880,7 +917,7 @@ fn execute_resource(
             } else {
                 let _guard = persistence.lock().unwrap();
                 let mut observation = load_observation(&task.observation_path)?;
-                if task.operation.trustworthy_response && values.len() == 1 {
+                if task.operation.consumes_response_body() && values.len() == 1 {
                     if let Some(entry) = observation.resources.get_mut(&task.item.id) {
                         entry.value = Some(values[0].clone());
                         entry.present = true;
@@ -937,10 +974,28 @@ fn execute_many(
     if pending.is_empty() {
         return Ok(reports);
     }
-    let wires: Vec<_> = pending
+    let wires: Result<Vec<_>> = pending
         .iter()
         .map(|task| outbound(&task.item.value, &task.resource_type, Some(&task.operation)))
-        .collect::<Result<_>>()?;
+        .collect();
+    let wires = match wires {
+        Ok(wires) => wires,
+        Err(_) => {
+            for task in pending {
+                reports.push(report(
+                    environment,
+                    &task.item,
+                    "transformation_conflict",
+                    &format!("{:?}", task.resource_type.concurrency_mode).to_ascii_lowercase(),
+                ));
+            }
+            return Ok(reports);
+        }
+    };
+    let resource_ids = pending
+        .iter()
+        .map(|task| task.item.id.clone())
+        .collect::<Vec<_>>();
     let first = &pending[0];
     let request = || {
         execute(
@@ -953,6 +1008,7 @@ fn execute_many(
                 id: None,
                 context: Some(&first.item.value),
                 body: Some(&wires),
+                resource_ids: Some(&resource_ids),
                 mutation: true,
                 metadata_track: first.metadata_track,
             },
@@ -1098,6 +1154,7 @@ fn verify_deletion(task: &PreparedDeletion) -> Result<DeletionVerification> {
             id: Some(&task.marker.id),
             context: Some(&parameters),
             body: None,
+            resource_ids: None,
             mutation: false,
             metadata_track: task.metadata_track,
         },
@@ -1167,6 +1224,7 @@ fn execute_deletion(
                     id: Some(&task.marker.id),
                     context: Some(&parameters),
                     body: None,
+                    resource_ids: None,
                     mutation: true,
                     metadata_track: false,
                 },
