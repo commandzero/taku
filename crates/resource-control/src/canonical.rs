@@ -563,7 +563,7 @@ pub fn short_id(id: &str) -> String {
 fn is_deletion_marker(path: &Path) -> bool {
     path.file_name()
         .and_then(|n| n.to_str())
-        .is_some_and(|n| n.ends_with(".delete.yml"))
+        .is_some_and(|n| n.ends_with(".delete.yaml"))
 }
 
 pub(crate) fn reject_symlink_components(root: &Path, path: &Path) -> Result<()> {

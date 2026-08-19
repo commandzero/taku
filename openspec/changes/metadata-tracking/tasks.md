@@ -3,7 +3,7 @@
 - [x] 1.1 Add the optional Resource Type `metadata.fields` declaration with serialization defaults that preserve existing Application catalogs.
 - [x] 1.2 Add closed, schema-versioned `.target.yaml` and `.resource.yaml` models supporting only `metadata.track`, with unknown-field and invalid-value rejection.
 - [x] 1.3 Add model tests for omitted metadata, empty/invalid field declarations, true/false hints, unsupported schema versions, unknown fields, and serialization round trips.
-- [x] 1.4 Keep `.taku/project.yml` unchanged and add tests proving Application definitions cannot set repository metadata tracking policy.
+- [x] 1.4 Keep `.taku/project.yaml` unchanged and add tests proving Application definitions cannot set repository metadata tracking policy.
 
 ## 2. Directory Hint Resolution and Discovery
 

@@ -48,11 +48,11 @@ Tracked Taku metadata lives under `.taku/`:
 
 ```text
 .taku/
-├── project.yml
+├── project.yaml
 ├── applications/<application>/
-│   ├── application.yml
-│   └── version-<major>.yml
-└── baselines/<environment>/<target>.yml
+│   ├── application.yaml
+│   └── version-<major>.yaml
+└── baselines/<environment>/<target>.yaml
 ```
 
 Context, Application Source cache, Observed State, and Push Journals are ignored. In a Single layout, non-namespaced Resources normally use `target/type/name.json`; in a Multi layout they normally use `environment/target/type/name.json`. Resource Types that opt into namespacing add an explicit Namespace segment, including a literal `default` directory. A Resource Type may instead configure a Filesystem Projection, making one Resource a directory tree such as `target/namespace/skills/skill-id/SKILL.md`. The stable Resource ID remains in the merged Resource Object and is never inferred from the filesystem path. Namespace lifecycle is managed by an ordinary non-namespaced Resource Type defined by the Application, such as Kibana `spaces`.
@@ -157,7 +157,7 @@ The lifecycle tests create uniquely named remote fixtures, manage them through t
 
 ## Application definitions
 
-An Application is a strictly validated `application.yml` plus one flat `version-<major>.yml` Resource Type Catalog per supported major product version. The application file declares shared transport defaults and an ordered fallback list of Version Endpoints. Taku tries each endpoint until one returns a valid Application Version, then selects the matching major catalog. Each Resource Type declares identity, optional namespacing, display-name policy, lifecycle Operations, actual HTTP methods, paths, headers, response mappings and body policies, One/Many cardinality, independent Bundling and Unbundling, transformations, write intent, retry safety, scheduling class, and dependencies. Many writes are bundled at runtime, including multipart NDJSON payloads. HTTP verbs do not imply lifecycle semantics.
+An Application is a strictly validated `application.yaml` plus one flat `version-<major>.yaml` Resource Type Catalog per supported major product version. The application file declares shared transport defaults and an ordered fallback list of Version Endpoints. Taku tries each endpoint until one returns a valid Application Version, then selects the matching major catalog. Each Resource Type declares identity, optional namespacing, display-name policy, lifecycle Operations, actual HTTP methods, paths, headers, response mappings and body policies, One/Many cardinality, independent Bundling and Unbundling, transformations, write intent, retry safety, scheduling class, and dependencies. Many writes are bundled at runtime, including multipart NDJSON payloads. HTTP verbs do not imply lifecycle semantics.
 
 Every configuration file carries its file-format `schema_version` and its own top-level definition `version`. The shared application file identifies the product and declares version discovery:
 
@@ -175,7 +175,7 @@ version_endpoints:
     pointer: /version/number
 ```
 
-Each `version-<major>.yml` repeats the Application name, constrains its supported Application Versions, and defines each Resource Type as a list of complete version-qualified definitions:
+Each `version-<major>.yaml` repeats the Application name, constrains its supported Application Versions, and defines each Resource Type as a list of complete version-qualified definitions:
 
 ```yaml
 schema_version: 1
@@ -271,12 +271,12 @@ Git sources use this layout:
 ```text
 applications/
 └── custom-application/
-    ├── application.yml
-    ├── version-8.yml
-    └── version-9.yml
+    ├── application.yaml
+    ├── version-8.yaml
+    └── version-9.yaml
 ```
 
-Configure `application_source.location` in `.taku/project.yml`, run `taku app refresh`, then install from the current offline cache. `taku update` is the only definition replacement workflow and refreshes each installed Git Application from its recorded source; `--from` explicitly switches eligible Applications to another source.
+Configure `application_source.location` in `.taku/project.yaml`, run `taku app refresh`, then install from the current offline cache. `taku update` is the only definition replacement workflow and refreshes each installed Git Application from its recorded source; `--from` explicitly switches eligible Applications to another source.
 
 ## Safety model
 

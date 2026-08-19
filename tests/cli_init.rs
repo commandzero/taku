@@ -28,7 +28,7 @@ fn initializes_single_project_at_exact_git_root_with_yaml_output() {
         .stdout(predicate::str::contains("schema_version: 1"))
         .stdout(predicate::str::contains("command: init"));
 
-    let metadata = std::fs::read_to_string(project.path().join(".taku/project.yml")).unwrap();
+    let metadata = std::fs::read_to_string(project.path().join(".taku/project.yaml")).unwrap();
     assert!(metadata.contains("layout: single"));
     assert!(metadata.contains("dev:"));
 }

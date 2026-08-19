@@ -477,7 +477,7 @@ fn run() -> Result<()> {
             let installed = project_root
                 .join(".taku/applications")
                 .join(&application)
-                .join("application.yml")
+                .join("application.yaml")
                 .is_file();
             if !installed {
                 let authorized = yes

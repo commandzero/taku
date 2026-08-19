@@ -87,7 +87,7 @@ fn setup(fake: &Fake) -> TempDir {
     std::fs::write(
         project
             .path()
-            .join(".taku/applications/elasticsearch/version-9.yml"),
+            .join(".taku/applications/elasticsearch/version-9.yaml"),
         r#"schema_version: 1
 version: pagination-definition
 application: { name: elasticsearch, version: ">=9.0.0, <10.0.0" }

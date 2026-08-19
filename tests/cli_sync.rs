@@ -151,13 +151,13 @@ resource_types:
     std::fs::write(
         project
             .path()
-            .join(".taku/applications/elasticsearch/version-9.yml"),
+            .join(".taku/applications/elasticsearch/version-9.yaml"),
         definition,
     )
     .unwrap();
     run(&project, &["fetch"]);
     assert!(
-        std::fs::read_to_string(project.path().join(".taku/baselines/dev/es.yml"))
+        std::fs::read_to_string(project.path().join(".taku/baselines/dev/es.yaml"))
             .unwrap()
             .contains(">=9.0.0, <9.2.0")
     );
@@ -178,7 +178,7 @@ resource_types:
     run(&project, &["fetch"]);
     run(&project, &["pull", "--yes"]);
     assert!(
-        std::fs::read_to_string(project.path().join(".taku/baselines/dev/es.yml"))
+        std::fs::read_to_string(project.path().join(".taku/baselines/dev/es.yaml"))
             .unwrap()
             .contains(">=9.2.0, <10.0.0")
     );
@@ -203,7 +203,7 @@ resource_types:
     std::fs::write(
         project
             .path()
-            .join(".taku/applications/elasticsearch/version-9.yml"),
+            .join(".taku/applications/elasticsearch/version-9.yaml"),
         definition,
     )
     .unwrap();
@@ -335,7 +335,7 @@ fn remote_list_add_remove_and_forget_preserve_partial_inventory_safety() {
     let markers: Vec<_> = std::fs::read_dir(project.path().join("es/ingest_pipelines"))
         .unwrap()
         .filter_map(Result::ok)
-        .filter(|e| e.file_name().to_string_lossy().ends_with(".delete.yml"))
+        .filter(|e| e.file_name().to_string_lossy().ends_with(".delete.yaml"))
         .collect();
     assert_eq!(markers.len(), 1);
     assert!(
@@ -355,7 +355,7 @@ fn remote_completion_lists_untracked_ids_without_persisting_operational_state() 
     let project = setup(&target);
     let definition_path = project
         .path()
-        .join(".taku/applications/elasticsearch/version-9.yml");
+        .join(".taku/applications/elasticsearch/version-9.yaml");
     let mut definition: serde_yaml::Value =
         serde_yaml::from_str(&std::fs::read_to_string(&definition_path).unwrap()).unwrap();
     let mut non_many = definition["resource_types"]["ingest_pipelines"][0].clone();
@@ -436,7 +436,10 @@ fn push_deletes_only_through_a_matching_guarded_marker_and_consumes_it() {
         !std::fs::read_dir(project.path().join("es/ingest_pipelines"))
             .unwrap()
             .filter_map(Result::ok)
-            .any(|entry| entry.file_name().to_string_lossy().ends_with(".delete.yml"))
+            .any(|entry| entry
+                .file_name()
+                .to_string_lossy()
+                .ends_with(".delete.yaml"))
     );
 }
 
@@ -488,7 +491,12 @@ fn pull_reconciles_a_deletion_guard_when_metadata_tracking_is_disabled() {
     let marker = std::fs::read_dir(project.path().join("es/ingest_pipelines"))
         .unwrap()
         .filter_map(Result::ok)
-        .find(|entry| entry.file_name().to_string_lossy().ends_with(".delete.yml"))
+        .find(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .ends_with(".delete.yaml")
+        })
         .unwrap()
         .path();
     let tracked_guard = std::fs::read_to_string(&marker).unwrap();
@@ -549,7 +557,12 @@ fn deletion_markers_reject_unknown_schema_versions() {
     let marker = std::fs::read_dir(project.path().join("es/ingest_pipelines"))
         .unwrap()
         .filter_map(Result::ok)
-        .find(|entry| entry.file_name().to_string_lossy().ends_with(".delete.yml"))
+        .find(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .ends_with(".delete.yaml")
+        })
         .unwrap()
         .path();
     let text = std::fs::read_to_string(&marker).unwrap();
@@ -586,7 +599,12 @@ fn deletion_marker_binding_must_match_the_tree_that_contains_it() {
     let marker = std::fs::read_dir(project.path().join("es/ingest_pipelines"))
         .unwrap()
         .filter_map(Result::ok)
-        .find(|entry| entry.file_name().to_string_lossy().ends_with(".delete.yml"))
+        .find(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .ends_with(".delete.yaml")
+        })
         .unwrap()
         .path();
     let text = std::fs::read_to_string(&marker).unwrap();
@@ -609,13 +627,15 @@ fn deletion_marker_discovery_rejects_symlinked_inputs() {
     use std::os::unix::fs::symlink;
     let target = FakeTarget::start();
     let project = setup(&target);
-    let outside = project.path().join("outside.delete.yml");
+    let outside = project.path().join("outside.delete.yaml");
     std::fs::write(
         &outside,
         "schema_version: 1\nenvironment: dev\ntarget: es\ntype: ingest_pipelines\nid: pipe-1\nguard: guard\nsource_path: ignored\n",
     )
     .unwrap();
-    let linked = project.path().join("es/ingest_pipelines/Linked.delete.yml");
+    let linked = project
+        .path()
+        .join("es/ingest_pipelines/Linked.delete.yaml");
     symlink(&outside, &linked).unwrap();
 
     let failed = output(&project, &["forget", "es", "ingest_pipelines", "pipe-1"]);
@@ -646,7 +666,7 @@ resource_types:
     std::fs::write(
         project
             .path()
-            .join(".taku/applications/elasticsearch/version-9.yml"),
+            .join(".taku/applications/elasticsearch/version-9.yaml"),
         definition,
     )
     .unwrap();
@@ -654,7 +674,7 @@ resource_types:
     let cache = std::fs::read_to_string(
         project
             .path()
-            .join(".taku/cache/dev/es/ingest_pipelines.yml"),
+            .join(".taku/cache/dev/es/ingest_pipelines.yaml"),
     )
     .unwrap();
     assert!(!cache.lines().any(|line| matches!(
@@ -726,7 +746,7 @@ fn create_only_dry_run_rechecks_remote_absence_instead_of_trusting_the_cache() {
     let project = setup(&target);
     let definition_path = project
         .path()
-        .join(".taku/applications/elasticsearch/version-9.yml");
+        .join(".taku/applications/elasticsearch/version-9.yaml");
     let mut definition: serde_yaml::Value =
         serde_yaml::from_str(&std::fs::read_to_string(&definition_path).unwrap()).unwrap();
     definition["resource_types"]["ingest_pipelines"][0]["write_intent"] =
@@ -739,7 +759,7 @@ fn create_only_dry_run_rechecks_remote_absence_instead_of_trusting_the_cache() {
     run(&project, &["fetch"]);
     let cache_path = project
         .path()
-        .join(".taku/cache/dev/es/ingest_pipelines.yml");
+        .join(".taku/cache/dev/es/ingest_pipelines.yaml");
     let mut cache: serde_yaml::Value =
         serde_yaml::from_str(&std::fs::read_to_string(&cache_path).unwrap()).unwrap();
     cache["resources"]["pipe-1"]["present"] = serde_yaml::Value::Bool(false);
@@ -780,7 +800,7 @@ fn fetch_reports_inbound_transformation_failures_as_structured_conflicts() {
     let project = setup(&target);
     let definition_path = project
         .path()
-        .join(".taku/applications/elasticsearch/version-9.yml");
+        .join(".taku/applications/elasticsearch/version-9.yaml");
     let mut definition: serde_yaml::Value =
         serde_yaml::from_str(&std::fs::read_to_string(&definition_path).unwrap()).unwrap();
     definition["resource_types"]["ingest_pipelines"][0]["transformations"] =
@@ -804,7 +824,7 @@ fn patch_mutation_mode_compares_and_pulls_only_fields_owned_by_the_resource() {
     let project = setup(&target);
     let definition_path = project
         .path()
-        .join(".taku/applications/elasticsearch/version-9.yml");
+        .join(".taku/applications/elasticsearch/version-9.yaml");
     let mut definition: serde_yaml::Value =
         serde_yaml::from_str(&std::fs::read_to_string(&definition_path).unwrap()).unwrap();
     definition["resource_types"]["ingest_pipelines"][0]["mutation_mode"] =
@@ -844,7 +864,7 @@ fn diff_rejects_observed_state_bound_to_different_project_inputs() {
     let target = FakeTarget::start();
     let project = setup(&target);
     run(&project, &["fetch"]);
-    let project_file = project.path().join(".taku/project.yml");
+    let project_file = project.path().join(".taku/project.yaml");
     let mut config: serde_yaml::Value =
         serde_yaml::from_str(&std::fs::read_to_string(&project_file).unwrap()).unwrap();
     config["environments"]["dev"]["targets"]["es"]["headers"] =
@@ -869,7 +889,7 @@ fn pull_conflicts_prevent_all_resource_writes_in_the_invocation() {
     std::fs::write(&second, serde_json::to_string_pretty(&original).unwrap()).unwrap();
     let cache_path = project
         .path()
-        .join(".taku/cache/dev/es/ingest_pipelines.yml");
+        .join(".taku/cache/dev/es/ingest_pipelines.yaml");
     let mut observation: serde_yaml::Value =
         serde_yaml::from_str(&std::fs::read_to_string(&cache_path).unwrap()).unwrap();
     observation["resources"]["pipe-2"] = serde_yaml::to_value(json!({
@@ -937,7 +957,7 @@ fn setup(target: &FakeTarget) -> TempDir {
         "TOKEN=\"Bearer SENTINEL-CREDENTIAL\"\n",
     )
     .unwrap();
-    let project_path = dir.path().join(".taku/project.yml");
+    let project_path = dir.path().join(".taku/project.yaml");
     let mut project: serde_yaml::Value =
         serde_yaml::from_str(&std::fs::read_to_string(&project_path).unwrap()).unwrap();
     project["environments"]["dev"]["targets"]["es"]["auth"] =
@@ -980,7 +1000,7 @@ fn fetch_status_pull_and_push_use_generic_operations_without_leaking_secrets() {
     let cache = std::fs::read_to_string(
         project
             .path()
-            .join(".taku/cache/dev/es/ingest_pipelines.yml"),
+            .join(".taku/cache/dev/es/ingest_pipelines.yaml"),
     )
     .unwrap();
     assert!(!cache.contains("NEVER-PERSIST"));
@@ -1044,7 +1064,7 @@ fn target_hint_tracks_metadata_for_git_but_push_never_sends_it() {
     let cache = std::fs::read_to_string(
         project
             .path()
-            .join(".taku/cache/dev/es/ingest_pipelines.yml"),
+            .join(".taku/cache/dev/es/ingest_pipelines.yaml"),
     )
     .unwrap();
     assert!(cache.contains("created_date_millis"));
@@ -1225,7 +1245,7 @@ fn validate_rejects_tracked_metadata_overlapping_target_sensitive_fields_without
         "schema_version: 1\nmetadata: { track: true }\n",
     )
     .unwrap();
-    let project_path = project.path().join(".taku/project.yml");
+    let project_path = project.path().join(".taku/project.yaml");
     let mut config: serde_yaml::Value =
         serde_yaml::from_str(&std::fs::read_to_string(&project_path).unwrap()).unwrap();
     config["environments"]["dev"]["targets"]["es"]["sensitive_fields"] =

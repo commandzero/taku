@@ -275,7 +275,7 @@ fn add_target_sensitive_fields(
 pub fn baseline_path(root: &Path, environment: &str, target: &str) -> PathBuf {
     root.join(".taku/baselines")
         .join(environment)
-        .join(format!("{target}.yml"))
+        .join(format!("{target}.yaml"))
 }
 
 pub fn load_baseline(path: &Path) -> Result<TargetBaseline> {
@@ -306,7 +306,7 @@ pub fn validate_project(root: &Path) -> Result<serde_json::Value> {
         .unwrap_or_else(|_| fs::read_dir(root.join(".taku")).unwrap())
     {
         let entry = entry?;
-        if entry.path().join("application.yml").is_file() {
+        if entry.path().join("application.yaml").is_file() {
             let name = entry.file_name().to_string_lossy().into_owned();
             load_installed(&root, &name)?;
             applications.push(name);

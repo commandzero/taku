@@ -842,8 +842,8 @@ pub fn cache_path(
     match namespace {
         Some(namespace) => target_root
             .join(namespace)
-            .join(format!("{resource_type}.yml")),
-        None => target_root.join(format!("{resource_type}.yml")),
+            .join(format!("{resource_type}.yaml")),
+        None => target_root.join(format!("{resource_type}.yaml")),
     }
 }
 pub fn load_observation(path: &Path) -> Result<ObservationFile> {

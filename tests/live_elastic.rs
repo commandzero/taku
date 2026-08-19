@@ -132,7 +132,7 @@ fn project(application: &str, target: &str, url: &str, authorization: &str) -> T
         &["target", "add", application, target, "--url", url],
     );
 
-    let path = project.path().join(".taku/project.yml");
+    let path = project.path().join(".taku/project.yaml");
     let mut config: serde_yaml::Value =
         serde_yaml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
     config["environments"]["live"]["targets"][target]["auth"] =
@@ -821,7 +821,7 @@ fn lists_real_kibana_dashboard_exports_without_treating_export_details_as_a_reso
     let project = project("kibana", "kb", KIBANA_URL, &authorization);
     let definition_path = project
         .path()
-        .join(".taku/applications/kibana/version-9.yml");
+        .join(".taku/applications/kibana/version-9.yaml");
     let mut definition: serde_yaml::Value =
         serde_yaml::from_str(&std::fs::read_to_string(&definition_path).unwrap()).unwrap();
     definition["resource_types"]["saved_objects"][0]["operations"]["list"]["body"]["type"] =
@@ -894,7 +894,7 @@ fn round_trips_the_complete_esdiag_resource_corpus() {
     );
     assert!(
         project
-            .join("esdiag-assets/elasticsearch/assets.yml")
+            .join("esdiag-assets/elasticsearch/assets.yaml")
             .exists(),
         "the copied ESDiag source corpus is missing"
     );

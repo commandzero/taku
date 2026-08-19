@@ -21,7 +21,7 @@ Current flat inventory treats every non-marker file in a Resource Type directory
 
 **Non-Goals:**
 
-- Adding metadata policy to `.taku/project.yml` or an Application definition.
+- Adding metadata policy to `.taku/project.yaml` or an Application definition.
 - Configuring one logical Resource Type across all Targets or Namespaces from a central selector tree.
 - Configuring individual Resources; `.resource.yaml` configures the Resource Type directory containing them.
 - Allowing arbitrary local overlays of catalog identity, Operations, transformations, transport, projections, lifecycle, concurrency, dependencies, or Sensitive Fields.
@@ -66,7 +66,7 @@ The files do not repeat names already encoded by these paths. Use dedicated `Tar
 
 The exact filenames are reserved beneath managed Target trees. A reserved name at an invalid level—including inside an individual projected Resource directory—is an error rather than ordinary Resource content.
 
-**Alternative considered:** Store an Application/Resource Type policy tree in `.taku/project.yml`. Rejected because it duplicates the desired-state hierarchy and separates configuration from the directory it modifies.
+**Alternative considered:** Store an Application/Resource Type policy tree in `.taku/project.yaml`. Rejected because it duplicates the desired-state hierarchy and separates configuration from the directory it modifies.
 
 **Alternative considered:** Use one `.taku.yaml` at every level. Rejected because explicit filenames make valid placement and scope reviewable and reduce ambiguity inside projected Resource directories.
 
@@ -150,7 +150,7 @@ Target-added Sensitive Fields are known only with Project and hint context. Reje
 
 ### 9. Preserve existing schemas and migrate only API-owned removals
 
-Do not change `.taku/project.yml`. The new sidecars each start at `schema_version: 1`; Resource Type `metadata` is optional within the existing catalog schema. Increment affected embedded catalog definition versions so installed Application updates remain explicit and stale observations invalidate.
+Do not change `.taku/project.yaml`. The new sidecars each start at `schema_version: 1`; Resource Type `metadata` is optional within the existing catalog schema. Increment affected embedded catalog definition versions so installed Application updates remain explicit and stale observations invalidate.
 
 Audit existing `remove` transformations rather than converting mechanically. Move response-only provenance and server-maintained fields into `metadata.fields`. Leave structural normalization, response-envelope extraction, inserted identity, and outbound identity omission as transformations. With no sidecars, effective tracking is false and existing Canonical output remains byte-equivalent.
 

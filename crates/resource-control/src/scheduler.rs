@@ -512,7 +512,7 @@ pub fn push(
     let journal_path = root
         .join(".taku/journals")
         .join(&environment)
-        .join("push.yml");
+        .join("push.yaml");
     let journal = prepare_journal(&journal_path, &plan_binding, total, new_plan)?;
     let journal = Arc::new(Mutex::new(journal));
     let serial = Arc::new(Mutex::new(()));

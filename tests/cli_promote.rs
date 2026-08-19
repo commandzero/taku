@@ -90,7 +90,7 @@ fn promotes_complete_universal_resources_through_destination_owned_mapping() {
             "http://prod.invalid",
         ],
     );
-    let project_path = project.path().join(".taku/project.yml");
+    let project_path = project.path().join(".taku/project.yaml");
     let mut config: serde_yaml::Value =
         serde_yaml::from_str(&std::fs::read_to_string(&project_path).unwrap()).unwrap();
     config["environments"]["prod"]["from"] = serde_yaml::Value::String("dev".into());
@@ -151,7 +151,7 @@ fn cross_project_promotion_requires_exact_installed_application_compatibility() 
     .unwrap();
     let installed = destination
         .path()
-        .join(".taku/applications/elasticsearch/version-9.yml");
+        .join(".taku/applications/elasticsearch/version-9.yaml");
     let mut definition: serde_yaml::Value =
         serde_yaml::from_str(&std::fs::read_to_string(&installed).unwrap()).unwrap();
     definition["version"] = serde_yaml::Value::String("different".into());

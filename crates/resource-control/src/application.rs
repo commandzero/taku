@@ -13,7 +13,7 @@ use std::process::Command;
 
 #[derive(Embed)]
 #[folder = "assets/applications/"]
-#[include = "*/*.yml"]
+#[include = "*/*.yaml"]
 struct EmbeddedApplications;
 
 #[derive(Clone)]
@@ -84,7 +84,7 @@ fn embedded_application(name: &str) -> Result<ApplicationBundle> {
 
 pub fn load_installed(root: &Path, name: &str) -> Result<ApplicationDefinition> {
     let path = root.join(".taku/applications").join(name);
-    if !path.join("application.yml").is_file() {
+    if !path.join("application.yaml").is_file() {
         bail!("Application {name} is not installed");
     }
     Ok(read_bundle_directory(name, &path)?.definition)
@@ -101,7 +101,7 @@ pub fn list_applications(root: &Path) -> Result<Vec<ApplicationListing>> {
     let cached = cache_root(&root).join("applications");
     if let Ok(entries) = fs::read_dir(&cached) {
         for entry in entries.flatten() {
-            if entry.path().join("application.yml").is_file() {
+            if entry.path().join("application.yaml").is_file() {
                 names.insert(entry.file_name().to_string_lossy().into_owned());
             }
         }
@@ -109,7 +109,7 @@ pub fn list_applications(root: &Path) -> Result<Vec<ApplicationListing>> {
     let installed_root = root.join(".taku/applications");
     if let Ok(entries) = fs::read_dir(&installed_root) {
         for entry in entries.flatten() {
-            if entry.path().join("application.yml").is_file() {
+            if entry.path().join("application.yaml").is_file() {
                 names.insert(entry.file_name().to_string_lossy().into_owned());
             }
         }
@@ -117,8 +117,11 @@ pub fn list_applications(root: &Path) -> Result<Vec<ApplicationListing>> {
     names
         .into_iter()
         .map(|name| {
-            let installed = installed_root.join(&name).join("application.yml").is_file();
-            let cached_path = cached.join(&name).join("application.yml");
+            let installed = installed_root
+                .join(&name)
+                .join("application.yaml")
+                .is_file();
+            let cached_path = cached.join(&name).join("application.yaml");
             let cached_definition = if cached_path.exists() {
                 Some(load_cached(&root, &name)?)
             } else {
@@ -190,7 +193,7 @@ pub fn install_applications_from(
         let destination = root
             .join(".taku/applications")
             .join(name)
-            .join("application.yml");
+            .join("application.yaml");
         if destination.exists() {
             bail!("Application {name} is already installed; use `taku update {name}`");
         }
@@ -266,7 +269,7 @@ pub fn refresh_source(root: &Path, from: Option<&str>) -> Result<RefreshResult> 
         .to_owned();
     let applications = validate_source_tree(&temporary)?;
     fs::write(
-        temporary.join(".source.yml"),
+        temporary.join(".source.yaml"),
         serde_yaml::to_string(
             &serde_json::json!({"schema_version":1,"location":location,"revision":revision}),
         )?,
@@ -297,7 +300,7 @@ pub fn update_applications(
         let mut names = Vec::new();
         if let Ok(entries) = fs::read_dir(&installed_root) {
             for entry in entries.flatten() {
-                if entry.path().join("application.yml").is_file() {
+                if entry.path().join("application.yaml").is_file() {
                     names.push(entry.file_name().to_string_lossy().into_owned());
                 }
             }
@@ -506,7 +509,7 @@ fn load_cached(root: &Path, name: &str) -> Result<ApplicationBundle> {
 }
 fn source_metadata(root: &Path) -> Result<(String, String)> {
     let value: SourceMetadata =
-        serde_yaml::from_str(&fs::read_to_string(cache_root(root).join(".source.yml"))?)?;
+        serde_yaml::from_str(&fs::read_to_string(cache_root(root).join(".source.yaml"))?)?;
     if value.schema_version != SCHEMA_VERSION {
         bail!(
             "unsupported Application Source metadata schema version {}",
@@ -519,7 +522,7 @@ fn source_candidate(root: &Path, name: &str) -> Result<ApplicationCandidate> {
     let cached_path = cache_root(root)
         .join("applications")
         .join(name)
-        .join("application.yml");
+        .join("application.yaml");
     if cached_path.exists() {
         let bundle = load_cached(root, name)?;
         let (location, revision) = source_metadata(root)?;
@@ -540,9 +543,9 @@ fn validate_source_tree(root: &Path) -> Result<Vec<String>> {
             bail!("Application Source contains a symlink or special entry");
         }
         let name = entry.file_name().to_string_lossy().into_owned();
-        let definition_path = entry.path().join("application.yml");
+        let definition_path = entry.path().join("application.yaml");
         let definition_metadata = fs::symlink_metadata(&definition_path)
-            .with_context(|| format!("Application {name} has no application.yml"))?;
+            .with_context(|| format!("Application {name} has no application.yaml"))?;
         if definition_metadata.file_type().is_symlink() || !definition_metadata.is_file() {
             bail!("Application {name} definition is not a regular file");
         }
@@ -628,7 +631,7 @@ fn validate_resources_for(
                                 || path
                                     .file_name()
                                     .and_then(|value| value.to_str())
-                                    .is_some_and(|value| value.ends_with(".delete.yml"))
+                                    .is_some_and(|value| value.ends_with(".delete.yaml"))
                             {
                                 continue;
                             }
@@ -655,8 +658,8 @@ fn parse_bundle(
     files: BTreeMap<String, Vec<u8>>,
 ) -> Result<ApplicationBundle> {
     let manifest = files
-        .get("application.yml")
-        .context("Application has no application.yml")?;
+        .get("application.yaml")
+        .context("Application has no application.yaml")?;
     let mut definition: ApplicationDefinition =
         serde_yaml::from_slice(manifest).context("invalid Application definition")?;
     if definition.schema_version != SCHEMA_VERSION {
@@ -690,7 +693,7 @@ fn parse_bundle(
     let mut catalogs = BTreeMap::new();
     for (path, bytes) in &files {
         let Some(major) = version_file_major(path) else {
-            if path != "application.yml" {
+            if path != "application.yaml" {
                 bail!("unexpected Application definition file {path}");
             }
             continue;
@@ -1145,7 +1148,7 @@ fn validate_transformations(transformations: &[crate::Transformation], owner: &s
 
 fn version_file_major(path: &str) -> Option<u64> {
     path.strip_prefix("version-")?
-        .strip_suffix(".yml")?
+        .strip_suffix(".yaml")?
         .parse()
         .ok()
 }
@@ -1161,7 +1164,7 @@ fn read_bundle_directory(name: &str, directory: &Path) -> Result<ApplicationBund
             bail!("Application {name} contains a symlink or special entry");
         }
         let path = entry.file_name().to_string_lossy().into_owned();
-        if path == "application.yml" || version_file_major(&path).is_some() {
+        if path == "application.yaml" || version_file_major(&path).is_some() {
             files.insert(path, fs::read(entry.path())?);
         } else {
             bail!("unexpected Application definition file {path}");
@@ -1173,7 +1176,7 @@ fn read_bundle_directory(name: &str, directory: &Path) -> Result<ApplicationBund
 fn write_bundle(destination: &Path, bundle: &ApplicationBundle) -> Result<()> {
     fs::create_dir_all(destination)?;
     for (path, bytes) in &bundle.files {
-        let bytes = if path == "application.yml" {
+        let bytes = if path == "application.yaml" {
             serde_yaml::to_string(&bundle.definition)?.into_bytes()
         } else {
             bytes.clone()

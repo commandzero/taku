@@ -73,17 +73,17 @@ fn lists_and_installs_embedded_applications_without_adding_targets() {
     assert!(
         project
             .path()
-            .join(".taku/applications/elasticsearch/version-9.yml")
+            .join(".taku/applications/elasticsearch/version-9.yaml")
             .is_file()
     );
     assert!(
         project
             .path()
-            .join(".taku/applications/kibana/version-9.yml")
+            .join(".taku/applications/kibana/version-9.yaml")
             .is_file()
     );
 
-    let metadata = std::fs::read_to_string(project.path().join(".taku/project.yml")).unwrap();
+    let metadata = std::fs::read_to_string(project.path().join(".taku/project.yaml")).unwrap();
     assert!(!metadata.contains("targets:\n    elasticsearch:"));
     Command::cargo_bin("taku")
         .unwrap()
@@ -135,7 +135,7 @@ fn adds_and_renames_environment_scoped_targets() {
     .unwrap();
     json(&project, &["target", "rename", "es1", "cluster"]);
 
-    let metadata = std::fs::read_to_string(project.path().join(".taku/project.yml")).unwrap();
+    let metadata = std::fs::read_to_string(project.path().join(".taku/project.yaml")).unwrap();
     assert!(metadata.contains("cluster:"));
     assert!(metadata.contains("es2:"));
     assert!(!metadata.contains("es1:"));
@@ -280,7 +280,7 @@ fn target_sensitive_fields_tighten_the_installed_resource_type() {
             "http://invalid",
         ],
     );
-    let project_file = project.path().join(".taku/project.yml");
+    let project_file = project.path().join(".taku/project.yaml");
     let mut config: serde_yaml::Value =
         serde_yaml::from_str(&std::fs::read_to_string(&project_file).unwrap()).unwrap();
     config["environments"]["dev"]["targets"]["es"]["sensitive_fields"] =
@@ -313,7 +313,7 @@ fn target_sensitive_fields_cannot_remove_required_identity_or_display_state() {
             "http://invalid",
         ],
     );
-    let project_file = project.path().join(".taku/project.yml");
+    let project_file = project.path().join(".taku/project.yaml");
     let mut config: serde_yaml::Value =
         serde_yaml::from_str(&std::fs::read_to_string(&project_file).unwrap()).unwrap();
     config["environments"]["dev"]["targets"]["es"]["sensitive_fields"] =
@@ -349,7 +349,7 @@ fn target_sensitive_fields_cannot_remove_required_transformation_inputs() {
     );
     let definition_file = project
         .path()
-        .join(".taku/applications/elasticsearch/version-9.yml");
+        .join(".taku/applications/elasticsearch/version-9.yaml");
     let mut definition: serde_yaml::Value =
         serde_yaml::from_str(&std::fs::read_to_string(&definition_file).unwrap()).unwrap();
     definition["resource_types"]["ingest_pipelines"][0]["transformations"] =
@@ -359,7 +359,7 @@ fn target_sensitive_fields_cannot_remove_required_transformation_inputs() {
         serde_yaml::to_string(&definition).unwrap(),
     )
     .unwrap();
-    let project_file = project.path().join(".taku/project.yml");
+    let project_file = project.path().join(".taku/project.yaml");
     let mut config: serde_yaml::Value =
         serde_yaml::from_str(&std::fs::read_to_string(&project_file).unwrap()).unwrap();
     config["environments"]["dev"]["targets"]["es"]["sensitive_fields"] =
@@ -395,7 +395,7 @@ fn sensitive_descendants_inside_an_extracted_document_are_allowed() {
     );
     let definition_file = project
         .path()
-        .join(".taku/applications/elasticsearch/version-9.yml");
+        .join(".taku/applications/elasticsearch/version-9.yaml");
     let mut definition: serde_yaml::Value =
         serde_yaml::from_str(&std::fs::read_to_string(&definition_file).unwrap()).unwrap();
     definition["resource_types"]["ingest_pipelines"][0]["transformations"] =
@@ -405,7 +405,7 @@ fn sensitive_descendants_inside_an_extracted_document_are_allowed() {
         serde_yaml::to_string(&definition).unwrap(),
     )
     .unwrap();
-    let project_file = project.path().join(".taku/project.yml");
+    let project_file = project.path().join(".taku/project.yaml");
     let mut config: serde_yaml::Value =
         serde_yaml::from_str(&std::fs::read_to_string(&project_file).unwrap()).unwrap();
     config["environments"]["dev"]["targets"]["es"]["sensitive_fields"] =

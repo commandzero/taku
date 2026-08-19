@@ -217,11 +217,11 @@ fn setup(fake: &Fake, include_heavy: bool, include_dependent: bool) -> TempDir {
     std::fs::write(
         project
             .path()
-            .join(".taku/applications/elasticsearch/version-9.yml"),
+            .join(".taku/applications/elasticsearch/version-9.yaml"),
         definition,
     )
     .unwrap();
-    let project_path = project.path().join(".taku/project.yml");
+    let project_path = project.path().join(".taku/project.yaml");
     let mut config: serde_yaml::Value =
         serde_yaml::from_str(&std::fs::read_to_string(&project_path).unwrap()).unwrap();
     config["max_requests"] = serde_yaml::Value::Number(3.into());
@@ -305,7 +305,7 @@ fn identical_retry_uses_journal_and_does_not_repeat_confirmed_success() {
     assert_eq!(counts["PUT /light/l1"], 1);
     assert_eq!(counts["PUT /light/l2"], 2);
     let journal =
-        std::fs::read_to_string(project.path().join(".taku/journals/dev/push.yml")).unwrap();
+        std::fs::read_to_string(project.path().join(".taku/journals/dev/push.yaml")).unwrap();
     assert!(journal.contains("l1:write"));
     assert!(journal.contains("l2:write"));
 }
@@ -366,7 +366,7 @@ fn failed_resource_type_blocks_dependent_deletion_markers() {
 fn target_baselines_reject_unknown_schema_versions() {
     let fake = Fake::start(None);
     let project = setup(&fake, false, false);
-    let path = project.path().join(".taku/baselines/dev/es.yml");
+    let path = project.path().join(".taku/baselines/dev/es.yaml");
     let text = std::fs::read_to_string(&path).unwrap();
     std::fs::write(
         &path,
@@ -387,7 +387,7 @@ fn target_baselines_reject_unknown_schema_versions() {
 fn push_journals_reject_unknown_schema_versions() {
     let fake = Fake::start(None);
     let project = setup(&fake, false, false);
-    let path = project.path().join(".taku/journals/dev/push.yml");
+    let path = project.path().join(".taku/journals/dev/push.yaml");
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(
         &path,
@@ -441,7 +441,7 @@ fn outbound_transformation_conflicts_are_reported_before_any_network_call() {
     let project = setup(&fake, false, false);
     let definition_path = project
         .path()
-        .join(".taku/applications/elasticsearch/version-9.yml");
+        .join(".taku/applications/elasticsearch/version-9.yaml");
     let mut definition: serde_yaml::Value =
         serde_yaml::from_str(&std::fs::read_to_string(&definition_path).unwrap()).unwrap();
     definition["resource_types"]["light"][0]["operations"]["upsert"]["body"] =
@@ -482,7 +482,7 @@ fn retry_safe_by_default_create_with_client_owned_id_may_retry() {
     let project = setup(&fake, false, false);
     let definition_path = project
         .path()
-        .join(".taku/applications/elasticsearch/version-9.yml");
+        .join(".taku/applications/elasticsearch/version-9.yaml");
     let mut definition: serde_yaml::Value =
         serde_yaml::from_str(&std::fs::read_to_string(&definition_path).unwrap()).unwrap();
     let light = &mut definition["resource_types"]["light"][0];
@@ -494,8 +494,8 @@ fn retry_safe_by_default_create_with_client_owned_id_may_retry() {
         serde_yaml::to_string(&definition).unwrap(),
     )
     .unwrap();
-    std::fs::remove_file(project.path().join(".taku/cache/dev/es/light.yml")).unwrap();
-    std::fs::remove_file(project.path().join(".taku/baselines/dev/es.yml")).unwrap();
+    std::fs::remove_file(project.path().join(".taku/cache/dev/es/light.yaml")).unwrap();
+    std::fs::remove_file(project.path().join(".taku/baselines/dev/es.yaml")).unwrap();
     fake.metrics.reads_absent.store(true, Ordering::SeqCst);
     run(&project, &["fetch"]);
     fake.metrics.counts.lock().unwrap().clear();

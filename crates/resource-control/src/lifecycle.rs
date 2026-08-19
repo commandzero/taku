@@ -187,7 +187,7 @@ pub fn remove(root: &Path, selection: &Selection) -> Result<Vec<LifecycleResult>
             .clone()
             .context("Deletion Marker requires a present observed identity guard")?;
         let source = root.join(&item.path);
-        let marker_path = source.with_extension("delete.yml");
+        let marker_path = source.with_extension("delete.yaml");
         let marker = DeletionMarker {
             schema_version: SCHEMA_VERSION,
             environment: environment.clone(),
@@ -270,7 +270,7 @@ pub fn forget(root: &Path, selection: &Selection) -> Result<Vec<LifecycleResult>
                         if !path
                             .file_name()
                             .and_then(|v| v.to_str())
-                            .is_some_and(|v| v.ends_with(".delete.yml"))
+                            .is_some_and(|v| v.ends_with(".delete.yaml"))
                         {
                             continue;
                         }
@@ -343,7 +343,7 @@ pub fn deletion_markers(
                         if path
                             .file_name()
                             .and_then(|v| v.to_str())
-                            .is_some_and(|v| v.ends_with(".delete.yml"))
+                            .is_some_and(|v| v.ends_with(".delete.yaml"))
                         {
                             let marker = load_deletion_marker(
                                 &root,
@@ -402,7 +402,7 @@ fn load_deletion_marker(
     if source.is_absolute() {
         bail!("Deletion Marker source_path must be Project-relative");
     }
-    let expected = root.join(source).with_extension("delete.yml");
+    let expected = root.join(source).with_extension("delete.yaml");
     reject_symlink_components(root, &root.join(source))?;
     if expected != path {
         bail!("Deletion Marker source_path does not match its marker path");

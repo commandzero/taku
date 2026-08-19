@@ -387,7 +387,7 @@ fn run(project: &TempDir, args: &[&str]) -> Value {
 fn configure_skill_projection(project: &TempDir) {
     let definition_path = project
         .path()
-        .join(".taku/applications/kibana/version-9.yml");
+        .join(".taku/applications/kibana/version-9.yaml");
     let mut definition: serde_yaml::Value =
         serde_yaml::from_str(&std::fs::read_to_string(&definition_path).unwrap()).unwrap();
     let skill = &mut definition["resource_types"]["skills"][0];
@@ -497,7 +497,7 @@ fn kibana_ndjson_is_unbundled_to_canonical_resources_and_rebuilt_only_for_push()
     std::fs::write(&second_path, serde_json::to_string_pretty(&second).unwrap()).unwrap();
     let cache_path = project
         .path()
-        .join(".taku/cache/dev/kb/esdiag/saved_objects.yml");
+        .join(".taku/cache/dev/kb/esdiag/saved_objects.yaml");
     let mut cache: serde_yaml::Value =
         serde_yaml::from_str(&std::fs::read_to_string(&cache_path).unwrap()).unwrap();
     cache["resources"]["obj-2"] = serde_yaml::to_value(json!({
@@ -584,7 +584,7 @@ fn json_list_and_map_bundles_keep_their_declared_shape() {
     );
     let definition_path = project
         .path()
-        .join(".taku/applications/kibana/version-9.yml");
+        .join(".taku/applications/kibana/version-9.yaml");
     let mut definition: serde_yaml::Value =
         serde_yaml::from_str(&std::fs::read_to_string(&definition_path).unwrap()).unwrap();
     definition["resource_types"]["map_items"] = serde_yaml::to_value(json!([{
@@ -988,7 +988,7 @@ fn removing_a_projected_resource_replaces_the_directory_with_a_deletion_marker()
     assert!(
         project
             .path()
-            .join("kb/default/skills/agentic-diagnostic-assistant.delete.yml")
+            .join("kb/default/skills/agentic-diagnostic-assistant.delete.yaml")
             .is_file()
     );
 }
@@ -1086,7 +1086,7 @@ fn upsert_uses_create_when_a_resource_is_absent_and_no_native_upsert_exists() {
 
     let definition_path = project
         .path()
-        .join(".taku/applications/kibana/version-9.yml");
+        .join(".taku/applications/kibana/version-9.yaml");
     let mut definition: serde_yaml::Value =
         serde_yaml::from_str(&std::fs::read_to_string(&definition_path).unwrap()).unwrap();
     definition["resource_types"]["spaces"][0]["operations"]
@@ -1149,7 +1149,7 @@ fn namespaced_resource_types_require_an_explicit_namespace_directory() {
 
     let definition_path = project
         .path()
-        .join(".taku/applications/kibana/version-9.yml");
+        .join(".taku/applications/kibana/version-9.yaml");
     let mut definition: serde_yaml::Value =
         serde_yaml::from_str(&std::fs::read_to_string(&definition_path).unwrap()).unwrap();
     definition["resource_types"]["saved_objects"][0]["namespaced"] = serde_yaml::Value::Bool(true);
@@ -1314,7 +1314,7 @@ fn selected_write_operation_applies_its_own_outbound_transformations() {
 
     let definition_path = project
         .path()
-        .join(".taku/applications/kibana/version-9.yml");
+        .join(".taku/applications/kibana/version-9.yaml");
     let mut definition: serde_yaml::Value =
         serde_yaml::from_str(&std::fs::read_to_string(&definition_path).unwrap()).unwrap();
     definition["resource_types"]["workflows"] = serde_yaml::to_value(json!([{

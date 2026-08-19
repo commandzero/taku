@@ -12,7 +12,7 @@ resource_types:
         read: { method: GET, path: "/api/spaces/space/{id}" }
         list: { method: GET, path: "/api/spaces/space", cardinality: many, response: { collection: list } }
         create: { method: POST, path: "/api/spaces/space" }
-        update: { method: PUT, path: "/api/spaces/space/{id}" }
+        update: { method: PUT, path: "/api/spaces/space/{id}", identity_in_body: true }
         delete: { method: DELETE, path: "/api/spaces/space/{id}" }
   saved_objects:
     - id: { pointer: /id, scope: universal }

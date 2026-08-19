@@ -78,7 +78,7 @@ fn version_endpoints_fall_back_in_order_and_unavailable_resource_types_are_skipp
             .iter()
             .any(|candidate| candidate.value == "widgets")
     );
-    assert!(!project.path().join(".taku/baselines/dev/api.yml").exists());
+    assert!(!project.path().join(".taku/baselines/dev/api.yaml").exists());
     let result = run(&project, &["list", "--remote", "api", "widgets"]);
 
     assert_eq!(result["result"][0]["id"], "one");
@@ -93,7 +93,7 @@ fn version_endpoints_fall_back_in_order_and_unavailable_resource_types_are_skipp
         ]
     );
     let baseline =
-        std::fs::read_to_string(project.path().join(".taku/baselines/dev/api.yml")).unwrap();
+        std::fs::read_to_string(project.path().join(".taku/baselines/dev/api.yaml")).unwrap();
     assert!(baseline.contains("application_version: 9.4.0"));
     assert!(baseline.contains("widgets"));
     assert!(!baseline.contains("future_widgets"));
@@ -178,7 +178,7 @@ fn project(fake: &Fake) -> TempDir {
     std::fs::write(
         project
             .path()
-            .join(".taku/applications/elasticsearch/application.yml"),
+            .join(".taku/applications/elasticsearch/application.yaml"),
         r#"schema_version: 1
 version: test
 application: { name: elasticsearch }
@@ -192,7 +192,7 @@ version_endpoints:
     std::fs::write(
         project
             .path()
-            .join(".taku/applications/elasticsearch/version-9.yml"),
+            .join(".taku/applications/elasticsearch/version-9.yaml"),
         r#"schema_version: 1
 version: test
 application: { name: elasticsearch, version: ">=9.0.0, <10.0.0" }
@@ -219,7 +219,7 @@ resource_types:
     std::fs::write(
         project
             .path()
-            .join(".taku/applications/elasticsearch/version-8.yml"),
+            .join(".taku/applications/elasticsearch/version-8.yaml"),
         r#"schema_version: 1
 version: test
 application: { name: elasticsearch, version: ">=8.0.0, <9.0.0" }

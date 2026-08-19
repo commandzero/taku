@@ -28,4 +28,4 @@ None. This repository does not yet contain main OpenSpec capabilities.
 
 - Affects the recognized filesystem grammar, Resource Type Catalog schema, configuration validation and safety binding, inventory and Git-state selection, inbound observation/canonicalization, comparison and Pull, outbound Push encoding, Promotion, embedded Elasticsearch and Kibana catalogs, and related CLI/live tests.
 - Introduces two closed, versioned hint-file schemas without adding Project hierarchy overlays or permitting local overrides of catalog Operations, transformations, transport, or identity behavior.
-- Changes no `.taku/project.yml`, Target, Canonical Resource, Baseline, Observed State, Journal, or CLI command syntax. The same installed Application may therefore track metadata differently in separate Target or Resource Type directories.
+- Changes no `.taku/project.yaml`, Target, Canonical Resource, Baseline, Observed State, Journal, or CLI command syntax. The same installed Application may therefore track metadata differently in separate Target or Resource Type directories.

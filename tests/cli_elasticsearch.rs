@@ -586,7 +586,7 @@ fn install_wrapped_component_template_definition(
 ) -> (std::path::PathBuf, String) {
     let definition_path = project
         .path()
-        .join(".taku/applications/elasticsearch/version-9.yml");
+        .join(".taku/applications/elasticsearch/version-9.yaml");
     let normalized = std::fs::read_to_string(&definition_path).unwrap();
     let mut definition: serde_yaml::Value = serde_yaml::from_str(&normalized).unwrap();
     let component = &mut definition["resource_types"]["component_templates"][0];

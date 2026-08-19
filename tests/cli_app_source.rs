@@ -104,12 +104,12 @@ resource_types:
 
 fn write_definition(path: &std::path::Path, name: &str, definition_version: &str) {
     std::fs::write(
-        path.join("application.yml"),
+        path.join("application.yaml"),
         manifest(name, definition_version),
     )
     .unwrap();
     std::fs::write(
-        path.join("version-9.yml"),
+        path.join("version-9.yaml"),
         catalog(name, definition_version),
     )
     .unwrap();
@@ -129,7 +129,7 @@ fn refresh_install_and_update_use_an_explicit_git_source_without_implicit_refres
         &project,
         &["init", "--layout", "single", "--environment", "dev"],
     );
-    let path = project.path().join(".taku/project.yml");
+    let path = project.path().join(".taku/project.yaml");
     let mut config: serde_yaml::Value =
         serde_yaml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
     config["application_source"] =
@@ -148,7 +148,7 @@ fn refresh_install_and_update_use_an_explicit_git_source_without_implicit_refres
     assert_eq!(installed["result"][0]["source"], "git");
     let installed_path = project
         .path()
-        .join(".taku/applications/custom/application.yml");
+        .join(".taku/applications/custom/application.yaml");
     assert!(
         std::fs::read_to_string(&installed_path)
             .unwrap()
@@ -193,7 +193,7 @@ fn multi_application_update_replaces_none_when_staging_one_candidate_fails() {
         &project,
         &["init", "--layout", "single", "--environment", "dev"],
     );
-    let path = project.path().join(".taku/project.yml");
+    let path = project.path().join(".taku/project.yaml");
     let mut config: serde_yaml::Value =
         serde_yaml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
     config["application_source"] =
@@ -213,7 +213,7 @@ fn multi_application_update_replaces_none_when_staging_one_candidate_fails() {
     run(&project, &["app", "refresh"]);
     let alpha = project
         .path()
-        .join(".taku/applications/alpha/version-9.yml");
+        .join(".taku/applications/alpha/version-9.yaml");
     let before = std::fs::read_to_string(&alpha).unwrap();
     std::fs::create_dir(project.path().join(".taku/applications.update.next")).unwrap();
 
@@ -272,7 +272,7 @@ fn update_without_from_preserves_each_installed_git_source() {
     let installed = std::fs::read_to_string(
         project
             .path()
-            .join(".taku/applications/custom/application.yml"),
+            .join(".taku/applications/custom/application.yaml"),
     )
     .unwrap();
     assert!(installed.contains("2.0.0"));
@@ -300,7 +300,7 @@ fn invalid_higher_precedence_cache_and_metadata_are_rejected() {
     );
     let cached = project
         .path()
-        .join(".taku/cache/application-source/applications/custom/application.yml");
+        .join(".taku/cache/application-source/applications/custom/application.yaml");
     std::fs::write(&cached, "not: a valid application\n").unwrap();
     let listed = run_failure(&project, &["app"]);
     assert!(String::from_utf8_lossy(&listed.stderr).contains("invalid Application definition"));
@@ -308,7 +308,7 @@ fn invalid_higher_precedence_cache_and_metadata_are_rejected() {
     std::fs::write(&cached, manifest("custom", "1.0.0")).unwrap();
     let metadata = project
         .path()
-        .join(".taku/cache/application-source/.source.yml");
+        .join(".taku/cache/application-source/.source.yaml");
     let text = std::fs::read_to_string(&metadata).unwrap();
     std::fs::write(
         &metadata,

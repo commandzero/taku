@@ -89,7 +89,7 @@ fn project() -> TempDir {
         r#"{"id":"dashboard-1","type":"dashboard","attributes":{"title":"Dashboard"}}"#,
     )
     .unwrap();
-    let metadata = project.path().join(".taku/project.yml");
+    let metadata = project.path().join(".taku/project.yaml");
     let mut value: serde_yaml::Value =
         serde_yaml::from_str(&std::fs::read_to_string(&metadata).unwrap()).unwrap();
     value["environments"]["dev"]["provider"] = serde_yaml::from_str(
@@ -161,7 +161,7 @@ fn candidate_interface_filters_sorts_describes_and_excludes_values() {
     std::fs::write(
         project
             .path()
-            .join("dev/es/ingest_pipelines/Pipeline.delete.yml"),
+            .join("dev/es/ingest_pipelines/Pipeline.delete.yaml"),
         "schema_version: 1\nenvironment: dev\ntarget: es\ntype: ingest_pipelines\nid: pipe-1\nguard: test\nsource_path: dev/es/ingest_pipelines/Pipeline.json\n",
     )
     .unwrap();

@@ -57,7 +57,7 @@ pub fn initialize(
         bail!("Single layout requires exactly one Environment");
     }
     let taku_dir = root.join(".taku");
-    let project_path = taku_dir.join("project.yml");
+    let project_path = taku_dir.join("project.yaml");
     if project_path.exists() {
         bail!("Project is already initialized");
     }
@@ -83,7 +83,7 @@ pub fn initialize(
     save_project(&root, &project)?;
     fs::write(
         taku_dir.join(".gitignore"),
-        "/cache/\n/context.yml\n/journals/\n",
+        "/cache/\n/context.yaml\n/journals/\n",
     )
     .context("failed to write Taku ignore rules")?;
     Ok(InitResult {
@@ -95,7 +95,7 @@ pub fn initialize(
 
 pub fn load_project(root: &Path) -> Result<Project> {
     let root = git_root(root)?;
-    let text = fs::read_to_string(root.join(".taku/project.yml")).context("not a Taku Project")?;
+    let text = fs::read_to_string(root.join(".taku/project.yaml")).context("not a Taku Project")?;
     let project: Project = serde_yaml::from_str(&text).context("invalid Project metadata")?;
     if project.schema_version != SCHEMA_VERSION {
         bail!(
@@ -112,7 +112,7 @@ pub fn load_project(root: &Path) -> Result<Project> {
 
 pub fn save_project(root: &Path, project: &Project) -> Result<()> {
     let yaml = serde_yaml::to_string(project).context("failed to serialize Project")?;
-    fs::write(root.join(".taku/project.yml"), yaml).context("failed to write Project metadata")
+    fs::write(root.join(".taku/project.yaml"), yaml).context("failed to write Project metadata")
 }
 
 pub fn current_environment(
@@ -129,7 +129,7 @@ pub fn current_environment(
     if project.layout == RepositoryLayout::Single {
         return Ok(project.environments.keys().next().unwrap().clone());
     }
-    let path = root.join(".taku/context.yml");
+    let path = root.join(".taku/context.yaml");
     let value: ContextFile = serde_yaml::from_str(
         &fs::read_to_string(path)
             .context("no current Environment; select one with `taku context set <environment>`")?,
@@ -153,7 +153,7 @@ pub fn save_context(root: &Path, environment: &str) -> Result<String> {
         bail!("unknown Environment {environment}");
     }
     fs::write(
-        root.join(".taku/context.yml"),
+        root.join(".taku/context.yaml"),
         format!("schema_version: 1\nenvironment: {environment}\n"),
     )?;
     Ok(environment.to_owned())
@@ -188,7 +188,7 @@ pub fn add_target(
     if !root
         .join(".taku/applications")
         .join(application)
-        .join("application.yml")
+        .join("application.yaml")
         .is_file()
     {
         bail!("Application {application} is not installed");
@@ -237,8 +237,10 @@ pub fn rename_target(root: &Path, environment: Option<&str>, old: &str, new: &st
         root.join(".taku/journals").join(&env_name).join(old),
         root.join(".taku/baselines")
             .join(&env_name)
-            .join(format!("{old}.yml")),
-        root.join(".taku/journals").join(&env_name).join("push.yml"),
+            .join(format!("{old}.yaml")),
+        root.join(".taku/journals")
+            .join(&env_name)
+            .join("push.yaml"),
     ] {
         if disposable.exists() {
             if disposable.is_dir() {
