@@ -181,7 +181,7 @@ A new Resource with a Target-scoped, server-assigned ID that has not yet been co
 _Avoid_: Resource ID, temporary filename
 
 **Resource ID**:
-The stable, unique identity of a Resource within its Resource Type and declared scope. It may be simple or compound and is stored in the canonical Resource rather than inferred from its filename.
+The stable, unique identity of a Resource within its Resource Type and declared scope. It may be simple or compound and is stored in the canonical Resource's reserved Taku state rather than inferred from its filename.
 _Avoid_: Display Name, filename
 
 **Resource ID Scope**:
@@ -193,7 +193,7 @@ A human-readable, potentially mutable label used to make a Resource easy to loca
 _Avoid_: Resource ID
 
 **Canonical Representation**:
-The deterministic, human-reviewable file or directory tree for exactly one Resource stored in the repository, including its Resource ID. Remote collection envelopes and request-only wrappers are excluded.
+The deterministic, human-reviewable file or directory tree for exactly one Resource stored in the repository, including its Resource ID under Taku's reserved namespace. Remote collection envelopes and request-only wrappers are excluded.
 _Avoid_: Wire Representation, raw response
 
 **Canonical Equality**:

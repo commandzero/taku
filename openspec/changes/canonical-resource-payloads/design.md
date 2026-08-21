@@ -53,7 +53,7 @@ The existing `extract` and `unbundle` stages continue to select and parse the re
 4. `identity_pointer`, when present, captures identity from the response item before Resource extraction. A map key supplies identity without an identity pointer.
 5. `resource_pointer`, when present, selects the Resource body from the response item. When absent, the item or map value is already the Resource body.
 6. Resource Type inbound Transformations and metadata policy apply to that body.
-7. Captured or requested identity is inserted at the Canonical identity pointer. An existing unequal value is a Transformation Conflict; an equal value is retained.
+7. Captured or requested identity is inserted at the reserved Canonical pointer `/_taku/id`. Existing wire fields at the configured identity pointer are retained; an existing unequal `/_taku/id` is a Transformation Conflict.
 
 Many-cardinality JSON responses must declare `collection`. NDJSON unbundling is inherently a list stream but uses the same per-item pointer mapping and is modeled as `collection: list` for schema clarity. One-cardinality Operations may use response pointers without a collection.
 
@@ -71,7 +71,7 @@ Add `identity_in_body: Option<bool>` to mutation Operations. Its effective defau
 - `true` otherwise;
 - for a map bundle, `false` because the map key already carries identity.
 
-An explicit value overrides the default, including the map default. Payload preparation captures the ID first, removes all declared metadata, applies identity omission at the Canonical identity pointer, and only then applies remaining Resource Type and Operation Transformations.
+An explicit value overrides the default, including the map default. Payload preparation captures the ID first, removes all declared metadata, applies identity omission to `/_taku/id` (and a matching configured API identity field when path-bound), and only then applies remaining Resource Type and Operation Transformations. When identity is required in the body and the API identity field is absent, the configured field is materialized from `/_taku/id`; an existing unequal wire field is retained rather than overwritten.
 
 Identity insertion on reads and omission on writes are generic transport responsibilities. Built-in `omit` Transformations whose only purpose is stripping the configured identity are removed.
 
@@ -104,7 +104,7 @@ map response decoding persists:
 
 ```json
 {
-  "id": "daily",
+  "_taku": { "id": "daily" },
   "version": 1,
   "modified_date": "2026-01-01",
   "policy": { "phases": {} }
@@ -146,16 +146,16 @@ Elasticsearch component and index template read/list Operations use response map
 
 ```json
 {
-  "name": "esdiag@index",
+  "_taku": { "id": "esdiag@index" },
   "_meta": {},
   "template": {},
   "version": 2
 }
 ```
 
-Create/update paths bind `{id}`, so `/name` is automatically omitted and no Operation Transformation remains. Metadata pointers move from wrapper-relative paths such as `/component_template/created_date_millis` to Canonical paths such as `/created_date_millis`.
+Create/update paths bind `{id}`, so the reserved `/_taku/id` is removed and no Operation Transformation remains. Metadata pointers move from wrapper-relative paths such as `/component_template/created_date_millis` to Canonical paths such as `/created_date_millis`.
 
-ILM and similar ID-keyed map responses retain the complete map value, receive `id` as a sibling, and use body selectors such as `/policy`. Other built-in `frame` and identity-only `omit` uses receive the same treatment according to their actual response shapes. Genuine request envelopes use a static `body` plus `body_pointer` or Bundle shape, not a response wrapper in Git.
+ILM and similar ID-keyed map responses retain the complete map value, receive `/_taku/id` as reserved canonical state, and use body selectors such as `/policy`. Other built-in `frame` and identity-only `omit` uses receive the same treatment according to their actual response shapes. Genuine request envelopes use a static `body` plus `body_pointer` or Bundle shape, not a response wrapper in Git.
 
 ### 7. Bind all shape decisions into reconciliation safety
 

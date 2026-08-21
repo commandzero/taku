@@ -5,11 +5,11 @@ Defines how API response collections become self-contained Canonical Resources a
 ## ADDED Requirements
 
 ### Requirement: Canonical Resources use the single-resource shape
-The system SHALL persist the representation of one Resource rather than an envelope introduced by a read or list response. The configured Resource ID SHALL remain present at the Resource Type identity pointer in every persisted Canonical Resource, even when the API represents that identity outside the single-resource body.
+The system SHALL persist the representation of one Resource rather than an envelope introduced by a read or list response. Every persisted Canonical Resource SHALL contain its Resource ID at the reserved `/_taku/id` pointer. The configured Resource Type identity pointer remains an API-wire hint; response normalization SHALL NOT overwrite an unrelated field at that pointer merely to persist the ID.
 
 #### Scenario: Enveloped list item becomes one Canonical Resource
 - **WHEN** a list response item contains identity at `/name` and its Resource body at `/component_template`
-- **THEN** the system persists the fields from `/component_template` as the Canonical Resource and inserts the captured identity at the configured Canonical identity pointer
+- **THEN** the system persists the fields from `/component_template` as the Canonical Resource and inserts the captured identity at `/_taku/id` without adding or replacing a field such as `name`
 
 #### Scenario: Direct response already has canonical shape
 - **WHEN** a one-Resource response directly contains the configured identity and Resource fields
@@ -24,15 +24,15 @@ A many-Resource response mapping SHALL distinguish a list from an identity-keyed
 
 #### Scenario: Decode a direct list
 - **WHEN** the configured response pointer selects a list of direct Resource objects
-- **THEN** each list element becomes one Resource and supplies identity through the Resource Type identity pointer
+- **THEN** each list element becomes one Resource and supplies identity through `/_taku/id` (using the Resource Type identity pointer only to read an API field when no response identity mapping is present)
 
 #### Scenario: Decode an identity-keyed map
 - **WHEN** the configured response pointer selects a map from Resource ID to Resource object
-- **THEN** each map key becomes that Resource's identity and each complete map value becomes its Resource body, including writable content and metadata siblings
+- **THEN** each map key becomes that Resource's identity at `/_taku/id` and each complete map value becomes its Resource body, including writable content and metadata siblings
 
 #### Scenario: Decode enveloped list entries
 - **WHEN** the configured response pointer selects a list whose entries contain separate identity and Resource subtrees
-- **THEN** the system extracts both values and produces a Canonical Resource containing the Resource subtree plus its identity
+- **THEN** the system extracts both values and produces a Canonical Resource containing the Resource subtree plus its identity at `/_taku/id`
 
 #### Scenario: Collection has the wrong JSON shape
 - **WHEN** a response mapping declares `list` but selects a JSON object, or declares `map` but selects a JSON array
@@ -62,11 +62,11 @@ A create, update, or upsert Operation with cardinality `one` SHALL use the Canon
 
 #### Scenario: Path-bound identity is omitted by default
 - **WHEN** an Operation path contains `{id}` and the Operation does not override identity body policy
-- **THEN** the system substitutes the Resource ID into the path and removes the configured identity pointer from the request body
+- **THEN** the system substitutes the Resource ID into the path and removes `/_taku/id` and any configured API identity field that matches it from the request body
 
 #### Scenario: Identity defaults into a body without a path binding
 - **WHEN** an Operation path does not contain `{id}` and the Operation does not override identity body policy
-- **THEN** the request body retains the configured identity pointer
+- **THEN** the request body retains the configured API identity pointer, materializing it from `/_taku/id` when the API requires identity in the body
 
 #### Scenario: API requires identity in both path and body
 - **WHEN** an Operation whose path contains `{id}` explicitly enables identity in the body
@@ -74,7 +74,7 @@ A create, update, or upsert Operation with cardinality `one` SHALL use the Canon
 
 #### Scenario: API rejects identity without a path binding
 - **WHEN** an Operation explicitly disables identity in the body
-- **THEN** the request body omits the configured identity pointer regardless of the Operation path
+- **THEN** the request body omits `/_taku/id` and a matching configured API identity pointer regardless of the Operation path
 
 #### Scenario: Metadata is tracked in Git
 - **WHEN** a Canonical Resource retains opted-in metadata

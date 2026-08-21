@@ -202,6 +202,8 @@ resource_types:
 
 An omitted Resource Type `version` inherits `application.version`; omitted `stability` defaults to `stable`. Zero matching definitions makes that Resource Type unavailable for the Target. More than one match is invalid configuration. Definitions are complete objects—Taku does not merge version overlays.
 
+`id.pointer` identifies an API field when a Resource carries its identity on the wire. Canonical Resources persist the stable ID separately at `/_taku/id`, so response mapping never has to overwrite an ordinary API field such as `name`.
+
 Operations are retry-safe by default. Catalogs declare `retry_safe: false` only for exceptional endpoints that cannot safely repeat after a transient or uncertain result.
 
 Operations run in parallel by default. Catalogs declare `concurrency: serial` only for expensive endpoints that need to be limited to one in-flight call.
@@ -245,7 +247,7 @@ resource_types:
 
 For `frontmatter_markdown`, every unclaimed YAML frontmatter value passes through to the Resource Object. The Markdown body and referenced files are the only extracted fields. Splitting serializes passthrough values back to frontmatter; comments and original YAML formatting are not part of the API round trip.
 
-A Canonical Representation always describes one Resource and persists its ID even when the remote API puts that ID in a response-map key or request path. A path containing `{id}` omits the canonical identity from create, update, and upsert bodies by default; `identity_in_body` explicitly overrides that behavior. `body` may remain a static JSON request template, or a JSON Pointer string may select a narrower subtree after metadata and identity omission. For example, an ILM response keyed by policy name becomes one canonical object with `id`, `version`, `modified_date`, and `policy` as siblings, while only `policy` is sent back:
+A Canonical Representation always describes one Resource and persists its ID at the reserved `/_taku/id` pointer even when the remote API puts that ID in a response-map key or request path. API identity fields remain ordinary wire fields and are never overwritten merely to persist Taku's identity. A path containing `{id}` omits `/_taku/id` and any matching API identity field from create, update, and upsert bodies by default; `identity_in_body` explicitly overrides that behavior. `body` may remain a static JSON request template, or a JSON Pointer string may select a narrower subtree after metadata and identity omission. For example, an ILM response keyed by policy name becomes one canonical object with `/_taku/id`, `version`, `modified_date`, and `policy` as siblings, while only `policy` is sent back:
 
 ```yaml
 id: { pointer: /id, scope: universal }
@@ -262,7 +264,7 @@ operations:
     body: /policy
 ```
 
-For list entries such as `{name, component_template: {...}}`, `identity_pointer: /name` and `resource_pointer: /component_template` produce a flat canonical object containing `name` plus the template fields. No create/update Transformation is required: the generic path-bound identity rule yields the API's direct single-template request body. Catalogs migrating from `kind: frame` should use Response Mapping for inbound collection envelopes and a `body` selector only when the write API genuinely accepts a narrower canonical subtree.
+For list entries such as `{name, component_template: {...}}`, `identity_pointer: /name` and `resource_pointer: /component_template` produce a flat canonical object containing the template fields plus `/_taku/id`; the response `name` is not copied into the Resource body. No create/update Transformation is required: the generic path-bound identity rule yields the API's direct single-template request body. Catalogs migrating from `kind: frame` should use Response Mapping for inbound collection envelopes and a `body` selector only when the write API genuinely accepts a narrower canonical subtree.
 
 Update Mutation Mode is configured per Resource Type. Replace compares and owns the complete canonical document; Patch compares, pulls, and writes only the fields represented by the desired Resource. Target sensitive fields may tighten an Application's pre-persistence drops for a named Resource Type, but cannot remove identity or display-name state.
 

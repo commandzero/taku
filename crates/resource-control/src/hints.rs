@@ -155,6 +155,19 @@ pub(crate) fn validate_target_tree(
     target: &str,
     resource_types: &std::collections::BTreeMap<String, crate::ResourceType>,
 ) -> Result<()> {
+    if let Some(target_sensitive_fields) = project
+        .environments
+        .get(environment)
+        .and_then(|config| config.targets.get(target))
+        .into_iter()
+        .flat_map(|target| target.sensitive_fields.values())
+        .flat_map(|fields| fields.iter())
+        .find(|pointer| {
+            crate::model::json_pointers_overlap(pointer, crate::canonical::TAKU_NAMESPACE_POINTER)
+        })
+    {
+        bail!("Target Sensitive Field {target_sensitive_fields} uses Taku's reserved namespace");
+    }
     let target_root = crate::canonical::target_root(root, project, environment, target);
     if !target_root.exists() {
         return Ok(());

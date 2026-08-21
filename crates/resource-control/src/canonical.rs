@@ -3,7 +3,8 @@ use crate::project::current_environment;
 use crate::resolution::ResolvedApplication;
 use crate::resolution::{baseline_path, for_local_use, load_baseline};
 use crate::{
-    DisplayName, DisplayNameStrategy, IdScope, Project, RepositoryLayout, git_root, load_project,
+    DisplayName, DisplayNameStrategy, IdScope, Project, RepositoryLayout, ResourceType, git_root,
+    load_project,
 };
 use anyhow::{Context, Result, bail};
 use serde::Serialize;
@@ -39,6 +40,11 @@ pub struct InventoryEntry {
     #[serde(skip)]
     pub display_name_unique: bool,
 }
+
+/// The namespace reserved for Taku-managed canonical state.
+pub const TAKU_NAMESPACE_POINTER: &str = "/_taku";
+/// The stable location of a Resource's identity in its Canonical Representation.
+pub const TAKU_ID_POINTER: &str = "/_taku/id";
 
 pub fn list_inventory(root: &Path, selection: &Selection) -> Result<Vec<InventoryEntry>> {
     list_inventory_with_resolved(root, selection, None)
@@ -214,7 +220,16 @@ pub(crate) fn list_inventory_with_resolved(
                             );
                         }
                     }
-                    let extracted_id = pointer_string(&value, &resource_type.id.pointer);
+                    let extracted_id = canonical_id(&value, resource_type);
+                    if pointer_string(&value, TAKU_ID_POINTER).is_none()
+                        && let Some(id) = extracted_id.as_deref()
+                    {
+                        crate::transport::insert_pointer(
+                            &mut value,
+                            TAKU_ID_POINTER,
+                            Value::String(id.to_owned()),
+                        )?;
+                    }
                     let pending = extracted_id.is_none()
                         && resource_type.id.scope == IdScope::Target
                         && resource_type.write_intent == crate::WriteIntent::Create;
@@ -225,7 +240,7 @@ pub(crate) fn list_inventory_with_resolved(
                             format!(
                                 "Resource {} has no string ID at {}",
                                 path.display(),
-                                resource_type.id.pointer
+                                TAKU_ID_POINTER
                             )
                         })?
                     };
@@ -484,6 +499,13 @@ pub fn pointer_string(value: &Value, pointer: &str) -> Option<String> {
         Value::Object(_) | Value::Array(_) => serde_json::to_string(&sort_value(value)).ok(),
         _ => None,
     }
+}
+
+/// Resolve a Resource ID from the canonical namespace, with a fallback for
+/// older hand-authored Resources that predate `_taku.id`.
+pub fn canonical_id(value: &Value, resource_type: &ResourceType) -> Option<String> {
+    pointer_string(value, TAKU_ID_POINTER)
+        .or_else(|| pointer_string(value, &resource_type.id.pointer))
 }
 
 pub fn display_name_value(value: &Value, display_name: &DisplayName) -> Option<String> {

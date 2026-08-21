@@ -1,3 +1,4 @@
+use crate::canonical::TAKU_NAMESPACE_POINTER;
 use crate::{
     ApplicationDefinition, ApplicationSourceConfig, Installation, ResourceTypeCatalog,
     SCHEMA_VERSION, git_root, load_project,
@@ -637,9 +638,7 @@ fn validate_resources_for(
                             }
                             crate::canonical::parse_resource(&path)?
                         };
-                        if crate::canonical::pointer_string(&value, &updated_type.id.pointer)
-                            .is_none()
-                        {
+                        if crate::canonical::canonical_id(&value, updated_type).is_none() {
                             bail!(
                                 "Resource {} is incompatible with updated Application",
                                 path.display()
@@ -762,6 +761,9 @@ fn validate_resource_type(resource_type: &crate::ResourceType, name: &str) -> Re
     if !resource_type.id.pointer.starts_with('/') {
         bail!("Resource Type {name} has an invalid identity pointer");
     }
+    if reserved_canonical_pointer(&resource_type.id.pointer) {
+        bail!("Resource Type {name} identity pointer is reserved for Taku state");
+    }
     if resource_type.display_name.pointer.is_some()
         && !resource_type.display_name.pointers.is_empty()
     {
@@ -773,6 +775,26 @@ fn validate_resource_type(resource_type: &crate::ResourceType, name: &str) -> Re
         .any(|pointer| !pointer.starts_with('/'))
     {
         bail!("Resource Type {name} has an invalid Display Name pointer");
+    }
+    if resource_type
+        .display_name
+        .pointers()
+        .any(reserved_canonical_pointer)
+        || resource_type
+            .guard_pointer
+            .as_deref()
+            .is_some_and(reserved_canonical_pointer)
+        || resource_type
+            .sensitive_fields
+            .iter()
+            .any(|pointer| reserved_canonical_pointer(pointer))
+        || resource_type
+            .transformations
+            .iter()
+            .flat_map(transformation_pointers)
+            .any(reserved_canonical_pointer)
+    {
+        bail!("Resource Type {name} uses a pointer in Taku's reserved namespace");
     }
     if resource_type.operations.read.is_none() && resource_type.operations.list.is_none() {
         bail!("Resource Type {name} has no observation Operation");
@@ -813,6 +835,25 @@ fn valid_json_pointer(pointer: &str) -> bool {
     true
 }
 
+fn reserved_canonical_pointer(pointer: &str) -> bool {
+    pointer == TAKU_NAMESPACE_POINTER || pointer.starts_with(&format!("{TAKU_NAMESPACE_POINTER}/"))
+}
+
+fn transformation_pointers(transformation: &crate::Transformation) -> Vec<&str> {
+    match transformation {
+        crate::Transformation::Extract { pointer }
+        | crate::Transformation::Remove { pointer }
+        | crate::Transformation::Omit { pointer }
+        | crate::Transformation::Insert { pointer, .. }
+        | crate::Transformation::EmbeddedJson { pointer } => vec![pointer],
+        crate::Transformation::SingletonMap {
+            pointer,
+            key_pointer,
+            value_pointer,
+        } => vec![pointer, key_pointer, value_pointer],
+    }
+}
+
 fn validate_metadata(resource_type: &crate::ResourceType, name: &str) -> Result<()> {
     use crate::model::json_pointers_overlap as pointers_overlap;
     let Some(metadata) = &resource_type.metadata else {
@@ -826,6 +867,9 @@ fn validate_metadata(resource_type: &crate::ResourceType, name: &str) -> Result<
             bail!(
                 "Resource Type {name} metadata field {pointer:?} is not a canonical JSON pointer"
             );
+        }
+        if reserved_canonical_pointer(pointer) {
+            bail!("Resource Type {name} metadata field {pointer} uses Taku's reserved namespace");
         }
         if metadata.fields[..index]
             .iter()
@@ -968,6 +1012,9 @@ fn validate_filesystem(resource_type: &crate::ResourceType, owner: &str) -> Resu
         if !pointer.starts_with('/') {
             bail!("Resource Type {owner} {label} must be a JSON pointer");
         }
+        if reserved_canonical_pointer(pointer) {
+            bail!("Resource Type {owner} {label} uses Taku's reserved namespace");
+        }
     }
     let extension = &frontmatter.referenced_files.extension;
     if extension.is_empty()
@@ -1029,6 +1076,11 @@ fn validate_operation(
         && !valid_json_pointer(pointer)
     {
         bail!("{owner} Operation body selector is not a JSON pointer");
+    }
+    if let Some(crate::OperationBody::Pointer(pointer)) = &operation.body
+        && reserved_canonical_pointer(pointer)
+    {
+        bail!("{owner} Operation body selector uses Taku's reserved namespace");
     }
     if operation
         .extract_missing
@@ -1130,6 +1182,12 @@ fn validate_transformations(transformations: &[crate::Transformation], owner: &s
         };
         if pointers.iter().any(|pointer| !pointer.starts_with('/')) {
             bail!("{owner} Transformation has an invalid JSON pointer");
+        }
+        if pointers
+            .iter()
+            .any(|pointer| reserved_canonical_pointer(pointer))
+        {
+            bail!("{owner} Transformation uses Taku's reserved namespace");
         }
         if let crate::Transformation::SingletonMap {
             key_pointer,
@@ -1244,12 +1302,17 @@ operations:
             "metadata: { fields: [/name] }",
             "sensitive_fields: [/secret]\nmetadata: { fields: [/secret/owner] }",
             "transformations: [{ kind: remove, pointer: /server }]\nmetadata: { fields: [/server/time] }",
+            "metadata: { fields: [/_taku/provenance] }",
+            "transformations: [{ kind: remove, pointer: /_taku/provenance }]",
         ] {
             assert!(
                 validate_resource_type(&resource_type(extra), "item").is_err(),
                 "{extra}"
             );
         }
+        let mut reserved_id = resource_type("");
+        reserved_id.id.pointer = "/_taku/id".into();
+        assert!(validate_resource_type(&reserved_id, "item").is_err());
     }
 }
 
@@ -1314,6 +1377,8 @@ mod operation_shape_validation_tests {
             "method: POST\npath: /items\ncardinality: many\nbundle: {shape: list, format: ndjson}\nbody: {items: []}\n",
             "method: PUT\npath: /items/{id}\nbody: policy\n",
             "method: PUT\npath: /items/{id}\nbody: /policy\nbody_pointer: /item\n",
+            "method: PUT\npath: /items/{id}\nbody: /_taku/id\n",
+            "method: PUT\npath: /items/{id}\ntransformations: [{ kind: omit, pointer: /_taku/provenance }]\n",
         ] {
             assert_invalid(yaml, false);
         }

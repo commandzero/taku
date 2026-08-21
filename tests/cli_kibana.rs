@@ -1512,6 +1512,7 @@ fn agent_builder_plugins_install_from_source_and_delete_without_force() {
     assert_eq!(
         canonical,
         json!({
+            "_taku": {"id": "financial-analysis"},
             "id": "financial-analysis",
             "name": "financial-analysis",
             "source_url": "https://github.com/anthropics/financial-services-plugins/tree/main/financial-analysis"

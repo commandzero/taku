@@ -544,7 +544,8 @@ fn component_templates_are_flat_canonical_resources_and_put_the_direct_api_body(
         .path();
     let mut canonical: Value =
         serde_json::from_str(&std::fs::read_to_string(&resource).unwrap()).unwrap();
-    assert_eq!(canonical["name"], "logs");
+    assert_eq!(canonical["_taku"]["id"], "logs");
+    assert!(canonical.get("name").is_none());
     assert_eq!(canonical["created_date_millis"], 100);
     assert!(canonical.get("component_template").is_none());
     canonical["version"] = json!(2);
@@ -698,7 +699,8 @@ fn response_mapping_change_requires_fetch_and_pull_before_rewriting_wrapped_reso
     );
     let normalized: Value =
         serde_json::from_str(&std::fs::read_to_string(&resource).unwrap()).unwrap();
-    assert_eq!(normalized["name"], "logs");
+    assert_eq!(normalized["_taku"]["id"], "logs");
+    assert!(normalized.get("name").is_none());
     assert_eq!(normalized["version"], 1);
     assert_eq!(normalized["created_date_millis"], 100);
     assert!(normalized.get("component_template").is_none());

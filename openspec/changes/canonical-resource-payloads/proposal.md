@@ -4,7 +4,7 @@ Some catalog definitions preserve API collection envelopes such as `{ name, comp
 
 ## What Changes
 
-- **BREAKING** Normalize every Canonical Resource to the single-resource representation, while retaining its Resource ID at the configured identity pointer for Git tracking.
+- **BREAKING** Normalize every Canonical Resource to the single-resource representation, while retaining its Resource ID at the reserved `/_taku/id` pointer for Git tracking.
 - Add explicit response collection decoding for direct lists, ID-keyed maps, and enveloped list entries with separate wire identity and Resource pointers.
 - Replace the confidence-based `trustworthy_response` flag with explicit response semantics: mutation responses default to HTTP status only, `response: resource` consumes a direct Resource body, and a response mapping consumes a structured Resource body.
 - Make a one-Resource mutation body default to the Canonical Resource after generic omission of declared metadata and any identity already bound to `{id}` in the Operation path.

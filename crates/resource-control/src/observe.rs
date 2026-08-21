@@ -779,7 +779,7 @@ fn remote_query(
                 let mut seen_ids = std::collections::BTreeSet::new();
                 for mut value in resources {
                     remove_pointer(&mut value, INTERNAL_GUARD_POINTER)?;
-                    let id = pointer_string(&value, &rt.id.pointer)
+                    let id = crate::canonical::canonical_id(&value, rt)
                         .context("remote Resource has no configured identity")?;
                     if !selection.ids.is_empty() && !selection.ids.contains(&id) {
                         continue;

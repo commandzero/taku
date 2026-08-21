@@ -1,4 +1,6 @@
-use crate::canonical::{pointer_string, sort_value};
+use crate::canonical::{
+    TAKU_ID_POINTER, TAKU_NAMESPACE_POINTER, canonical_id, pointer_string, sort_value,
+};
 use crate::{
     ApplicationDefinition, Operation, Outcome, PayloadFormat, ResourceType, TargetConfig,
     VersionEndpoint,
@@ -31,8 +33,8 @@ pub struct OperationInput<'a> {
     pub mutation: bool,
     pub metadata_track: bool,
 }
-pub const INTERNAL_GUARD_POINTER: &str = "/_taku_internal_guard";
-pub const INTERNAL_CURSOR_POINTER: &str = "/_taku_internal_cursor";
+pub const INTERNAL_GUARD_POINTER: &str = "/_taku/guard";
+pub const INTERNAL_CURSOR_POINTER: &str = "/_taku/cursor";
 
 pub fn execute_version_endpoint(
     target: &TargetConfig,
@@ -401,7 +403,7 @@ fn map_response(
                         .then_some(id)
                         .flatten(),
                 )?;
-                if pointer_string(&value, &resource_type.id.pointer).is_none() {
+                if canonical_id(&value, resource_type).is_none() {
                     if operation.skip_unidentified {
                         continue;
                     }
@@ -540,19 +542,25 @@ fn reconcile_identity(
     {
         bail!("decoded Resource identity {decoded} disagrees with requested identity {requested}");
     }
-    let identity = decoded.or(requested);
-    let existing = pointer_string(value, pointer);
-    if let (Some(existing), Some(identity)) = (existing.as_deref(), identity)
+    let wire_identity = pointer_string(value, pointer);
+    let canonical_identity = pointer_string(value, TAKU_ID_POINTER);
+    let identity = decoded
+        .or(requested)
+        .or(canonical_identity.as_deref())
+        .or(wire_identity.as_deref());
+    if let (Some(existing), Some(identity)) = (canonical_identity.as_deref(), identity)
         && existing != identity
     {
         bail!("decoded Resource identity {identity} disagrees with canonical identity {existing}");
     }
-    if existing.is_none()
-        && let Some(identity) = identity
-    {
-        insert_pointer(value, pointer, Value::String(identity.into()))?;
+    if let Some(identity) = identity {
+        if canonical_identity.as_deref() != Some(identity) {
+            insert_pointer(value, TAKU_ID_POINTER, Value::String(identity.into()))?;
+        }
+        Ok(Some(identity.to_owned()))
+    } else {
+        Ok(None)
     }
-    Ok(existing.or_else(|| identity.map(str::to_owned)))
 }
 
 fn apply_inbound(value: &mut Value, resource_type: &ResourceType) -> Result<()> {
@@ -620,9 +628,28 @@ pub fn outbound(
     operation: Option<&Operation>,
 ) -> Result<Value> {
     let mut value = without_metadata(value, resource_type)?;
-    if operation.is_some_and(|operation| !operation.includes_identity_in_body()) {
-        remove_pointer(&mut value, &resource_type.id.pointer)?;
+    if let Some(operation) = operation {
+        let identity = canonical_id(&value, resource_type);
+        if operation.includes_identity_in_body()
+            && pointer_string(&value, &resource_type.id.pointer).is_none()
+            && let Some(identity) = identity.as_deref()
+        {
+            insert_pointer(
+                &mut value,
+                &resource_type.id.pointer,
+                Value::String(identity.to_owned()),
+            )?;
+        }
+        if !operation.includes_identity_in_body() {
+            let wire_identity = pointer_string(&value, &resource_type.id.pointer);
+            if wire_identity.is_none() || wire_identity == identity {
+                remove_pointer(&mut value, &resource_type.id.pointer)?;
+            }
+        }
     }
+    // Taku-managed canonical state is repository metadata, never API payload.
+    // Remove the whole reserved namespace so future fields are safe by default.
+    remove_pointer(&mut value, TAKU_NAMESPACE_POINTER)?;
     apply_outbound(&mut value, &resource_type.transformations)?;
     if let Some(operation) = operation {
         apply_outbound(&mut value, &operation.transformations)?;
@@ -980,7 +1007,7 @@ response:
         .unwrap();
         assert!(decode_response(vec![serde_json::json!([{"id": 42}])], &pointer).is_err());
 
-        let mut value = serde_json::json!({"id": "inside"});
+        let mut value = serde_json::json!({"_taku": {"id": "inside"}});
         assert!(reconcile_identity(&mut value, "/id", Some("outside"), None).is_err());
         assert!(reconcile_identity(&mut value, "/id", Some("inside"), Some("requested")).is_err());
     }
@@ -990,7 +1017,31 @@ response:
         let mut value = serde_json::json!({"version": 1, "policy": {"phases": {}}});
         let identity = reconcile_identity(&mut value, "/id", None, Some("logs")).unwrap();
         assert_eq!(identity.as_deref(), Some("logs"));
-        assert_eq!(value["id"], "logs");
+        assert_eq!(value["_taku"]["id"], "logs");
+    }
+
+    #[test]
+    fn requested_identity_does_not_overwrite_wire_fields() {
+        let mut value = serde_json::json!({"name": "display-name"});
+        reconcile_identity(&mut value, "/name", None, Some("resource-id")).unwrap();
+        assert_eq!(value["name"], "display-name");
+        assert_eq!(value["_taku"]["id"], "resource-id");
+
+        let resource_type: ResourceType = serde_yaml::from_str(
+            "id: { pointer: /name, scope: universal }\ndisplay_name: { strategy: name }\noperations: {}\n",
+        )
+        .unwrap();
+        let operation: Operation =
+            serde_yaml::from_str("method: PUT\npath: /items/{id}\n").unwrap();
+        let canonical = serde_json::json!({
+            "_taku": {"id": "resource-id"},
+            "name": "display-name",
+            "value": 1
+        });
+        assert_eq!(
+            outbound(&canonical, &resource_type, Some(&operation)).unwrap(),
+            serde_json::json!({"name": "display-name", "value": 1})
+        );
     }
 
     #[test]
@@ -1045,11 +1096,29 @@ operations: {}
             value
         );
 
+        let canonical_only = serde_json::json!({
+            "_taku": {"id": "one"},
+            "value": 1
+        });
+        assert_eq!(
+            outbound(&canonical_only, &resource_type, Some(&path_override)).unwrap(),
+            serde_json::json!({"identity": {"id": "one"}, "value": 1})
+        );
+
         let body_override: Operation =
             serde_yaml::from_str("method: POST\npath: /items\nidentity_in_body: false\n").unwrap();
         assert_eq!(
             outbound(&value, &resource_type, Some(&body_override)).unwrap(),
             serde_json::json!({"identity": {}, "value": 1})
+        );
+
+        let future_taku_state = serde_json::json!({
+            "_taku": {"id": "one", "provenance": {"source": "remote"}},
+            "value": 1
+        });
+        assert_eq!(
+            outbound(&future_taku_state, &resource_type, Some(&body_override)).unwrap(),
+            serde_json::json!({"value": 1})
         );
     }
 

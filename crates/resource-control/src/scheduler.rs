@@ -898,7 +898,7 @@ fn execute_resource(
             if task.item.pending {
                 if !task.operation.consumes_response_body()
                     || values.len() != 1
-                    || pointer_string(&values[0], &task.resource_type.id.pointer).is_none()
+                    || crate::canonical::canonical_id(&values[0], &task.resource_type).is_none()
                 {
                     "creation_conflict"
                 } else {

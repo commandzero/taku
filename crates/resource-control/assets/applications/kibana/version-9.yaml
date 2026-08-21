@@ -1,5 +1,5 @@
 schema_version: 1
-version: "1.7.0"
+version: "1.8.0"
 application:
   name: kibana
   version: ">=9.0.0, <10.0.0"

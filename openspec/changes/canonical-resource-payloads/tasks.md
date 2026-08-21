@@ -13,7 +13,7 @@
 
 - [x] 2.1 Replace structural guessing in many-response expansion with explicit direct, list, and map response decoding.
 - [x] 2.2 Capture response-item or map-key identity before extracting an optional Resource subtree.
-- [x] 2.3 Insert captured or requested identity at the Canonical identity pointer and reject disagreement with an existing inner identity.
+- [x] 2.3 Insert captured or requested identity at reserved `/_taku/id`, retain API identity fields, and reject disagreement with existing canonical identity.
 - [x] 2.4 Preserve the intended ordering of response extraction, unbundling, guard capture, sensitive-field removal, Resource Transformations, and metadata tracking.
 - [x] 2.5 Add transport tests for direct one-Resource responses, direct lists, ID-keyed maps, enveloped list entries, requested IDs, and deterministic map order.
 - [x] 2.6 Add negative tests for wrong collection shape, missing pointers, non-string identity, conflicting inner/outer identity, and partial-result prevention.
@@ -22,7 +22,7 @@
 ## 3. Direct Single-Resource Mutation Bodies
 
 - [x] 3.1 Prepare one-Resource mutation bodies directly from the Canonical Resource after unconditional metadata omission.
-- [x] 3.2 Omit the Canonical identity by default when the Operation path binds `{id}`, and retain it by default when the path does not.
+- [x] 3.2 Omit reserved `/_taku/id` by default when the Operation path binds `{id}`, and materialize the configured API identity field only when body policy requires it.
 - [x] 3.3 Honor explicit `identity_in_body: true` and `identity_in_body: false` overrides for create, update, and upsert Operations.
 - [x] 3.4 Apply identity omission before remaining reversible Resource and Operation Transformations without changing genuine conversion behavior.
 - [x] 3.5 Select an Operation `body` JSON Pointer after generic preparation and report a Transformation Conflict when it does not match.
