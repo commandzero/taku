@@ -585,6 +585,9 @@ fn apply_inbound(value: &mut Value, resource_type: &ResourceType) -> Result<()> 
                     insert_pointer(value, pointer, sort_value(&parsed))?;
                 }
             }
+            // YAML is kept as source text so comments and user formatting survive a
+            // fetch/push round trip. Canonical storage renders it readably.
+            crate::Transformation::EmbeddedYaml { .. } => {}
             crate::Transformation::SingletonMap {
                 pointer,
                 key_pointer,
@@ -687,6 +690,7 @@ fn apply_outbound(value: &mut Value, transformations: &[crate::Transformation]) 
                     )?;
                 }
             }
+            crate::Transformation::EmbeddedYaml { .. } => {}
             crate::Transformation::Extract { pointer } => {
                 let document = value.clone();
                 *value = Value::Object(Map::new());

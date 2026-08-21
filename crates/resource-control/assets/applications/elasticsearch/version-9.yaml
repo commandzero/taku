@@ -1,163 +1,405 @@
 schema_version: 1
-version: "1.5.0"
+version: 1.5.0
 application:
   name: elasticsearch
   version: ">=9.0.0, <10.0.0"
 resource_types:
   ingest_pipelines:
-    - id: { pointer: /id, scope: universal }
-      display_name: { pointer: /name, strategy: name_id }
+    - id:
+        pointer: /id
+        scope: universal
+      display_name:
+        pointer: /name
+        strategy: name_id
       write_intent: upsert
       mutation_mode: replace
-      sensitive_fields: [/_secret]
-      metadata: { fields: [/created_date_millis, /modified_date_millis] }
+      sensitive_fields:
+        - /_secret
+      metadata:
+        fields:
+          - /created_date_millis
+          - /modified_date_millis
       operations:
-        read: { method: GET, path: "/_ingest/pipeline/{id}", extract: "/{id}" }
-        list: { method: GET, path: "/_ingest/pipeline", cardinality: many, response: { collection: map } }
-        create: { method: PUT, path: "/_ingest/pipeline/{id}?create=true" }
-        update: { method: PUT, path: "/_ingest/pipeline/{id}" }
-        upsert: { method: PUT, path: "/_ingest/pipeline/{id}" }
-        delete: { method: DELETE, path: "/_ingest/pipeline/{id}" }
+        read:
+          method: GET
+          path: /_ingest/pipeline/{id}
+          extract: /{id}
+        list:
+          method: GET
+          path: /_ingest/pipeline
+          cardinality: many
+          response:
+            collection: map
+        create:
+          method: PUT
+          path: /_ingest/pipeline/{id}?create=true
+        update:
+          method: PUT
+          path: /_ingest/pipeline/{id}
+        upsert:
+          method: PUT
+          path: /_ingest/pipeline/{id}
+        delete:
+          method: DELETE
+          path: /_ingest/pipeline/{id}
   ilm_policies:
-    - id: { pointer: /id, scope: universal }
-      display_name: { pointer: /id, strategy: name, unique: true }
+    - id:
+        pointer: /id
+        scope: universal
+      display_name:
+        pointer: /id
+        strategy: name
+        unique: true
       write_intent: update
       mutation_mode: replace
-      metadata: { fields: [/version, /modified_date, /modified_date_millis, /in_use_by] }
+      metadata:
+        fields:
+          - /version
+          - /modified_date
+          - /modified_date_millis
+          - /in_use_by
       operations:
-        read: { method: GET, path: "/_ilm/policy/{id}", extract: "/{id}" }
-        list: { method: GET, path: "/_ilm/policy", cardinality: many, response: { collection: map } }
+        read:
+          method: GET
+          path: /_ilm/policy/{id}
+          extract: /{id}
+        list:
+          method: GET
+          path: /_ilm/policy
+          cardinality: many
+          response:
+            collection: map
         update:
           method: PUT
-          path: "/_ilm/policy/{id}"
+          path: /_ilm/policy/{id}
           body: /policy
-        delete: { method: DELETE, path: "/_ilm/policy/{id}" }
+        delete:
+          method: DELETE
+          path: /_ilm/policy/{id}
   component_templates:
-    - id: { pointer: /name, scope: universal }
-      display_name: { pointer: /name, strategy: name, unique: true }
+    - id:
+        pointer: /name
+        scope: universal
+      display_name:
+        pointer: /name
+        strategy: name
+        unique: true
       write_intent: upsert
       mutation_mode: replace
-      metadata: { fields: [/created_date_millis, /modified_date_millis] }
+      metadata:
+        fields:
+          - /created_date_millis
+          - /modified_date_millis
       operations:
-        read: { method: GET, path: "/_component_template/{id}", extract: "/component_templates/0", response: { identity_pointer: /name, resource_pointer: /component_template } }
-        list: { method: GET, path: "/_component_template", cardinality: many, extract: "/component_templates", response: { collection: list, identity_pointer: /name, resource_pointer: /component_template } }
+        read:
+          method: GET
+          path: /_component_template/{id}
+          extract: /component_templates/0
+          response:
+            identity_pointer: /name
+            resource_pointer: /component_template
+        list:
+          method: GET
+          path: /_component_template
+          cardinality: many
+          extract: /component_templates
+          response:
+            collection: list
+            identity_pointer: /name
+            resource_pointer: /component_template
         create:
           method: PUT
-          path: "/_component_template/{id}?create=true"
+          path: /_component_template/{id}?create=true
         update:
           method: PUT
-          path: "/_component_template/{id}"
-        delete: { method: DELETE, path: "/_component_template/{id}" }
+          path: /_component_template/{id}
+        delete:
+          method: DELETE
+          path: /_component_template/{id}
   index_templates:
-    - id: { pointer: /name, scope: universal }
-      display_name: { pointer: /name, strategy: name, unique: true }
+    - id:
+        pointer: /name
+        scope: universal
+      display_name:
+        pointer: /name
+        strategy: name
+        unique: true
       write_intent: upsert
       mutation_mode: replace
-      dependencies: [component_templates]
-      metadata: { fields: [/created_date_millis, /modified_date_millis] }
+      dependencies:
+        - component_templates
+      metadata:
+        fields:
+          - /created_date_millis
+          - /modified_date_millis
       operations:
-        read: { method: GET, path: "/_index_template/{id}", extract: "/index_templates/0", response: { identity_pointer: /name, resource_pointer: /index_template } }
-        list: { method: GET, path: "/_index_template", cardinality: many, extract: "/index_templates", response: { collection: list, identity_pointer: /name, resource_pointer: /index_template } }
+        read:
+          method: GET
+          path: /_index_template/{id}
+          extract: /index_templates/0
+          response:
+            identity_pointer: /name
+            resource_pointer: /index_template
+        list:
+          method: GET
+          path: /_index_template
+          cardinality: many
+          extract: /index_templates
+          response:
+            collection: list
+            identity_pointer: /name
+            resource_pointer: /index_template
         create:
           method: PUT
-          path: "/_index_template/{id}?create=true"
+          path: /_index_template/{id}?create=true
         update:
           method: PUT
-          path: "/_index_template/{id}"
-        delete: { method: DELETE, path: "/_index_template/{id}" }
+          path: /_index_template/{id}
+        delete:
+          method: DELETE
+          path: /_index_template/{id}
   roles:
-    - id: { pointer: /id, scope: universal }
-      display_name: { pointer: /id, strategy: name, unique: true }
+    - id:
+        pointer: /id
+        scope: universal
+      display_name:
+        pointer: /id
+        strategy: name
+        unique: true
       write_intent: upsert
       mutation_mode: replace
-      metadata: { fields: [/transient_metadata] }
+      metadata:
+        fields:
+          - /transient_metadata
       operations:
-        read: { method: GET, path: "/_security/role/{id}", extract: "/{id}" }
-        list: { method: GET, path: "/_security/role", cardinality: many, response: { collection: map } }
-        upsert: { method: PUT, path: "/_security/role/{id}" }
-        delete: { method: DELETE, path: "/_security/role/{id}" }
+        read:
+          method: GET
+          path: /_security/role/{id}
+          extract: /{id}
+        list:
+          method: GET
+          path: /_security/role
+          cardinality: many
+          response:
+            collection: map
+        upsert:
+          method: PUT
+          path: /_security/role/{id}
+        delete:
+          method: DELETE
+          path: /_security/role/{id}
   snapshot_repositories:
-    - id: { pointer: /id, scope: universal }
-      display_name: { pointer: /id, strategy: name, unique: true }
+    - id:
+        pointer: /id
+        scope: universal
+      display_name:
+        pointer: /id
+        strategy: name
+        unique: true
       write_intent: upsert
       mutation_mode: replace
-      metadata: { fields: [/uuid, /generation, /pending_generation] }
+      metadata:
+        fields:
+          - /uuid
+          - /generation
+          - /pending_generation
       operations:
-        read: { method: GET, path: "/_snapshot/{id}", extract: "/{id}" }
-        list: { method: GET, path: "/_snapshot", cardinality: many, response: { collection: map } }
-        upsert: { method: PUT, path: "/_snapshot/{id}" }
-        delete: { method: DELETE, path: "/_snapshot/{id}" }
+        read:
+          method: GET
+          path: /_snapshot/{id}
+          extract: /{id}
+        list:
+          method: GET
+          path: /_snapshot
+          cardinality: many
+          response:
+            collection: map
+        upsert:
+          method: PUT
+          path: /_snapshot/{id}
+        delete:
+          method: DELETE
+          path: /_snapshot/{id}
   legacy_index_templates:
-    - id: { pointer: /id, scope: universal }
-      display_name: { pointer: /id, strategy: name, unique: true }
+    - id:
+        pointer: /id
+        scope: universal
+      display_name:
+        pointer: /id
+        strategy: name
+        unique: true
       write_intent: upsert
       mutation_mode: replace
       operations:
-        read: { method: GET, path: "/_template/{id}", extract: "/{id}" }
-        list: { method: GET, path: "/_template", cardinality: many, response: { collection: map } }
-        create: { method: PUT, path: "/_template/{id}?create=true" }
-        update: { method: PUT, path: "/_template/{id}" }
-        delete: { method: DELETE, path: "/_template/{id}" }
+        read:
+          method: GET
+          path: /_template/{id}
+          extract: /{id}
+        list:
+          method: GET
+          path: /_template
+          cardinality: many
+          response:
+            collection: map
+        create:
+          method: PUT
+          path: /_template/{id}?create=true
+        update:
+          method: PUT
+          path: /_template/{id}
+        delete:
+          method: DELETE
+          path: /_template/{id}
   role_mappings:
-    - id: { pointer: /id, scope: universal }
-      display_name: { pointer: /id, strategy: name, unique: true }
+    - id:
+        pointer: /id
+        scope: universal
+      display_name:
+        pointer: /id
+        strategy: name
+        unique: true
       write_intent: upsert
       mutation_mode: replace
       operations:
-        read: { method: GET, path: "/_security/role_mapping/{id}", extract: "/{id}" }
-        list: { method: GET, path: "/_security/role_mapping", cardinality: many, response: { collection: map } }
-        upsert: { method: PUT, path: "/_security/role_mapping/{id}" }
-        delete: { method: DELETE, path: "/_security/role_mapping/{id}" }
+        read:
+          method: GET
+          path: /_security/role_mapping/{id}
+          extract: /{id}
+        list:
+          method: GET
+          path: /_security/role_mapping
+          cardinality: many
+          response:
+            collection: map
+        upsert:
+          method: PUT
+          path: /_security/role_mapping/{id}
+        delete:
+          method: DELETE
+          path: /_security/role_mapping/{id}
   slm_policies:
-    - id: { pointer: /id, scope: universal }
-      display_name: { pointer: /id, strategy: name, unique: true }
+    - id:
+        pointer: /id
+        scope: universal
+      display_name:
+        pointer: /id
+        strategy: name
+        unique: true
       write_intent: upsert
       mutation_mode: replace
-      dependencies: [snapshot_repositories]
-      metadata: { fields: [/version, /modified_date, /modified_date_millis, /next_execution, /next_execution_millis, /stats, /in_progress] }
+      dependencies:
+        - snapshot_repositories
+      metadata:
+        fields:
+          - /version
+          - /modified_date
+          - /modified_date_millis
+          - /next_execution
+          - /next_execution_millis
+          - /stats
+          - /in_progress
       operations:
-        read: { method: GET, path: "/_slm/policy/{id}", extract: "/{id}" }
-        list: { method: GET, path: "/_slm/policy", cardinality: many, response: { collection: map } }
+        read:
+          method: GET
+          path: /_slm/policy/{id}
+          extract: /{id}
+        list:
+          method: GET
+          path: /_slm/policy
+          cardinality: many
+          response:
+            collection: map
         upsert:
           method: PUT
-          path: "/_slm/policy/{id}"
+          path: /_slm/policy/{id}
           body: /policy
-        delete: { method: DELETE, path: "/_slm/policy/{id}" }
+        delete:
+          method: DELETE
+          path: /_slm/policy/{id}
   ccr_auto_follow_patterns:
-    - id: { pointer: /name, scope: universal }
-      display_name: { pointer: /name, strategy: name, unique: true }
+    - id:
+        pointer: /name
+        scope: universal
+      display_name:
+        pointer: /name
+        strategy: name
+        unique: true
       write_intent: upsert
       mutation_mode: replace
-      metadata: { fields: [/pattern/active] }
+      metadata:
+        fields:
+          - /pattern/active
       operations:
-        read: { method: GET, path: "/_ccr/auto_follow/{id}", extract: "/patterns/0" }
-        list: { method: GET, path: "/_ccr/auto_follow", cardinality: many, extract: "/patterns", response: { collection: list } }
+        read:
+          method: GET
+          path: /_ccr/auto_follow/{id}
+          extract: /patterns/0
+        list:
+          method: GET
+          path: /_ccr/auto_follow
+          cardinality: many
+          extract: /patterns
+          response:
+            collection: list
         upsert:
           method: PUT
-          path: "/_ccr/auto_follow/{id}"
+          path: /_ccr/auto_follow/{id}
           body: /pattern
-        delete: { method: DELETE, path: "/_ccr/auto_follow/{id}" }
+        delete:
+          method: DELETE
+          path: /_ccr/auto_follow/{id}
   cluster_settings:
-    - id: { pointer: /id, scope: target }
-      display_name: { pointer: /id, strategy: name, unique: true }
+    - id:
+        pointer: /id
+        scope: target
+      display_name:
+        pointer: /id
+        strategy: name
+        unique: true
       write_intent: update
       mutation_mode: replace
       operations:
-        read: { method: GET, path: "/_cluster/settings?flat_settings=true" }
-        update: { method: PUT, path: "/_cluster/settings", identity_in_body: false }
+        read:
+          method: GET
+          path: /_cluster/settings?flat_settings=true
+        update:
+          method: PUT
+          path: /_cluster/settings
+          identity_in_body: false
   enrich_policies:
-    - id: { pointer: /policy/name, scope: universal }
-      display_name: { pointer: /policy/name, strategy: name, unique: true }
+    - id:
+        pointer: /policy/name
+        scope: universal
+      display_name:
+        pointer: /policy/name
+        strategy: name
+        unique: true
       write_intent: create
       mutation_mode: replace
       transformations:
-        - { kind: singleton_map, pointer: /config, key_pointer: /policy_type, value_pointer: /policy }
-        - { kind: remove, pointer: /policy/elasticsearch_version }
+        - kind: singleton_map
+          pointer: /config
+          key_pointer: /policy_type
+          value_pointer: /policy
+        - kind: remove
+          pointer: /policy/elasticsearch_version
       operations:
-        read: { method: GET, path: "/_enrich/policy/{id}", extract: "/policies/0", extract_missing: not_found }
-        list: { method: GET, path: "/_enrich/policy", cardinality: many, extract: "/policies", response: { collection: list } }
+        read:
+          method: GET
+          path: /_enrich/policy/{id}
+          extract: /policies/0
+          extract_missing: not_found
+        list:
+          method: GET
+          path: /_enrich/policy
+          cardinality: many
+          extract: /policies
+          response:
+            collection: list
         create:
           method: PUT
-          path: "/_enrich/policy/{id}"
+          path: /_enrich/policy/{id}
           body: /config
-        delete: { method: DELETE, path: "/_enrich/policy/{id}" }
+        delete:
+          method: DELETE
+          path: /_enrich/policy/{id}

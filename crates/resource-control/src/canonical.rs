@@ -9,6 +9,7 @@ use crate::{
 use anyhow::{Context, Result, bail};
 use serde::Serialize;
 use serde_json::Value;
+use sha2::Digest;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
@@ -442,7 +443,11 @@ pub fn parse_resource(path: &Path) -> Result<Value> {
     }
 }
 
-pub fn write_resource(path: &Path, value: &Value) -> Result<()> {
+fn write_resource_with_embedded_yaml(
+    path: &Path,
+    value: &Value,
+    embedded_yaml: &[String],
+) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -452,7 +457,7 @@ pub fn write_resource(path: &Path, value: &Value) -> Result<()> {
     ) {
         serde_yaml::to_string(value)?
     } else {
-        serde_json::to_string_pretty(value)? + "\n"
+        render_json5(value, "", 0, embedded_yaml) + "\n"
     };
     let temporary = path.with_extension("taku.tmp");
     fs::write(&temporary, text)?;
@@ -468,7 +473,69 @@ pub(crate) fn write_canonical_resource(
     if let Some(projection) = &resource_type.filesystem {
         crate::projection::split(path, projection, value)
     } else {
-        write_resource(path, value)
+        let embedded_yaml = resource_type
+            .transformations
+            .iter()
+            .filter_map(|transformation| match transformation {
+                crate::Transformation::EmbeddedYaml { pointer } => Some(pointer.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        write_resource_with_embedded_yaml(path, value, &embedded_yaml)
+    }
+}
+
+/// Render repository JSON as JSON5 when configured fields contain embedded YAML.
+/// The YAML remains a string, but multi-line content is emitted with the JSON5
+/// triple-quote extension so it can be reviewed and edited without escaped lines.
+fn render_json5(value: &Value, pointer: &str, indent: usize, embedded_yaml: &[String]) -> String {
+    match value {
+        Value::Null | Value::Bool(_) | Value::Number(_) => serde_json::to_string(value).unwrap(),
+        Value::String(text)
+            if embedded_yaml.iter().any(|candidate| candidate == pointer)
+                && text.contains('\n')
+                && !text.contains("\"\"\"") =>
+        {
+            format!("\"\"\"{text}\"\"\"")
+        }
+        Value::String(_) => serde_json::to_string(value).unwrap(),
+        Value::Array(values) if values.is_empty() => "[]".to_owned(),
+        Value::Array(values) => {
+            let child_indent = indent + 2;
+            let padding = " ".repeat(child_indent);
+            let closing_padding = " ".repeat(indent);
+            let entries = values
+                .iter()
+                .enumerate()
+                .map(|(index, item)| {
+                    let child_pointer = format!("{pointer}/{index}");
+                    format!(
+                        "{padding}{}",
+                        render_json5(item, &child_pointer, child_indent, embedded_yaml)
+                    )
+                })
+                .collect::<Vec<_>>();
+            format!("[\n{}\n{closing_padding}]", entries.join(",\n"))
+        }
+        Value::Object(values) if values.is_empty() => "{}".to_owned(),
+        Value::Object(values) => {
+            let child_indent = indent + 2;
+            let padding = " ".repeat(child_indent);
+            let closing_padding = " ".repeat(indent);
+            let entries = values
+                .iter()
+                .map(|(key, item)| {
+                    let escaped_key = key.replace('~', "~0").replace('/', "~1");
+                    let child_pointer = format!("{pointer}/{escaped_key}");
+                    format!(
+                        "{padding}{}: {}",
+                        serde_json::to_string(key).unwrap(),
+                        render_json5(item, &child_pointer, child_indent, embedded_yaml)
+                    )
+                })
+                .collect::<Vec<_>>();
+            format!("{{\n{}\n{closing_padding}}}", entries.join(",\n"))
+        }
     }
 }
 
@@ -626,4 +693,51 @@ fn normalize_triple_quotes(input: &str) -> String {
     output
 }
 
-use sha2::Digest;
+#[cfg(test)]
+mod tests {
+    use super::{
+        normalize_triple_quotes, parse_resource, render_json5, write_resource_with_embedded_yaml,
+    };
+    use serde_json::{Value, json};
+
+    #[test]
+    fn embedded_yaml_is_readable_json5_and_round_trips_without_losing_comments() {
+        let value = json!({
+            "id": "workflow-1",
+            "yaml": "# retained comment\nname: User Diagnostic ID Fetcher\nsteps:\n  - name: fetch\n"
+        });
+
+        let text = render_json5(&value, "", 0, &["/yaml".to_owned()]);
+
+        assert!(
+            text.contains("\"yaml\": \"\"\"# retained comment\nname: User Diagnostic ID Fetcher")
+        );
+        assert!(!text.contains("\\nname: User Diagnostic ID Fetcher"));
+        let parsed: Value = json5::from_str(&normalize_triple_quotes(&text)).unwrap();
+        assert_eq!(parsed, value);
+    }
+
+    #[test]
+    fn embedded_yaml_containing_triple_quotes_uses_standard_json_escaping() {
+        let value = json!({"yaml": "note: '\"\"\"'\n"});
+
+        let text = render_json5(&value, "", 0, &["/yaml".to_owned()]);
+
+        assert!(!text.contains("\"yaml\": \"\"\""));
+        let parsed: Value = json5::from_str(&normalize_triple_quotes(&text)).unwrap();
+        assert_eq!(parsed, value);
+    }
+
+    #[test]
+    fn canonical_writer_persists_embedded_yaml_as_a_triple_quoted_json5_value() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("workflow.json");
+        let value = json!({"yaml": "name: Workflow\nsteps: []\n"});
+
+        write_resource_with_embedded_yaml(&path, &value, &["/yaml".to_owned()]).unwrap();
+
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("\"yaml\": \"\"\"name: Workflow\nsteps: []\n\"\"\""));
+        assert_eq!(parse_resource(&path).unwrap(), value);
+    }
+}

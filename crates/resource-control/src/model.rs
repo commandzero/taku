@@ -828,6 +828,13 @@ pub enum Transformation {
     EmbeddedJson {
         pointer: String,
     },
+    /// Preserve an embedded YAML document as a string on the wire while
+    /// rendering it as a readable triple-quoted JSON5 value in the repository.
+    /// This deliberately does not parse and re-serialize YAML: doing so would
+    /// discard comments from user-authored workflow definitions.
+    EmbeddedYaml {
+        pointer: String,
+    },
     SingletonMap {
         pointer: String,
         key_pointer: String,
@@ -844,6 +851,7 @@ pub(crate) fn sensitive_field_conflicts(resource_type: &ResourceType, pointer: &
                 transformation,
                 Transformation::Extract { pointer: required }
                     | Transformation::EmbeddedJson { pointer: required }
+                    | Transformation::EmbeddedYaml { pointer: required }
                     if pointer == required
                         || required.starts_with(&format!("{pointer}/"))
             ) || matches!(

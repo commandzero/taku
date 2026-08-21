@@ -5,55 +5,93 @@ application:
   version: ">=9.0.0, <10.0.0"
 resource_types:
   spaces:
-    - id: { pointer: /id, scope: universal }
-      display_name: { pointer: /name, strategy: name }
+    - id:
+        pointer: /id
+        scope: universal
+      display_name:
+        pointer: /name
+        strategy: name
       write_intent: upsert
       operations:
-        read: { method: GET, path: "/api/spaces/space/{id}" }
-        list: { method: GET, path: "/api/spaces/space", cardinality: many, response: { collection: list } }
-        create: { method: POST, path: "/api/spaces/space" }
-        update: { method: PUT, path: "/api/spaces/space/{id}", identity_in_body: true }
-        delete: { method: DELETE, path: "/api/spaces/space/{id}" }
+        read:
+          method: GET
+          path: "/api/spaces/space/{id}"
+        list:
+          method: GET
+          path: "/api/spaces/space"
+          cardinality: many
+          response:
+            collection: list
+        create:
+          method: POST
+          path: "/api/spaces/space"
+        update:
+          method: PUT
+          path: "/api/spaces/space/{id}"
+          identity_in_body: true
+        delete:
+          method: DELETE
+          path: "/api/spaces/space/{id}"
   saved_objects:
-    - id: { pointer: /id, scope: universal }
-      display_name: { pointers: [/attributes/title, /attributes/name], strategy: name_id }
+    - id:
+        pointer: /id
+        scope: universal
+      display_name:
+        pointers: [/attributes/title, /attributes/name]
+        strategy: name_id
       namespaced: true
       write_intent: upsert
       dependencies: [spaces]
       transformations:
-        - { kind: embedded_json, pointer: /attributes/panelsJSON }
-        - { kind: embedded_json, pointer: /attributes/fieldFormatMap }
-        - { kind: embedded_json, pointer: /attributes/controlGroupInput/ignoreParentSettingsJSON }
-        - { kind: embedded_json, pointer: /attributes/controlGroupInput/panelsJSON }
-        - { kind: embedded_json, pointer: /attributes/kibanaSavedObjectMeta/searchSourceJSON }
-        - { kind: embedded_json, pointer: /attributes/optionsJSON }
-        - { kind: embedded_json, pointer: /attributes/visState }
-        - { kind: embedded_json, pointer: /attributes/fieldAttrs }
+        - kind: embedded_json
+          pointer: /attributes/panelsJSON
+        - kind: embedded_json
+          pointer: /attributes/fieldFormatMap
+        - kind: embedded_json
+          pointer: /attributes/controlGroupInput/ignoreParentSettingsJSON
+        - kind: embedded_json
+          pointer: /attributes/controlGroupInput/panelsJSON
+        - kind: embedded_json
+          pointer: /attributes/kibanaSavedObjectMeta/searchSourceJSON
+        - kind: embedded_json
+          pointer: /attributes/optionsJSON
+        - kind: embedded_json
+          pointer: /attributes/visState
+        - kind: embedded_json
+          pointer: /attributes/fieldAttrs
       operations:
         read:
           method: POST
           path: "/api/saved_objects/_export"
-          namespace: { prefix: "/s/{namespace}" }
+          namespace:
+            prefix: "/s/{namespace}"
           cardinality: many
           unbundle: ndjson
-          response: { collection: list }
+          response:
+            collection: list
           skip_unidentified: true
-          body: { objects: [{ id: "{id}", type: "{type}" }] }
+          body:
+            objects: [{ id: "{id}", type: "{type}" }]
         list:
           method: POST
           path: "/api/saved_objects/_export"
-          namespace: { prefix: "/s/{namespace}" }
+          namespace:
+            prefix: "/s/{namespace}"
           cardinality: many
           unbundle: ndjson
-          response: { collection: list }
+          response:
+            collection: list
           skip_unidentified: true
-          body: { type: ["*"] }
+          body:
+            type: ["*"]
         upsert:
           method: POST
           path: "/api/saved_objects/_import"
-          namespace: { prefix: "/s/{namespace}" }
+          namespace:
+            prefix: "/s/{namespace}"
           cardinality: many
-          query: { overwrite: true }
+          query:
+            overwrite: true
           bundle:
             shape: list
             format: ndjson
@@ -64,68 +102,132 @@ resource_types:
         delete:
           method: DELETE
           path: "/api/saved_objects/{type}/{id}"
-          namespace: { prefix: "/s/{namespace}" }
+          namespace:
+            prefix: "/s/{namespace}"
   workflows:
     - version: ">=9.4.0, <10.0.0"
-      id: { pointer: /id, scope: universal }
-      display_name: { pointer: /name, strategy: name_id }
+      id:
+        pointer: /id
+        scope: universal
+      display_name:
+        pointer: /name
+        strategy: name_id
       namespaced: true
       write_intent: upsert
       dependencies: [spaces]
-      metadata: { fields: [/createdAt, /createdBy, /lastUpdatedAt, /lastUpdatedBy, /valid, /validationErrors, /history] }
+      metadata:
+        fields:
+          - /createdAt
+          - /createdBy
+          - /lastUpdatedAt
+          - /lastUpdatedBy
+          - /valid
+          - /validationErrors
+          - /history
+      transformations:
+        - kind: embedded_yaml
+          pointer: /yaml
       operations:
         read:
           method: GET
           path: "/api/workflows/workflow/{id}"
-          namespace: { prefix: "/s/{namespace}" }
-          headers: { x-elastic-internal-origin: Kibana }
+          namespace:
+            prefix: "/s/{namespace}"
+          headers:
+            x-elastic-internal-origin: Kibana
         list:
           method: GET
           path: "/api/workflows"
-          namespace: { prefix: "/s/{namespace}" }
+          namespace:
+            prefix: "/s/{namespace}"
           cardinality: many
           extract: /results
-          response: { collection: list }
-          headers: { x-elastic-internal-origin: Kibana }
-          pagination: { kind: page_size, page_parameter: page, size_parameter: size, size: 100, max_pages: 100 }
+          response:
+            collection: list
+          headers:
+            x-elastic-internal-origin: Kibana
+          pagination:
+            kind: page_size
+            page_parameter: page
+            size_parameter: size
+            size: 100
+            max_pages: 100
         create:
           method: POST
           path: "/api/workflows/workflow"
-          namespace: { prefix: "/s/{namespace}" }
-          headers: { x-elastic-internal-origin: Kibana }
+          namespace:
+            prefix: "/s/{namespace}"
+          headers:
+            x-elastic-internal-origin: Kibana
         update:
           method: PUT
           path: "/api/workflows/workflow/{id}"
-          namespace: { prefix: "/s/{namespace}" }
-          headers: { x-elastic-internal-origin: Kibana }
+          namespace:
+            prefix: "/s/{namespace}"
+          headers:
+            x-elastic-internal-origin: Kibana
         delete:
           method: DELETE
           path: "/api/workflows/workflow/{id}"
-          namespace: { prefix: "/s/{namespace}" }
-          headers: { x-elastic-internal-origin: Kibana }
+          namespace:
+            prefix: "/s/{namespace}"
+          headers:
+            x-elastic-internal-origin: Kibana
   tools:
     - version: ">=9.4.0, <10.0.0"
-      id: { pointer: /id, scope: universal }
-      display_name: { pointer: /id, strategy: name, unique: true }
+      id:
+        pointer: /id
+        scope: universal
+      display_name:
+        pointer: /id
+        strategy: name
+        unique: true
       namespaced: true
       write_intent: upsert
       dependencies: [spaces, workflows]
-      metadata: { fields: [/readonly, /schema] }
+      metadata:
+        fields: [/readonly, /schema]
       operations:
-        read: { method: GET, path: "/api/agent_builder/tools/{id}", namespace: { prefix: "/s/{namespace}" } }
-        list: { method: GET, path: "/api/agent_builder/tools", namespace: { prefix: "/s/{namespace}" }, cardinality: many, extract: /results, response: { collection: list } }
-        create: { method: POST, path: "/api/agent_builder/tools", namespace: { prefix: "/s/{namespace}" } }
+        read:
+          method: GET
+          path: "/api/agent_builder/tools/{id}"
+          namespace:
+            prefix: "/s/{namespace}"
+        list:
+          method: GET
+          path: "/api/agent_builder/tools"
+          namespace:
+            prefix: "/s/{namespace}"
+          cardinality: many
+          extract: /results
+          response:
+            collection: list
+        create:
+          method: POST
+          path: "/api/agent_builder/tools"
+          namespace:
+            prefix: "/s/{namespace}"
         update:
           method: PUT
           path: "/api/agent_builder/tools/{id}"
-          namespace: { prefix: "/s/{namespace}" }
+          namespace:
+            prefix: "/s/{namespace}"
           transformations:
             - { kind: omit, pointer: /type }
-        delete: { method: DELETE, path: "/api/agent_builder/tools/{id}", namespace: { prefix: "/s/{namespace}" } }
+        delete:
+          method: DELETE
+          path: "/api/agent_builder/tools/{id}"
+          namespace:
+            prefix: "/s/{namespace}"
   skills:
     - version: ">=9.4.0, <10.0.0"
-      id: { pointer: /id, scope: universal }
-      display_name: { pointer: /name, strategy: id, unique: true }
+      id:
+        pointer: /id
+        scope: universal
+      display_name:
+        pointer: /name
+        strategy: id
+        unique: true
       namespaced: true
       write_intent: upsert
       dependencies: [spaces, tools]
@@ -141,49 +243,137 @@ resource_types:
             name_pointer: /name
             content_pointer: /content
             extension: md
-      metadata: { fields: [/readonly, /schema, /built_in, /source, /created_at, /updated_at] }
+      metadata:
+        fields:
+          - /readonly
+          - /schema
+          - /built_in
+          - /source
+          - /created_at
+          - /updated_at
       operations:
-        read: { method: GET, path: "/api/agent_builder/skills/{id}", namespace: { prefix: "/s/{namespace}" } }
-        list: { method: GET, path: "/api/agent_builder/skills", namespace: { prefix: "/s/{namespace}" }, cardinality: many, extract: /results, response: { collection: list } }
-        create: { method: POST, path: "/api/agent_builder/skills", namespace: { prefix: "/s/{namespace}" } }
+        read:
+          method: GET
+          path: "/api/agent_builder/skills/{id}"
+          namespace:
+            prefix: "/s/{namespace}"
+        list:
+          method: GET
+          path: "/api/agent_builder/skills"
+          namespace:
+            prefix: "/s/{namespace}"
+          cardinality: many
+          extract: /results
+          response:
+            collection: list
+        create:
+          method: POST
+          path: "/api/agent_builder/skills"
+          namespace:
+            prefix: "/s/{namespace}"
         update:
           method: PUT
           path: "/api/agent_builder/skills/{id}"
-          namespace: { prefix: "/s/{namespace}" }
-        delete: { method: DELETE, path: "/api/agent_builder/skills/{id}", namespace: { prefix: "/s/{namespace}" } }
+          namespace:
+            prefix: "/s/{namespace}"
+        delete:
+          method: DELETE
+          path: "/api/agent_builder/skills/{id}"
+          namespace:
+            prefix: "/s/{namespace}"
   plugins:
     - version: ">=9.4.0, <10.0.0"
       stability: experimental
-      id: { pointer: /id, scope: universal }
-      display_name: { pointer: /name, strategy: name, unique: true }
+      id:
+        pointer: /id
+        scope: universal
+      display_name:
+        pointer: /name
+        strategy: name
+        unique: true
       namespaced: true
       write_intent: create
       dependencies: [spaces]
-      metadata: { fields: [/created_at, /updated_at, /description, /manifest, /skill_ids, /unmanaged_assets, /version] }
+      metadata:
+        fields:
+          - /created_at
+          - /updated_at
+          - /description
+          - /manifest
+          - /skill_ids
+          - /unmanaged_assets
+          - /version
       operations:
-        read: { method: GET, path: "/api/agent_builder/plugins/{id}", namespace: { prefix: "/s/{namespace}" } }
-        list: { method: GET, path: "/api/agent_builder/plugins", namespace: { prefix: "/s/{namespace}" }, cardinality: many, extract: /results, response: { collection: list } }
+        read:
+          method: GET
+          path: "/api/agent_builder/plugins/{id}"
+          namespace:
+            prefix: "/s/{namespace}"
+        list:
+          method: GET
+          path: "/api/agent_builder/plugins"
+          namespace:
+            prefix: "/s/{namespace}"
+          cardinality: many
+          extract: /results
+          response:
+            collection: list
         create:
           method: POST
           path: "/api/agent_builder/plugins/install"
-          namespace: { prefix: "/s/{namespace}" }
+          namespace:
+            prefix: "/s/{namespace}"
           response: resource
-          body: { url: "{source_url}", plugin_name: "{name}" }
-        delete: { method: DELETE, path: "/api/agent_builder/plugins/{id}", namespace: { prefix: "/s/{namespace}" } }
+          body:
+            url: "{source_url}"
+            plugin_name: "{name}"
+        delete:
+          method: DELETE
+          path: "/api/agent_builder/plugins/{id}"
+          namespace:
+            prefix: "/s/{namespace}"
   agents:
     - version: ">=9.4.0, <10.0.0"
-      id: { pointer: /id, scope: universal }
-      display_name: { pointer: /name, strategy: name_id }
+      id:
+        pointer: /id
+        scope: universal
+      display_name:
+        pointer: /name
+        strategy: name_id
       namespaced: true
       write_intent: upsert
       dependencies: [spaces, tools, skills, plugins]
-      metadata: { fields: [/readonly, /schema] }
+      metadata:
+        fields:
+          - /readonly
+          - /schema
       operations:
-        read: { method: GET, path: "/api/agent_builder/agents/{id}", namespace: { prefix: "/s/{namespace}" } }
-        list: { method: GET, path: "/api/agent_builder/agents", namespace: { prefix: "/s/{namespace}" }, cardinality: many, extract: /results, response: { collection: list } }
-        create: { method: POST, path: "/api/agent_builder/agents", namespace: { prefix: "/s/{namespace}" } }
+        read:
+          method: GET
+          path: "/api/agent_builder/agents/{id}"
+          namespace:
+            prefix: "/s/{namespace}"
+        list:
+          method: GET
+          path: "/api/agent_builder/agents"
+          namespace:
+            prefix: "/s/{namespace}"
+          cardinality: many
+          extract: /results
+          response:
+            collection: list
+        create:
+          method: POST
+          path: "/api/agent_builder/agents"
+          namespace:
+            prefix: "/s/{namespace}"
         update:
           method: PUT
           path: "/api/agent_builder/agents/{id}"
-          namespace: { prefix: "/s/{namespace}" }
-        delete: { method: DELETE, path: "/api/agent_builder/agents/{id}", namespace: { prefix: "/s/{namespace}" } }
+          namespace:
+            prefix: "/s/{namespace}"
+        delete:
+          method: DELETE
+          path: "/api/agent_builder/agents/{id}"
+          namespace:
+            prefix: "/s/{namespace}"

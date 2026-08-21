@@ -845,7 +845,8 @@ fn transformation_pointers(transformation: &crate::Transformation) -> Vec<&str> 
         | crate::Transformation::Remove { pointer }
         | crate::Transformation::Omit { pointer }
         | crate::Transformation::Insert { pointer, .. }
-        | crate::Transformation::EmbeddedJson { pointer } => vec![pointer],
+        | crate::Transformation::EmbeddedJson { pointer }
+        | crate::Transformation::EmbeddedYaml { pointer } => vec![pointer],
         crate::Transformation::SingletonMap {
             pointer,
             key_pointer,
@@ -899,7 +900,8 @@ fn validate_metadata(resource_type: &crate::ResourceType, name: &str) -> Result<
                 | crate::Transformation::Remove { pointer: other }
                 | crate::Transformation::Omit { pointer: other }
                 | crate::Transformation::Insert { pointer: other, .. }
-                | crate::Transformation::EmbeddedJson { pointer: other } => {
+                | crate::Transformation::EmbeddedJson { pointer: other }
+                | crate::Transformation::EmbeddedYaml { pointer: other } => {
                     pointers_overlap(pointer, other)
                 }
                 crate::Transformation::SingletonMap {
@@ -1173,7 +1175,8 @@ fn validate_transformations(transformations: &[crate::Transformation], owner: &s
             | crate::Transformation::Remove { pointer }
             | crate::Transformation::Omit { pointer }
             | crate::Transformation::Insert { pointer, .. }
-            | crate::Transformation::EmbeddedJson { pointer } => vec![pointer],
+            | crate::Transformation::EmbeddedJson { pointer }
+            | crate::Transformation::EmbeddedYaml { pointer } => vec![pointer],
             crate::Transformation::SingletonMap {
                 pointer,
                 key_pointer,
