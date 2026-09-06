@@ -313,8 +313,6 @@ pub(crate) fn validate_resolved_tracking(
     resource_types: &std::collections::BTreeMap<String, crate::ResourceType>,
 ) -> Result<()> {
     for (type_name, resource_type) in resource_types {
-        let target_default = resolve(root, project, environment, target, None, type_name)?;
-        validate_tracking(resource_type, &target_default, type_name)?;
         if resource_type.namespaced {
             for (namespace, _) in crate::canonical::resource_directories(
                 root,
@@ -334,6 +332,9 @@ pub(crate) fn validate_resolved_tracking(
                 )?;
                 validate_tracking(resource_type, &hints, type_name)?;
             }
+        } else {
+            let hints = resolve(root, project, environment, target, None, type_name)?;
+            validate_tracking(resource_type, &hints, type_name)?;
         }
     }
     Ok(())
@@ -462,6 +463,51 @@ mod tests {
             application_source: None,
             push: Default::default(),
             max_requests: 4,
+        }
+    }
+
+    #[test]
+    fn namespaced_tracking_validation_uses_each_directory_override() {
+        for layout in [RepositoryLayout::Single, RepositoryLayout::Multi] {
+            let root = tempfile::tempdir().unwrap();
+            let project = project(layout);
+            let target_root = crate::canonical::target_root(root.path(), &project, "dev", "api");
+            let directory = target_root.join("space-a/widgets");
+            std::fs::create_dir_all(&directory).unwrap();
+            std::fs::write(
+                target_root.join(".target.yaml"),
+                "schema_version: 1\nmetadata: { track: true }\n",
+            )
+            .unwrap();
+            std::fs::write(
+                directory.join(".resource.yaml"),
+                "schema_version: 1\nmetadata: { track: false }\n",
+            )
+            .unwrap();
+            // Resolved definitions include Target-added Sensitive Fields.
+            let resource_type: crate::ResourceType = serde_yaml::from_str(
+                "id: { pointer: /id, scope: universal }\ndisplay_name: { strategy: id }\nnamespaced: true\nmetadata: { fields: [/created_at] }\nsensitive_fields: [/created_at]\noperations: {}\n",
+            )
+            .unwrap();
+            let definitions = BTreeMap::from([("widgets".into(), resource_type)]);
+            super::validate_resolved_tracking(root.path(), &project, "dev", "api", &definitions)
+                .unwrap();
+
+            // A sibling without an override must still reject the inherited opt-in.
+            std::fs::create_dir_all(target_root.join("space-b/widgets")).unwrap();
+            let error = super::validate_resolved_tracking(
+                root.path(),
+                &project,
+                "dev",
+                "api",
+                &definitions,
+            )
+            .unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("tracked metadata field /created_at")
+            );
         }
     }
 

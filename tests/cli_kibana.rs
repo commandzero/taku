@@ -591,6 +591,7 @@ fn json_list_and_map_bundles_keep_their_declared_shape() {
         "id": {"pointer": "/id", "scope": "universal"},
         "display_name": {"pointer": "/name", "strategy": "name"},
         "write_intent": "upsert",
+        "metadata": {"fields": ["/created_at"]},
         "operations": {
             "read": {"method": "GET", "path": "/api/map_items/{id}", "cardinality": "one"},
             "upsert": {
@@ -606,6 +607,7 @@ fn json_list_and_map_bundles_keep_their_declared_shape() {
         "id": {"pointer": "/id", "scope": "universal"},
         "display_name": {"pointer": "/name", "strategy": "name"},
         "write_intent": "upsert",
+        "metadata": {"fields": ["/created_at"]},
         "operations": {
             "read": {"method": "GET", "path": "/api/list_items/{id}", "cardinality": "one"},
             "upsert": {
@@ -622,23 +624,38 @@ fn json_list_and_map_bundles_keep_their_declared_shape() {
         serde_yaml::to_string(&definition).unwrap(),
     )
     .unwrap();
+    std::fs::create_dir_all(project.path().join("kb")).unwrap();
+    std::fs::write(
+        project.path().join("kb/.target.yaml"),
+        "schema_version: 1\nmetadata: { track: true }\n",
+    )
+    .unwrap();
     let directory = project.path().join("kb/map_items");
     std::fs::create_dir_all(&directory).unwrap();
     std::fs::write(
         directory.join("Two.json"),
-        serde_json::to_string_pretty(&json!({"id": "two", "name": "Two", "value": 2})).unwrap(),
+        serde_json::to_string_pretty(
+            &json!({"id": "two", "name": "Two", "value": 2, "created_at": "server-owned"}),
+        )
+        .unwrap(),
     )
     .unwrap();
     std::fs::write(
         directory.join("One.json"),
-        serde_json::to_string_pretty(&json!({"id": "one", "name": "One", "value": 1})).unwrap(),
+        serde_json::to_string_pretty(
+            &json!({"id": "one", "name": "One", "value": 1, "created_at": "server-owned"}),
+        )
+        .unwrap(),
     )
     .unwrap();
     let list_directory = project.path().join("kb/list_items");
     std::fs::create_dir_all(&list_directory).unwrap();
     std::fs::write(
         list_directory.join("Only.json"),
-        serde_json::to_string_pretty(&json!({"id": "only", "name": "Only", "value": 1})).unwrap(),
+        serde_json::to_string_pretty(
+            &json!({"id": "only", "name": "Only", "value": 1, "created_at": "server-owned"}),
+        )
+        .unwrap(),
     )
     .unwrap();
     run(&project, &["fetch", "kb", "map_items"]);
@@ -896,6 +913,10 @@ fn pulling_a_frontmatter_markdown_resource_replaces_its_directory_projection() {
             "agentic-diagnostic-assistant",
         ],
     );
+    let hint = project.path().join("kb/default/skills/.resource.yaml");
+    let hint_bytes =
+        b"# Keep provenance for this directory.\nschema_version: 1\nmetadata: { track: true }\n";
+    std::fs::write(&hint, hint_bytes).unwrap();
     run(
         &project,
         &[
@@ -939,6 +960,7 @@ fn pulling_a_frontmatter_markdown_resource_replaces_its_directory_projection() {
             .join("kb/default/skills/agentic-diagnostic-assistant/SKILL.md"),
     )
     .unwrap();
+    assert_eq!(std::fs::read(&hint).unwrap(), hint_bytes);
     assert!(markdown.ends_with("# Agentic Diagnostic Assistant\n\nUpdated remotely.\n"));
 }
 
