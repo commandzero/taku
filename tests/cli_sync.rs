@@ -111,6 +111,15 @@ impl FakeTarget {
                         "{\"id\":\"job-1\",\"name\":\"Pending Job\",\"enabled\":true}",
                     )
                     .with_header(Header::from_bytes("content-type", "application/json").unwrap()),
+                    (&Method::Post, "/mapped-jobs") => Response::from_string(
+                        json!({
+                            "assigned_id": "job-1",
+                            "resource": {"name": "Pending Job", "enabled": false},
+                            "acknowledged": true
+                        })
+                        .to_string(),
+                    )
+                    .with_header(Header::from_bytes("content-type", "application/json").unwrap()),
                     _ => Response::from_string("not found").with_status_code(404),
                 };
                 request.respond(response).unwrap();
@@ -237,6 +246,84 @@ resource_types:
             .count(),
         1
     );
+}
+
+#[test]
+fn mapped_mutation_response_becomes_authoritative_observed_state() {
+    let target = FakeTarget::start();
+    let project = setup(&target);
+    let definition = r#"schema_version: 1
+version: "test-definition"
+application: { name: elasticsearch, version: ">=9.0.0, <10.0.0" }
+resource_types:
+  jobs:
+    - id: { pointer: /id, scope: target }
+      display_name: { pointer: /name, strategy: name }
+      write_intent: create
+      operations:
+        read: { method: GET, path: "/mapped-jobs/{id}" }
+        create:
+          method: POST
+          path: /mapped-jobs
+          response:
+            identity_pointer: /assigned_id
+            resource_pointer: /resource
+"#;
+    std::fs::write(
+        project
+            .path()
+            .join(".taku/applications/elasticsearch/version-9.yaml"),
+        definition,
+    )
+    .unwrap();
+    let dir = project.path().join("es/jobs");
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("Pending Job.json");
+    let desired = json!({"_taku": {"id": "job-1"}, "name": "Pending Job", "enabled": true});
+    std::fs::write(&path, serde_json::to_string_pretty(&desired).unwrap()).unwrap();
+    run(&project, &["fetch", "es", "jobs"]);
+    target.requests.lock().unwrap().clear();
+
+    let result = run(
+        &project,
+        &[
+            "push",
+            "es",
+            "jobs",
+            "--untracked",
+            "allow",
+            "--uncommitted",
+            "allow",
+        ],
+    );
+
+    assert_eq!(result["result"][0]["outcome"], "success");
+    let expected = json!({
+        "_taku": {"id": "job-1"},
+        "name": "Pending Job",
+        "enabled": false
+    });
+    let created: Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    assert_eq!(created, desired);
+    let observation: Value = serde_yaml::from_str(
+        &std::fs::read_to_string(project.path().join(".taku/cache/dev/es/jobs.yaml")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(observation["resources"]["job-1"]["present"], true);
+    assert_eq!(observation["resources"]["job-1"]["value"], expected);
+    let status = run(&project, &["status", "es", "jobs"]);
+    assert_eq!(status["result"][0]["state"], "drift");
+
+    let requests = target.requests.lock().unwrap();
+    let mutations: Vec<_> = requests.iter().filter(|r| r.method == "POST").collect();
+    assert_eq!(mutations.len(), 1);
+    assert_eq!(mutations[0].path, "/mapped-jobs");
+    assert_eq!(
+        serde_json::from_str::<Value>(&mutations[0].body).unwrap(),
+        json!({"id": "job-1", "name": "Pending Job", "enabled": true})
+    );
+    let mutation_index = requests.iter().position(|r| r.method == "POST").unwrap();
+    assert!(requests[mutation_index + 1..].is_empty());
 }
 
 #[test]
