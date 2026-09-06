@@ -148,21 +148,6 @@ impl ResourceScope {
             .collect())
     }
 
-    #[cfg(test)]
-    pub fn validate_namespace_kind(
-        &self,
-        namespaced: bool,
-        exact_namespace_required: bool,
-    ) -> Result<()> {
-        if namespaced && exact_namespace_required && self.namespace.is_none() {
-            bail!("--namespace is required for this namespaced Resource Type");
-        }
-        if !namespaced && self.namespace.is_some() {
-            bail!("--namespace is not valid for a non-namespaced Resource Type");
-        }
-        Ok(())
-    }
-
     fn validate(&self, policy: ScopePolicy) -> Result<()> {
         match policy {
             ScopePolicy::Exact => {
@@ -298,7 +283,7 @@ mod tests {
     }
 
     #[test]
-    fn namespace_requires_target_and_type_and_matches_type_kind() {
+    fn namespace_requires_target_and_type() {
         let broad = ResourceScope::new(environments(&[], false), None, Some("default".into()));
         assert!(
             broad
@@ -313,18 +298,10 @@ mod tests {
             }),
             Some("default".into()),
         );
-        assert!(typed.validate_namespace_kind(true, true).is_ok());
-        assert!(typed.validate_namespace_kind(false, false).is_err());
-        let missing = ResourceScope::new(
-            environments(&[], false),
-            Some(ResourcePath::Resources {
-                target: "kb".into(),
-                resource_type: "saved_objects".into(),
-                ids: vec!["one".into()],
-            }),
-            None,
-        );
-        assert!(missing.validate_namespace_kind(true, true).is_err());
+        let selections = typed
+            .selections(Path::new("."), ScopePolicy::Partial)
+            .unwrap();
+        assert_eq!(selections[0].namespaces, vec!["default"]);
     }
 
     #[test]

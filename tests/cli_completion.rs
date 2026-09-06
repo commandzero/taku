@@ -443,6 +443,130 @@ fn runtime_adapter_combines_static_parser_context_with_dynamic_candidates() {
     assert!(failed_context.stderr.is_empty());
 }
 
+fn runtime_complete(project: &TempDir, words: &[&str]) -> String {
+    let output = StdCommand::new(assert_cmd::cargo::cargo_bin!("taku"))
+        .current_dir(project.path())
+        .env("COMPLETE", "fish")
+        .args(["--", "taku", "--project"])
+        .arg(project.path())
+        .args(words)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    String::from_utf8(output.stdout).unwrap()
+}
+
+#[test]
+fn completion_preserves_global_options_before_nested_commands() {
+    let project = project();
+    for options in [
+        vec!["--output", "json"],
+        vec!["--output=json"],
+        vec!["--non-interactive"],
+    ] {
+        let mut words = vec!["target"];
+        words.extend(options);
+        words.extend(["add", "e"]);
+        assert!(
+            runtime_complete(&project, &words).contains("elasticsearch"),
+            "{words:?}"
+        );
+    }
+}
+
+#[test]
+fn completion_preserves_resource_paths_after_end_of_options() {
+    let project = project();
+    assert!(
+        runtime_complete(
+            &project,
+            &[
+                "status",
+                "--environment",
+                "dev",
+                "--",
+                "es",
+                "ingest_pipelines",
+                "p"
+            ]
+        )
+        .contains("pipe-1")
+    );
+}
+
+#[test]
+fn completion_resolves_each_promotion_project() {
+    let source = project();
+    let destination = project();
+    run(&source, &["context", "set", "dev"]);
+    run(&destination, &["context", "set", "prod"]);
+    let from = format!("--from-project={}", source.path().display());
+    let to = format!("--to-project={}", destination.path().display());
+    for invoker in [&source, &destination] {
+        for projects in [
+            vec![
+                "--from-project",
+                source.path().to_str().unwrap(),
+                "--to-project",
+                destination.path().to_str().unwrap(),
+            ],
+            vec![from.as_str(), to.as_str()],
+        ] {
+            for (flag, expected, excluded) in [
+                ("--from-target", "es", "prod-es"),
+                ("--to-target", "prod-es", "es"),
+            ] {
+                let mut words = vec!["promote"];
+                words.extend(projects.iter().copied());
+                words.extend([flag, ""]);
+                let output = runtime_complete(invoker, &words);
+                let values: Vec<_> = output
+                    .lines()
+                    .map(|line| line.split('\t').next().unwrap())
+                    .collect();
+                assert!(values.contains(&expected), "{flag}: {output}");
+                assert!(!values.contains(&excluded), "{flag}: {output}");
+            }
+        }
+    }
+    assert!(
+        runtime_complete(&destination, &["promote", &from, "--to-target", "p"]).contains("prod-es")
+    );
+}
+
+#[test]
+fn namespace_rules_are_enforced_through_local_commands() {
+    let project = project();
+    let before = project_files(&project);
+    for command in ["list", "status", "diff", "remove", "forget"] {
+        for path in [
+            vec!["kb", "saved_objects", "dashboard-1"],
+            vec!["es", "ingest_pipelines", "pipe-1", "--namespace", "default"],
+        ] {
+            let output = Command::cargo_bin("taku")
+                .unwrap()
+                .current_dir(project.path())
+                .args([command, "--environment", "dev"])
+                .args(&path)
+                .output()
+                .unwrap();
+            assert!(!output.status.success(), "{command} {path:?}");
+            assert!(
+                String::from_utf8_lossy(&output.stderr).contains("--namespace"),
+                "{command}: {:?}",
+                output.stderr
+            );
+        }
+    }
+    let listed = run(
+        &project,
+        &["list", "--environment", "dev", "kb", "saved_objects"],
+    );
+    assert_eq!(listed["result"].as_array().unwrap().len(), 1);
+    assert_eq!(project_files(&project), before);
+}
+
 fn project_files(project: &TempDir) -> BTreeMap<String, Vec<u8>> {
     fn visit(root: &std::path::Path, path: &std::path::Path, out: &mut BTreeMap<String, Vec<u8>>) {
         let mut entries: Vec<_> = std::fs::read_dir(path)

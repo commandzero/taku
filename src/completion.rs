@@ -48,6 +48,9 @@ pub fn promotion_source_target() -> ArgValueCompleter {
     ArgValueCompleter::new(|current: &OsStr| {
         let mut context = Context::from_process();
         context.environment = context.from_environment.take();
+        if let Some(project) = context.from_project.take() {
+            context.project = project;
+        }
         complete_with(context, CompletionIntent::PromotionTarget, current)
     })
 }
@@ -56,6 +59,9 @@ pub fn promotion_destination_target() -> ArgValueCompleter {
     ArgValueCompleter::new(|current: &OsStr| {
         let mut context = Context::from_process();
         context.environment = context.to_environment.take();
+        if let Some(project) = context.to_project.take() {
+            context.project = project;
+        }
         complete_with(context, CompletionIntent::PromotionTarget, current)
     })
 }
@@ -158,6 +164,8 @@ struct Context {
     environment: Option<String>,
     from_environment: Option<String>,
     to_environment: Option<String>,
+    from_project: Option<PathBuf>,
+    to_project: Option<PathBuf>,
     namespace: Option<String>,
     provider: BTreeMap<String, String>,
     positionals: Vec<String>,
@@ -171,7 +179,7 @@ impl Context {
         let all: Vec<String> = std::env::args().collect();
         let start = all
             .iter()
-            .rposition(|word| word == "--")
+            .position(|word| word == "--")
             .map_or(1, |index| index + 1);
         Self::from_words(&all[start..])
     }
@@ -202,9 +210,14 @@ impl Context {
             "completion",
         ];
         let mut index = 0;
+        let mut positional_only = false;
         while index < words.len() {
             let word = &words[index];
-            if let Some(value) = word.strip_prefix("--project=") {
+            if positional_only {
+                context.positionals.push(word.clone());
+            } else if word == "--" {
+                positional_only = true;
+            } else if let Some(value) = word.strip_prefix("--project=") {
                 context.project = PathBuf::from(value);
             } else if word == "--project" {
                 index += 1;
@@ -226,6 +239,16 @@ impl Context {
             } else if word == "--to" {
                 index += 1;
                 context.to_environment = words.get(index).cloned();
+            } else if let Some(value) = option_value(word, "from-project") {
+                context.from_project = Some(PathBuf::from(value));
+            } else if word == "--from-project" {
+                index += 1;
+                context.from_project = words.get(index).map(PathBuf::from);
+            } else if let Some(value) = option_value(word, "to-project") {
+                context.to_project = Some(PathBuf::from(value));
+            } else if word == "--to-project" {
+                index += 1;
+                context.to_project = words.get(index).map(PathBuf::from);
             } else if let Some(value) = option_value(word, "namespace") {
                 context.namespace = Some(value);
             } else if word == "--namespace" {
@@ -248,6 +271,10 @@ impl Context {
                 } else {
                     index += 1;
                 }
+            } else if word.starts_with('-') {
+                if option_takes_value(word) && !word.contains('=') {
+                    index += 1;
+                }
             } else if context.command.is_none() && commands.contains(&word.as_str()) {
                 context.command = Some(word.clone());
             } else if matches!(
@@ -256,10 +283,6 @@ impl Context {
             ) && context.subcommand.is_none()
             {
                 context.subcommand = Some(word.clone());
-            } else if word.starts_with('-') {
-                if option_takes_value(word) && !word.contains('=') {
-                    index += 1;
-                }
             } else if context.command.is_some() {
                 context.positionals.push(word.clone());
             }

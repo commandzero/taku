@@ -1,7 +1,7 @@
 ## 1. Unified Resource Path Module
 
 - [x] 1.1 Add validated Resource Path and Resource Scope types representing only Target, Target/Type, and Target/Type/non-empty-IDs hierarchy states plus optional Namespace and Environment context.
-- [x] 1.2 Add Exact, Partial, and Remote-List scope policies that enforce path completeness, Environment cardinality, Namespace placement, and namespaced-Type rules before lifecycle dispatch.
+- [x] 1.2 Add Exact, Partial, and Remote-List scope policies that enforce path completeness, Environment cardinality, and Namespace placement before lifecycle dispatch; enforce namespaced-Type rules in the engine after effective Type resolution.
 - [x] 1.3 Convert validated Resource Scopes into existing engine `Selection` values, preserving broad multi-Environment expansion only when a Partial command has no Resource Path.
 - [x] 1.4 Test the Resource Path interface for every valid prefix, variadic IDs, hierarchy gaps, exact-path requirements, remote-list requirements, Namespace behavior, and path/multi-Environment conflicts.
 

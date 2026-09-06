@@ -38,7 +38,9 @@ A Resource Scope value combines an optional validated Resource Path, Environment
 - `Partial`: zero or one Environment when a path is present; existing broad Environment expansion when absent.
 - `RemoteList`: one Environment plus Target and Resource Type, with IDs optional.
 
-The Resource Path module validates hierarchy, Environment cardinality, Namespace placement, namespaced-Type rules once and converts the result into the engine's existing `Selection` values. Command match arms choose a policy and lifecycle operation but do not rebuild validation rules.
+The Resource Path module validates hierarchy, Environment cardinality, and Namespace placement before converting the result into the engine's existing `Selection` values. Command match arms choose a policy and lifecycle operation but do not rebuild validation rules.
+
+The engine validates namespaced-Type rules after resolving the effective Resource Type. Local inventory rejects Namespace on non-namespaced Types and requires it for exact namespaced IDs, while allowing Type-only selection across local Namespaces. Remote queries require Namespace for namespaced listing. These checks belong beside Type resolution because remote discovery can select a version-specific definition unavailable to CLI preflight. CLI integration tests exercise these production checks; Resource Scope tests cover structural placement and Selection conversion only.
 
 This is a deep module: deleting it would redistribute parsing invariants, Environment resolution, Namespace validation, and Selection construction across nine command arms and completion callbacks.
 
