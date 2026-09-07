@@ -1,3 +1,10 @@
+---
+type: Decision
+title: "Configure Push Git-State Policies Independently"
+description: "Configure Push Git-State Policies Independently."
+generated: { by: codex/gpt-6, at: 2026-09-07T05:34:57Z }
+---
+
 # Configure Push Git-State Policies Independently
 
 Push will inspect Git state without changing it and will evaluate selected uncommitted changes separately from selected untracked files. Project configuration exposes `push.uncommitted` and `push.untracked`, each with `block`, `confirm`, and `allow` policies.

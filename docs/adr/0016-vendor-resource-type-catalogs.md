@@ -1,3 +1,10 @@
+---
+type: Decision
+title: "Vendor Resource Type Catalogs per Project"
+description: "Vendor Resource Type Catalogs per Project."
+generated: { by: codex/gpt-6, at: 2026-09-07T05:34:57Z }
+---
+
 # Vendor Resource Type Catalogs per Project
 
 Each Application's shared configuration and major-version Resource Type Catalogs will be copied by explicit `taku install` or `taku update` into the flat directory `.taku/applications/<application>/`. `application.yaml` declares shared transport behavior and ordered Version Endpoints; each `version-<major>.yaml` is self-identifying and contains complete version-qualified Resource Type Definitions. Minor additions and changes are represented by non-overlapping `version` constraints rather than overlays, keeping selection simple and making the exact behavior reviewable in Git.

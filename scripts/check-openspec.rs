@@ -1,0 +1,429 @@
+//! Dependency-free repository gate, compiled by check-openspec.sh.
+#![forbid(unsafe_code)]
+use std::collections::{BTreeMap, BTreeSet};
+use std::{env, fs, process::Command};
+
+type Files = BTreeMap<String, String>;
+
+fn git(args: &[&str]) -> Result<String, String> {
+    let output = Command::new("git")
+        .args(args)
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).into_owned());
+    }
+    String::from_utf8(output.stdout).map_err(|e| e.to_string())
+}
+
+fn change_id(path: &str) -> Option<&str> {
+    let rest = path.strip_prefix("openspec/changes/")?;
+    if let Some(rest) = rest.strip_prefix("archive/") {
+        let archive = rest.split('/').next()?;
+        let (date, id) = archive.split_at_checked(11)?;
+        if date.bytes().enumerate().all(|(i, c)| {
+            if [4, 7, 10].contains(&i) {
+                c == b'-'
+            } else {
+                c.is_ascii_digit()
+            }
+        }) && !id.is_empty()
+        {
+            Some(id)
+        } else {
+            None
+        }
+    } else {
+        rest.split_once('/').map(|(id, _)| id)
+    }
+}
+
+fn select(paths: &[String], explicit: &str) -> Result<BTreeSet<String>, String> {
+    for path in paths {
+        if path
+            .strip_prefix("openspec/changes/archive/")
+            .is_some_and(|rest| rest.contains('/'))
+            && change_id(path).is_none()
+        {
+            return Err(format!(
+                "Invalid archive path, expected YYYY-MM-DD-change-id: {path}"
+            ));
+        }
+    }
+    let mut ids: BTreeSet<String> = paths
+        .iter()
+        .filter_map(|p| change_id(p).map(str::to_owned))
+        .collect();
+    for id in explicit
+        .split(|c: char| c == ',' || c.is_whitespace())
+        .filter(|s| !s.is_empty() && *s != "none")
+    {
+        if !id
+            .bytes()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
+        {
+            return Err(format!("Invalid OpenSpec change ID: {id}"));
+        }
+        ids.insert(id.to_owned());
+    }
+    Ok(ids)
+}
+
+// Compare complete requirement/scenario text, tolerating only whitespace changes.
+fn requirements(text: &str) -> Result<BTreeMap<String, (String, String)>, String> {
+    let mut result = BTreeMap::new();
+    let mut section = String::new();
+    let mut current: Option<(String, String, String)> = None;
+    let save = |current: &mut Option<(String, String, String)>,
+                result: &mut BTreeMap<String, (String, String)>|
+     -> Result<(), String> {
+        if let Some((name, mode, body)) = current.take() {
+            if result
+                .insert(
+                    name.clone(),
+                    (mode, body.split_whitespace().collect::<Vec<_>>().join(" ")),
+                )
+                .is_some()
+            {
+                return Err(format!("Duplicate requirement: {name}"));
+            }
+        }
+        Ok(())
+    };
+    for line in text.lines() {
+        if let Some(value) = line.strip_prefix("## ") {
+            save(&mut current, &mut result)?;
+            section = value.to_owned();
+        } else if let Some(name) = line.strip_prefix("### Requirement: ") {
+            save(&mut current, &mut result)?;
+            current = Some((name.trim().to_owned(), section.clone(), String::new()));
+        } else if let Some((_, _, body)) = current.as_mut() {
+            body.push_str(line);
+            body.push('\n');
+        }
+    }
+    save(&mut current, &mut result)?;
+    Ok(result)
+}
+
+fn check(files: &Files, ids: &BTreeSet<String>) -> Result<(), String> {
+    for id in ids {
+        let active = format!("openspec/changes/{id}/");
+        if files.keys().any(|p| p.starts_with(&active)) {
+            return Err(format!("{id}: synchronize and archive the active change"));
+        }
+        let roots: BTreeSet<String> = files
+            .keys()
+            .filter(|p| p.starts_with("openspec/changes/archive/") && change_id(p) == Some(id))
+            .map(|p| p.split('/').take(4).collect::<Vec<_>>().join("/"))
+            .collect();
+        if roots.len() != 1 {
+            return Err(format!(
+                "{id}: expected one preserved archive, found {}",
+                roots.len()
+            ));
+        }
+        let root = roots.first().unwrap();
+        for artifact in ["proposal.md", "design.md", "tasks.md"] {
+            if !files
+                .get(&format!("{root}/{artifact}"))
+                .is_some_and(|s| !s.trim().is_empty())
+            {
+                return Err(format!("{id}: missing archive artifact {artifact}"));
+            }
+        }
+        if files[&format!("{root}/tasks.md")]
+            .lines()
+            .any(|l| l.trim_start().starts_with("- [ ]"))
+        {
+            return Err(format!("{id}: unfinished archived tasks"));
+        }
+        let prefix = format!("{root}/specs/");
+        let deltas: Vec<_> = files
+            .iter()
+            .filter(|(p, _)| p.starts_with(&prefix) && p.ends_with("/spec.md"))
+            .collect();
+        if deltas.is_empty()
+            && !files
+                .get(&format!("{root}/no-spec-deltas.md"))
+                .is_some_and(|s| !s.trim().is_empty())
+        {
+            return Err(format!(
+                "{id}: missing spec deltas or reviewed no-spec-deltas.md explanation"
+            ));
+        }
+        for (path, delta) in deltas {
+            let main_path = format!("openspec/specs/{}", path.strip_prefix(&prefix).unwrap());
+            let main = requirements(files.get(&main_path).map(String::as_str).unwrap_or(""))?;
+            let changes = requirements(delta)?;
+            if changes.is_empty() && !delta.contains("## RENAMED Requirements") {
+                return Err(format!("{id}: {path} has no requirement deltas"));
+            }
+            for (name, (mode, body)) in changes {
+                match mode.as_str() {
+                    "ADDED Requirements" | "MODIFIED Requirements" => {
+                        if !body.contains("#### Scenario:")
+                            || !main.get(&name).is_some_and(|(_, actual)| actual == &body)
+                        {
+                            return Err(format!(
+                                "{id}: {main_path}: unsynchronized requirement/scenarios: {name}"
+                            ));
+                        }
+                    }
+                    "REMOVED Requirements" => {
+                        if main.contains_key(&name) {
+                            return Err(format!(
+                                "{id}: {main_path}: removed requirement still present: {name}"
+                            ));
+                        }
+                    }
+                    _ => return Err(format!("{id}: unsupported delta section {mode}")),
+                }
+            }
+            let mut renamed = false;
+            let mut old: Option<&str> = None;
+            for line in delta.lines() {
+                if line.starts_with("## ") {
+                    renamed = line == "## RENAMED Requirements";
+                } else if renamed {
+                    if let Some(name) = line
+                        .strip_prefix("- FROM: `### Requirement: ")
+                        .and_then(|s| s.strip_suffix('`'))
+                    {
+                        if old.replace(name).is_some() {
+                            return Err(format!("{id}: incomplete rename"));
+                        }
+                    } else if let Some(name) = line
+                        .strip_prefix("- TO: `### Requirement: ")
+                        .and_then(|s| s.strip_suffix('`'))
+                    {
+                        let previous = old
+                            .take()
+                            .ok_or_else(|| format!("{id}: rename missing FROM"))?;
+                        if main.contains_key(previous) || !main.contains_key(name) {
+                            return Err(format!(
+                                "{id}: unsynchronized rename {previous} -> {name}"
+                            ));
+                        }
+                    } else if !line.trim().is_empty() {
+                        return Err(format!("{id}: unsupported rename syntax: {line}"));
+                    }
+                }
+            }
+            if old.is_some() {
+                return Err(format!("{id}: rename missing TO"));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn run() -> Result<(), String> {
+    let base = env::var("BASE_REF").ok().filter(|s| !s.is_empty());
+    let mut paths = Vec::new();
+    let list;
+    if let Some(base) = &base {
+        let merge_base = git(&["merge-base", base, "HEAD"])?;
+        // --no-renames yields both deleted and added paths, including directory renames.
+        paths.extend(
+            git(&[
+                "diff",
+                "--no-renames",
+                "--name-only",
+                "-z",
+                merge_base.trim(),
+                "HEAD",
+            ])?
+            .split('\0')
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned),
+        );
+        list = git(&["ls-tree", "-r", "--name-only", "-z", "HEAD", "openspec"])?;
+    } else {
+        paths.extend(
+            git(&["diff", "--no-renames", "--name-only", "-z", "HEAD"])?
+                .split('\0')
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned),
+        );
+        let untracked = git(&["ls-files", "--others", "--exclude-standard", "-z"])?;
+        paths.extend(
+            untracked
+                .split('\0')
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned),
+        );
+        list = format!("{}{}", git(&["ls-files", "-z", "openspec"])?, untracked);
+    }
+    let mut files = Files::new();
+    for path in list
+        .split('\0')
+        .filter(|p| p.starts_with("openspec/") && p.ends_with(".md"))
+    {
+        let text = if base.is_some() {
+            git(&["show", &format!("HEAD:{path}")])?
+        } else {
+            match fs::read_to_string(path) {
+                Ok(s) => s,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(e) => return Err(e.to_string()),
+            }
+        };
+        files.insert(path.to_owned(), text);
+    }
+    if env::var("CHECK_ALL_ARCHIVES").as_deref() == Ok("1") {
+        paths.extend(
+            files
+                .keys()
+                .filter(|p| p.starts_with("openspec/changes/archive/"))
+                .cloned(),
+        );
+    }
+    let mut explicit = env::var("OPENSPEC_CHANGES").unwrap_or_default();
+    if let Ok(body) = env::var("PR_BODY") {
+        let associations: Vec<_> = body
+            .lines()
+            .filter_map(|l| l.strip_prefix("OpenSpec:"))
+            .collect();
+        if associations.len() != 1 || associations[0].trim().is_empty() {
+            return Err(
+                "PR body must contain one OpenSpec: none or OpenSpec: change-id line".into(),
+            );
+        }
+        explicit.push(',');
+        explicit.push_str(associations[0]);
+    }
+    let ids = select(&paths, &explicit)?;
+    check(&files, &ids)?;
+    if ids.is_empty() {
+        println!("OpenSpec completion: not applicable, no associated changes");
+    } else {
+        println!(
+            "OpenSpec completion: synchronized and archived: {}",
+            ids.into_iter().collect::<Vec<_>>().join(", ")
+        );
+    }
+    Ok(())
+}
+
+fn main() {
+    if let Err(error) = run() {
+        eprintln!("OpenSpec gate: {error}");
+        std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    const REQUIREMENT: &str = "### Requirement: Safe write\nSHALL preserve state.\n#### Scenario: Retry\n- **WHEN** retried\n- **THEN** no duplicate\n";
+    fn fixture(id: &str) -> Files {
+        let root = format!("openspec/changes/archive/2026-09-06-{id}");
+        let mut files = Files::new();
+        for artifact in ["proposal.md", "design.md", "tasks.md"] {
+            files.insert(format!("{root}/{artifact}"), "- [x] Done".into());
+        }
+        files.insert(
+            format!("{root}/specs/safety/spec.md"),
+            format!("## ADDED Requirements\n{REQUIREMENT}"),
+        );
+        files.insert(
+            "openspec/specs/safety/spec.md".into(),
+            format!("## Requirements\n{REQUIREMENT}"),
+        );
+        files
+    }
+    fn ids(names: &str) -> BTreeSet<String> {
+        select(&[], names).unwrap()
+    }
+    #[test]
+    fn unrelated_active_change_does_not_block_already_synced_archive() {
+        let mut files = fixture("safe-write");
+        files.insert(
+            "openspec/changes/unrelated/tasks.md".into(),
+            "- [ ] Pending".into(),
+        );
+        assert!(check(&files, &ids("safe-write")).is_ok());
+    }
+    #[test]
+    fn edits_deletions_and_both_rename_paths_select_changes() {
+        let paths = [
+            "openspec/changes/edited/tasks.md",
+            "openspec/changes/deleted/proposal.md",
+            "openspec/changes/old/specs/a/spec.md",
+            "openspec/changes/new/specs/a/spec.md",
+            "openspec/changes/archive/2026-09-06-finished/tasks.md",
+        ]
+        .map(str::to_owned);
+        assert_eq!(
+            select(&paths, "explicit").unwrap(),
+            ids("edited,deleted,old,new,finished,explicit")
+        );
+    }
+    #[test]
+    fn active_or_deleted_only_change_fails() {
+        let mut files = fixture("safe-write");
+        files.insert(
+            "openspec/changes/safe-write/proposal.md".into(),
+            "active".into(),
+        );
+        assert!(check(&files, &ids("safe-write")).is_err());
+        assert!(check(&Files::new(), &ids("deleted")).is_err());
+    }
+    #[test]
+    fn skipped_sync_and_changed_scenarios_fail() {
+        let mut files = fixture("safe-write");
+        files
+            .get_mut("openspec/specs/safety/spec.md")
+            .unwrap()
+            .push_str("Extra scenario text\n");
+        assert!(check(&files, &ids("safe-write")).is_err());
+        files.remove("openspec/specs/safety/spec.md");
+        assert!(check(&files, &ids("safe-write")).is_err());
+    }
+    #[test]
+    fn multiple_associations_all_must_pass() {
+        let mut files = fixture("first");
+        files.extend(fixture("second"));
+        assert!(check(&files, &ids("first,second")).is_ok());
+        files.insert(
+            "openspec/changes/archive/2026-09-06-second/tasks.md".into(),
+            "- [ ] Pending".into(),
+        );
+        assert!(check(&files, &ids("first,second")).is_err());
+    }
+    #[test]
+    fn removals_and_renames_check_final_state() {
+        let mut files = fixture("safe-write");
+        let delta = "openspec/changes/archive/2026-09-06-safe-write/specs/safety/spec.md";
+        files.insert(delta.into(), "## REMOVED Requirements\n### Requirement: Old write\nReason: replaced\n## RENAMED Requirements\n- FROM: `### Requirement: Old write`\n- TO: `### Requirement: Safe write`\n".into());
+        assert!(check(&files, &ids("safe-write")).is_ok());
+        files
+            .get_mut("openspec/specs/safety/spec.md")
+            .unwrap()
+            .push_str("### Requirement: Old write\nstale\n");
+        assert!(check(&files, &ids("safe-write")).is_err());
+    }
+    #[test]
+    fn no_delta_change_requires_explanation() {
+        let mut files = fixture("safe-write");
+        files.remove("openspec/changes/archive/2026-09-06-safe-write/specs/safety/spec.md");
+        assert!(check(&files, &ids("safe-write")).is_err());
+        files.insert(
+            "openspec/changes/archive/2026-09-06-safe-write/no-spec-deltas.md".into(),
+            "Documentation-only correction; no contract changes.".into(),
+        );
+        assert!(check(&files, &ids("safe-write")).is_ok());
+    }
+
+    #[test]
+    fn malformed_archive_paths_cannot_skip_selection() {
+        assert!(
+            select(
+                &["openspec/changes/archive/undated-change/tasks.md".into()],
+                "none"
+            )
+            .is_err()
+        );
+    }
+}

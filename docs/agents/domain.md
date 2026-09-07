@@ -1,3 +1,10 @@
+---
+type: Guide
+title: "Domain Docs"
+description: "Domain Docs."
+generated: { by: codex/gpt-6, at: 2026-09-07T05:34:57Z }
+---
+
 # Domain Docs
 
 How the engineering skills should consume this repo's domain documentation when exploring the codebase.

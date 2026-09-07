@@ -1,3 +1,10 @@
+---
+type: Decision
+title: "Keep environment providers isolated"
+description: "Keep environment providers isolated."
+generated: { by: codex/gpt-6, at: 2026-09-07T05:34:57Z }
+---
+
 # Keep environment providers isolated
 
 The MVP will resolve Context, connection, and authentication fields through process variables or one explicitly selected `.env` file parsed with `dotenvy`, with CLI values taking precedence over process variables and process variables over file values. Taku will collect and validate the entire file without mutating the process environment, reject duplicate keys and empty required fields, strip an initial UTF-8 BOM, treat a missing explicit file as an error unless marked optional, and sanitize parse diagnostics; it will not auto-discover or cascade files, and resolved secrets will never enter Baselines, caches, plans, or reports. Future `.elasticrc` support will implement the same provider interfaces in a separately supplied crate.
