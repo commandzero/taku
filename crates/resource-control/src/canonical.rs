@@ -160,9 +160,7 @@ pub(crate) fn list_inventory_with_resolved(
                 )?;
                 crate::hints::validate_tracking(resource_type, &hints, type_name)?;
                 reject_symlink_components(&root, &directory)?;
-                for entry in fs::read_dir(&directory)? {
-                    let entry = entry?;
-                    let path = entry.path();
+                for path in resource_paths(&directory, resource_type)? {
                     let metadata = fs::symlink_metadata(&path)?;
                     if metadata.file_type().is_symlink() {
                         bail!(
@@ -310,32 +308,8 @@ fn directory_has_recognized_input(
     directory: &Path,
     definitions: &[crate::ResourceType],
 ) -> Result<bool> {
-    for entry in fs::read_dir(directory)? {
-        let entry = entry?;
-        let path = entry.path();
-        let metadata = fs::symlink_metadata(&path)?;
-        if metadata.file_type().is_symlink() {
-            bail!(
-                "symlinked Resource input is not allowed: {}",
-                path.display()
-            );
-        }
-        if is_deletion_marker(&path)
-            || path.file_name().and_then(|name| name.to_str())
-                == Some(crate::hints::RESOURCE_HINT_NAME)
-            || (metadata.is_dir()
-                && definitions
-                    .iter()
-                    .any(|definition| definition.filesystem.is_some()))
-            || (metadata.is_file()
-                && definitions
-                    .iter()
-                    .any(|definition| definition.filesystem.is_none())
-                && matches!(
-                    path.extension().and_then(|extension| extension.to_str()),
-                    Some("json" | "json5" | "yaml" | "yml")
-                ))
-        {
+    for definition in definitions {
+        if !resource_paths(directory, definition)?.is_empty() {
             return Ok(true);
         }
     }
@@ -391,6 +365,83 @@ pub fn resource_directory_in_namespace(
         Some(namespace) => target_root.join(namespace).join(resource_type),
         None => target_root.join(resource_type),
     }
+}
+
+pub(crate) fn resource_path(
+    directory: &Path,
+    value: &Value,
+    resource_type: &ResourceType,
+    filename: &str,
+) -> Result<PathBuf> {
+    if filename.is_empty() || filename == "." || filename == ".." || filename.contains(['/', '\\'])
+    {
+        bail!("Resource filename is not one safe path segment");
+    }
+    let directory = if let Some(pointer) = &resource_type.directory_pointer {
+        let value = value
+            .pointer(pointer)
+            .and_then(Value::as_str)
+            .with_context(|| {
+                format!("Resource directory pointer {pointer} is missing or is not a string")
+            })?;
+        let directory_name = safe_filename(value);
+        if directory_name.is_empty() {
+            bail!("Resource directory pointer {pointer} resolves to an empty path segment");
+        }
+        directory.join(directory_name)
+    } else {
+        directory.to_owned()
+    };
+    Ok(directory.join(filename))
+}
+
+pub(crate) fn resource_paths(
+    directory: &Path,
+    resource_type: &ResourceType,
+) -> Result<Vec<PathBuf>> {
+    let mut paths = Vec::new();
+    collect_resource_paths(directory, resource_type, &mut paths)?;
+    paths.sort();
+    Ok(paths)
+}
+
+fn collect_resource_paths(
+    directory: &Path,
+    resource_type: &ResourceType,
+    paths: &mut Vec<PathBuf>,
+) -> Result<()> {
+    for entry in fs::read_dir(directory)? {
+        let entry = entry?;
+        let path = entry.path();
+        let metadata = fs::symlink_metadata(&path)?;
+        if metadata.file_type().is_symlink() {
+            bail!(
+                "symlinked Resource input is not allowed: {}",
+                path.display()
+            );
+        }
+        if path.file_name().and_then(|name| name.to_str()) == Some(crate::hints::RESOURCE_HINT_NAME)
+        {
+            continue;
+        }
+        if metadata.is_dir() {
+            if resource_type.filesystem.is_some() {
+                paths.push(path);
+            } else if resource_type.directory_pointer.is_some() {
+                collect_resource_paths(&path, resource_type, paths)?;
+            }
+        } else if metadata.is_file()
+            && resource_type.filesystem.is_none()
+            && (is_deletion_marker(&path)
+                || matches!(
+                    path.extension().and_then(|extension| extension.to_str()),
+                    Some("json" | "json5" | "yaml" | "yml")
+                ))
+        {
+            paths.push(path);
+        }
+    }
+    Ok(())
 }
 
 pub fn resource_directories(

@@ -40,6 +40,9 @@ fn split_frontmatter_markdown(
     resource: &Value,
 ) -> Result<()> {
     let mut frontmatter = resource.clone();
+    // Taku-managed canonical state identifies the Resource but is not
+    // user-authored frontmatter in a filesystem projection.
+    remove_pointer(&mut frontmatter, crate::canonical::TAKU_NAMESPACE_POINTER)?;
     let body = remove_pointer(&mut frontmatter, &config.body_pointer)?
         .unwrap_or_else(|| Value::String(String::new()))
         .as_str()

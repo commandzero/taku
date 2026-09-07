@@ -1,7 +1,8 @@
 use crate::application::load_installed;
 use crate::canonical::{
     Selection, list_inventory, reject_symlink_components, remove_canonical_resource,
-    resource_directories, resource_directory_in_namespace, safe_filename, write_canonical_resource,
+    resource_directories, resource_directory_in_namespace, resource_path, resource_paths,
+    safe_filename, write_canonical_resource,
 };
 use crate::observe::{cache_path, load_observation, remote_list};
 use crate::project::current_environment;
@@ -138,11 +139,12 @@ pub fn add_remote(
             item.namespace.as_deref(),
             &item.resource_type,
         );
-        let path = if rt.filesystem.is_some() {
-            directory.join(safe_filename(&display))
+        let filename = if rt.filesystem.is_some() {
+            safe_filename(&display)
         } else {
-            directory.join(format!("{}.json", safe_filename(&display)))
+            format!("{}.json", safe_filename(&display))
         };
+        let path = resource_path(&directory, &item.value, rt, &filename)?;
         if path.exists() {
             bail!("Resource destination already exists: {}", path.display());
         }
@@ -264,37 +266,34 @@ pub fn forget(root: &Path, selection: &Selection) -> Result<Vec<LifecycleResult>
                     continue;
                 }
                 reject_symlink_components(&root, &dir)?;
-                if let Ok(entries) = fs::read_dir(dir) {
-                    for entry in entries {
-                        let path = entry?.path();
-                        if !path
-                            .file_name()
-                            .and_then(|v| v.to_str())
-                            .is_some_and(|v| v.ends_with(".delete.yaml"))
-                        {
-                            continue;
-                        }
-                        let marker = load_deletion_marker(
-                            &root,
-                            &path,
-                            &environment,
-                            target_name,
-                            namespace.as_deref(),
-                            type_name,
-                        )?;
-                        if !selection.ids.is_empty() && !selection.ids.contains(&marker.id) {
-                            continue;
-                        }
-                        fs::remove_file(path)?;
-                        out.push(LifecycleResult {
-                            environment: environment.clone(),
-                            target: target_name.clone(),
-                            namespace: namespace.clone(),
-                            resource_type: type_name.clone(),
-                            id: marker.id,
-                            outcome: "forgotten".into(),
-                        });
+                for path in resource_paths(&dir, resource_type)? {
+                    if !path
+                        .file_name()
+                        .and_then(|v| v.to_str())
+                        .is_some_and(|v| v.ends_with(".delete.yaml"))
+                    {
+                        continue;
                     }
+                    let marker = load_deletion_marker(
+                        &root,
+                        &path,
+                        &environment,
+                        target_name,
+                        namespace.as_deref(),
+                        type_name,
+                    )?;
+                    if !selection.ids.is_empty() && !selection.ids.contains(&marker.id) {
+                        continue;
+                    }
+                    fs::remove_file(path)?;
+                    out.push(LifecycleResult {
+                        environment: environment.clone(),
+                        target: target_name.clone(),
+                        namespace: namespace.clone(),
+                        resource_type: type_name.clone(),
+                        id: marker.id,
+                        outcome: "forgotten".into(),
+                    });
                 }
             }
         }
@@ -337,25 +336,22 @@ pub fn deletion_markers(
                     continue;
                 }
                 reject_symlink_components(&root, &dir)?;
-                if let Ok(entries) = fs::read_dir(dir) {
-                    for entry in entries {
-                        let path = entry?.path();
-                        if path
-                            .file_name()
-                            .and_then(|v| v.to_str())
-                            .is_some_and(|v| v.ends_with(".delete.yaml"))
-                        {
-                            let marker = load_deletion_marker(
-                                &root,
-                                &path,
-                                &environment,
-                                target_name,
-                                namespace.as_deref(),
-                                type_name,
-                            )?;
-                            if selection.ids.is_empty() || selection.ids.contains(&marker.id) {
-                                out.push((path, marker));
-                            }
+                for path in resource_paths(&dir, resource_type)? {
+                    if path
+                        .file_name()
+                        .and_then(|v| v.to_str())
+                        .is_some_and(|v| v.ends_with(".delete.yaml"))
+                    {
+                        let marker = load_deletion_marker(
+                            &root,
+                            &path,
+                            &environment,
+                            target_name,
+                            namespace.as_deref(),
+                            type_name,
+                        )?;
+                        if selection.ids.is_empty() || selection.ids.contains(&marker.id) {
+                            out.push((path, marker));
                         }
                     }
                 }
@@ -536,16 +532,18 @@ pub fn promote(
                 );
             }
             let source_path = Path::new(&item.path);
-            let filename = source_path.file_name().unwrap();
-            let destination_path = resource_directory_in_namespace(
+            let filename = source_path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .context("Resource filename is not valid UTF-8")?;
+            let directory = resource_directory_in_namespace(
                 &root,
                 &project,
                 &destination,
                 &to,
                 item.namespace.as_deref(),
                 &item.resource_type,
-            )
-            .join(filename);
+            );
             let resource_type = &destination_application.resource_types[&item.resource_type];
             let value = normalize_for_destination(
                 DestinationScope {
@@ -559,6 +557,7 @@ pub fn promote(
                 resource_type,
                 &item.value,
             )?;
+            let destination_path = resource_path(&directory, &value, resource_type, filename)?;
             write_canonical_resource(&destination_path, &value, resource_type)?;
             out.push(PromotionResult {
                 from_environment: source.clone(),
@@ -645,15 +644,17 @@ pub fn promote_projects(
             );
         }
         let filename = Path::new(&item.path).file_name().unwrap();
-        let path = resource_directory_in_namespace(
+        let filename = filename
+            .to_str()
+            .context("Resource filename is not valid UTF-8")?;
+        let directory = resource_directory_in_namespace(
             &destination_root,
             &destination_project,
             &destination_environment,
             to_target,
             item.namespace.as_deref(),
             &item.resource_type,
-        )
-        .join(filename);
+        );
         let resource_type = &destination_resolved.resource_types[&item.resource_type];
         let value = normalize_for_destination(
             DestinationScope {
@@ -667,6 +668,7 @@ pub fn promote_projects(
             resource_type,
             &item.value,
         )?;
+        let path = resource_path(&directory, &value, resource_type, filename)?;
         write_canonical_resource(&path, &value, resource_type)?;
         out.push(PromotionResult {
             from_environment: source_environment.clone(),

@@ -298,7 +298,8 @@ fn round_trips_a_flat_component_template_through_fetch_pull_and_push() {
         .path();
     let initial: Value =
         serde_json::from_str(&std::fs::read_to_string(&resource).unwrap()).unwrap();
-    assert_eq!(initial["name"], id);
+    assert_eq!(initial["_taku"]["id"], id);
+    assert!(initial.get("name").is_none());
     assert_eq!(initial["_meta"]["description"], "initial");
     assert!(initial.get("component_template").is_none());
 
@@ -927,6 +928,21 @@ fn round_trips_the_complete_esdiag_resource_corpus() {
             .count(),
         90
     );
+    for resource in resources
+        .iter()
+        .filter(|resource| resource["type"] == "saved_objects")
+    {
+        let path = project.join(resource["path"].as_str().unwrap());
+        let value: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(
+            path.parent()
+                .and_then(|parent| parent.file_name())
+                .and_then(|name| name.to_str()),
+            value["type"].as_str(),
+            "Saved Object {} must be stored beneath its type directory",
+            path.display()
+        );
+    }
     assert!(resources.iter().any(|resource| {
         resource["target"] == "kb"
             && resource["namespace"] == "esdiag"

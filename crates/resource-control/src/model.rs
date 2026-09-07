@@ -181,6 +181,8 @@ pub struct ResourceType {
     pub display_name: DisplayName,
     #[serde(default)]
     pub namespaced: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub directory_pointer: Option<String>,
     #[serde(default = "default_write_intent")]
     pub write_intent: WriteIntent,
     #[serde(default = "default_mutation_mode")]

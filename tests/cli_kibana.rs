@@ -463,8 +463,14 @@ fn kibana_ndjson_is_unbundled_to_canonical_resources_and_rebuilt_only_for_push()
     );
     let path = project
         .path()
-        .join("kb/esdiag/saved_objects/Chart-obj-1.json");
+        .join("kb/esdiag/saved_objects/visualization/Chart-obj-1.json");
     let canonical = std::fs::read_to_string(&path).unwrap();
+    assert!(
+        !project
+            .path()
+            .join("kb/esdiag/saved_objects/Chart-obj-1.json")
+            .exists()
+    );
     assert!(canonical.contains("\"visState\": {"));
     assert!(canonical.contains("# keep\\nx: 1"));
     assert!(!canonical.contains("\"sort\""));
@@ -488,7 +494,9 @@ fn kibana_ndjson_is_unbundled_to_canonical_resources_and_rebuilt_only_for_push()
     let mut value: Value = serde_json::from_str(&canonical).unwrap();
     value["attributes"]["visState"]["a"] = json!(2);
     std::fs::write(&path, serde_json::to_string_pretty(&value).unwrap()).unwrap();
-    let second_path = project.path().join("kb/esdiag/saved_objects/Second.json");
+    let second_path = project
+        .path()
+        .join("kb/esdiag/saved_objects/visualization/Second.json");
     let second = json!({
         "id": "obj-2",
         "type": "visualization",
@@ -502,7 +510,7 @@ fn kibana_ndjson_is_unbundled_to_canonical_resources_and_rebuilt_only_for_push()
         serde_yaml::from_str(&std::fs::read_to_string(&cache_path).unwrap()).unwrap();
     cache["resources"]["obj-2"] = serde_yaml::to_value(json!({
         "local_hash":"different",
-        "path":"kb/esdiag/saved_objects/Second.json",
+        "path":"kb/esdiag/saved_objects/visualization/Second.json",
         "present":true,
         "value":{
             "id":"obj-2",
@@ -747,7 +755,7 @@ fn saved_object_filenames_use_the_first_available_display_name_pointer() {
     assert!(
         project
             .path()
-            .join("kb/esdiag/saved_objects/ESDiag-208ebb83.json")
+            .join("kb/esdiag/saved_objects/tag/ESDiag-208ebb83.json")
             .is_file()
     );
 }
@@ -870,6 +878,7 @@ fn adding_a_frontmatter_markdown_resource_splits_it_to_a_directory_tree() {
         .join("kb/default/skills/agentic-diagnostic-assistant");
     let markdown = std::fs::read_to_string(directory.join("SKILL.md")).unwrap();
     assert!(markdown.starts_with("---\n"));
+    assert!(!markdown.contains("_taku"));
     assert!(markdown.contains("id: agentic-diagnostic-assistant"));
     assert!(markdown.contains("owner: support"));
     assert!(markdown.ends_with("# Agentic Diagnostic Assistant\n\nUse the referenced runbook.\n"));

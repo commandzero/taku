@@ -607,8 +607,7 @@ fn validate_resources_for(
                     );
                 }
                 for (_, directory) in directories {
-                    for entry in fs::read_dir(directory)? {
-                        let path = entry?.path();
+                    for path in crate::canonical::resource_paths(&directory, updated_type)? {
                         let metadata = fs::symlink_metadata(&path)?;
                         if metadata.file_type().is_symlink() {
                             bail!(
@@ -623,12 +622,6 @@ fn validate_resources_for(
                             crate::projection::merge(&path, projection)?
                         } else {
                             if !metadata.is_file()
-                                || !path
-                                    .extension()
-                                    .and_then(|extension| extension.to_str())
-                                    .is_some_and(|extension| {
-                                        matches!(extension, "json" | "json5" | "yaml" | "yml")
-                                    })
                                 || path
                                     .file_name()
                                     .and_then(|value| value.to_str())
@@ -795,6 +788,19 @@ fn validate_resource_type(resource_type: &crate::ResourceType, name: &str) -> Re
             .any(reserved_canonical_pointer)
     {
         bail!("Resource Type {name} uses a pointer in Taku's reserved namespace");
+    }
+    if let Some(pointer) = &resource_type.directory_pointer {
+        if !valid_json_pointer(pointer) {
+            bail!("Resource Type {name} has an invalid directory pointer");
+        }
+        if reserved_canonical_pointer(pointer) {
+            bail!("Resource Type {name} directory pointer is reserved for Taku state");
+        }
+    }
+    if resource_type.directory_pointer.is_some() && resource_type.filesystem.is_some() {
+        bail!(
+            "Resource Type {name} cannot combine a directory pointer with a filesystem projection"
+        );
     }
     if resource_type.operations.read.is_none() && resource_type.operations.list.is_none() {
         bail!("Resource Type {name} has no observation Operation");
