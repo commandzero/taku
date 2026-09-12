@@ -23,11 +23,21 @@ jobs:
     name: preflight
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
+    env:
+      BASE_SHA: ${{ github.event.pull_request.base.sha }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          fetch-depth: 1
+          fetch-depth: 0
           persist-credentials: false
+      - name: Save trusted contract gates
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/taku-gates"
+          git show "$BASE_SHA:rust-toolchain.toml" > "$RUNNER_TEMP/taku-gates/rust-toolchain.toml"
+          for file in scripts/check-pr.sh scripts/check-docs.sh scripts/check-openspec.sh scripts/check-openspec.rs; do
+            git show "$BASE_SHA:$file" > "$RUNNER_TEMP/taku-gates/$(basename "$file")"
+          done
       - name: Install development tools
         shell: bash
         run: |
@@ -37,6 +47,14 @@ jobs:
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
           sudo apt-get update
           sudo apt-get install --yes shellcheck
+      - name: Install trusted contract tools
+        working-directory: ${{ runner.temp }}
+        shell: bash
+        run: |
+          toolchain=$(awk -F '"' '/^channel = / { print $2 }' "$RUNNER_TEMP/taku-gates/rust-toolchain.toml")
+          rustup toolchain install "$toolchain" --profile minimal --component rustfmt --component clippy
+          cargo install okf --version 0.2.7 --locked
+          npm install --global @fission-ai/openspec@1.11.0
       - name: Run code preflight
         shell: bash
         run: |
@@ -52,6 +70,19 @@ jobs:
           trap 'rm -rf "$staging"' EXIT
           rustup run "$toolchain" rustc --edition 2024 -D warnings --test scripts/check-openspec.rs -o "$staging/tests"
           "$staging/tests"
+      - name: Run trusted PR contract
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          REPO_ROOT: ${{ github.workspace }}
+          OPENSPEC_GATE_SOURCE: ${{ runner.temp }}/taku-gates/check-openspec.rs
+        run: |
+          export BASE_REF="$BASE_SHA"
+          toolchain=$(awk -F '"' '/^channel = / { print $2 }' "$RUNNER_TEMP/taku-gates/rust-toolchain.toml")
+          export OPENSPEC_TOOLCHAIN="$toolchain"
+          bash "$RUNNER_TEMP/taku-gates/check-docs.sh"
+          bash "$RUNNER_TEMP/taku-gates/check-pr.sh"
+          bash "$RUNNER_TEMP/taku-gates/check-openspec.sh"
 
   minimum:
     name: minimum compiler

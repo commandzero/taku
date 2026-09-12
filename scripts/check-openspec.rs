@@ -16,6 +16,23 @@ fn git(args: &[&str]) -> Result<String, String> {
     String::from_utf8(output.stdout).map_err(|e| e.to_string())
 }
 
+fn git_show_optional(revision: &str, path: &str) -> Result<Option<String>, String> {
+    let object = format!("{revision}:{path}");
+    let probe = Command::new("git")
+        .args(["cat-file", "-e", &object])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if probe.status.success() {
+        return git(&["show", &object]).map(Some);
+    }
+    let stderr = String::from_utf8_lossy(&probe.stderr);
+    if stderr.starts_with("fatal: path '") && stderr.contains("' does not exist in '") {
+        Ok(None)
+    } else {
+        Err(stderr.into_owned())
+    }
+}
+
 fn change_id(path: &str) -> Option<&str> {
     let rest = path.strip_prefix("openspec/changes/")?;
     if let Some(rest) = rest.strip_prefix("archive/") {
@@ -28,6 +45,9 @@ fn change_id(path: &str) -> Option<&str> {
                 c.is_ascii_digit()
             }
         }) && !id.is_empty()
+            && id
+                .bytes()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
         {
             Some(id)
         } else {
@@ -458,7 +478,7 @@ fn run() -> Result<(), String> {
                 .get(path)
                 .ok_or_else(|| format!("missing current main spec {path}"))?;
             let base_revision = merge_base.as_deref().unwrap_or("HEAD");
-            let previous = git(&["show", &format!("{base_revision}:{path}")]).unwrap_or_default();
+            let previous = git_show_optional(base_revision, path)?.unwrap_or_default();
             let before = requirements(&previous)?;
             let after = requirements(current)?;
             let changed_names: BTreeSet<_> = before
