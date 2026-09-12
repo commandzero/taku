@@ -194,7 +194,7 @@ jobs:
               echo "Workflow changes require manual maintainer review: $path" >&2
               exit 1
             fi
-          done < <(git diff --name-only -z "$BASE_REF...HEAD")
+          done < <(git diff --no-renames --name-only -z "$BASE_REF...HEAD")
       - name: Validate documentation and PR contract
         if: steps.trusted-gates.outputs.available == 'true'
         env:

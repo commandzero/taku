@@ -17,7 +17,7 @@ These examples use CommandZero's `tq` JSON/TOON query tool. Install the pinned r
 
 - **Create an issue**: `gh issue create --title "..." --body "..."`. Write multi-line bodies to a temporary file and use `--body-file`.
 - **Read an issue**: `gh issue view <number> --comments --json number,title,body,labels,comments | tq -x`, filtering comments and labels in the JSON result.
-- **List issues**: `gh issue list --state open --json number,title,body,labels,comments | tq -x '[.[] | {number, title, body, labels: [.labels[].name], comments: [.comments[].body]}]'` with appropriate `--label` and `--state` filters.
+- **List issues**: `gh issue list --state open --json number,title,body,labels | tq -x '[.[] | {number, title, body, labels: [.labels[].name]}]'` with appropriate `--label` and `--state` filters; fetch comments separately with `gh issue view --comments --json comments`.
 - **Comment on an issue**: `gh issue comment <number> --body "..."`
 - **Apply / remove labels**: `gh issue edit <number> --add-label "..."` / `--remove-label "..."`
 - **Close**: `gh issue close <number> --comment "..."`
