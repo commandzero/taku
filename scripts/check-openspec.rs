@@ -526,6 +526,7 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
     const REQUIREMENT: &str = "### Requirement: Safe write\nSHALL preserve state.\n#### Scenario: Retry\n- **WHEN** retried\n- **THEN** no duplicate\n";
     fn fixture(id: &str) -> Files {
         let root = format!("openspec/changes/archive/2026-09-06-{id}");
@@ -665,5 +666,91 @@ mod tests {
             parse_association("safe-write, another-change").unwrap(),
             ids("safe-write,another-change")
         );
+    }
+
+    #[test]
+    fn run_checks_base_ref_and_local_worktree_modes() {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let repo = env::temp_dir().join(format!("taku-openspec-{suffix}"));
+        fs::create_dir_all(repo.join("openspec/specs/safety")).unwrap();
+        let run_git = |args: &[&str]| {
+            let status = Command::new("git")
+                .args(args)
+                .current_dir(&repo)
+                .status()
+                .unwrap();
+            assert!(status.success(), "git command failed: {args:?}");
+        };
+        run_git(&["init", "--quiet"]);
+        run_git(&["config", "user.email", "test@example.com"]);
+        run_git(&["config", "user.name", "OpenSpec test"]);
+        fs::write(
+            repo.join("openspec/specs/safety/spec.md"),
+            format!("## Requirements\n{REQUIREMENT}"),
+        )
+        .unwrap();
+        run_git(&["add", "."]);
+        run_git(&["commit", "--quiet", "-m", "base"]);
+
+        let archive = repo.join("openspec/changes/archive/2026-09-12-safe-write");
+        fs::create_dir_all(archive.join("specs/safety")).unwrap();
+        for artifact in ["proposal.md", "design.md"] {
+            fs::write(archive.join(artifact), "Done\n").unwrap();
+        }
+        fs::write(archive.join("tasks.md"), "- [x] Done\n").unwrap();
+        fs::write(
+            archive.join("specs/safety/spec.md"),
+            format!("## MODIFIED Requirements\n{REQUIREMENT}"),
+        )
+        .unwrap();
+        run_git(&["add", "."]);
+        run_git(&["commit", "--quiet", "-m", "archive"]);
+
+        let binary = repo.join("check-openspec");
+        let source = env::current_dir()
+            .unwrap()
+            .join("scripts/check-openspec.rs");
+        let status = Command::new("rustc")
+            .args(["--edition", "2024"])
+            .arg(&source)
+            .args(["-o"])
+            .arg(&binary)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        let output = Command::new(&binary)
+            .current_dir(&repo)
+            .env("BASE_REF", "HEAD~1")
+            .env("PR_BODY", "OpenSpec: safe-write")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "base-ref gate failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        fs::write(
+            repo.join("openspec/specs/safety/spec.md"),
+            format!("## Requirements\n{REQUIREMENT}\n"),
+        )
+        .unwrap();
+        fs::write(archive.join("tasks.md"), "- [x] Done\nLocal note\n").unwrap();
+        let output = Command::new(&binary)
+            .current_dir(&repo)
+            .env_remove("BASE_REF")
+            .env_remove("PR_BODY")
+            .env_remove("OPENSPEC_CHANGES")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "local gate failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        fs::remove_dir_all(repo).unwrap();
     }
 }

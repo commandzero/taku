@@ -34,8 +34,12 @@ jobs:
       - name: Require trusted workflow for normal PRs
         shell: bash
         run: |
-          if ! git cat-file -e "$BASE_SHA:.github/workflows/validate.yml" 2>/dev/null; then
-            echo 'This adoption PR introduces the trusted workflow. Run the documented local preflight and obtain manual maintainer approval before merging.' >&2
+          missing=0
+          for file in .github/workflows/validate.yml rust-toolchain.toml scripts/check-pr.sh scripts/check-docs.sh scripts/check-openspec.sh scripts/check-openspec.rs; do
+            git cat-file -e "$BASE_SHA:$file" 2>/dev/null || missing=1
+          done
+          if [[ "$missing" == 1 ]]; then
+            echo 'This adoption PR introduces the trusted workflow and gates. Run the documented local preflight and obtain manual maintainer approval before merging.' >&2
             exit 1
           fi
 
@@ -179,6 +183,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
           ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
       - name: Validate documentation and PR contract
@@ -193,61 +198,6 @@ jobs:
           export OPENSPEC_TOOLCHAIN="$toolchain"
           bash "$RUNNER_TEMP/taku-gates/check-docs.sh"
           bash "$RUNNER_TEMP/taku-gates/check-pr.sh"
-
-  trusted-code:
-    name: trusted code preflight
-    if: github.event_name == 'pull_request_target'
-    runs-on: ubuntu-24.04
-    env:
-      TRUSTED_REF: ${{ github.event.pull_request.base.sha }}
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          fetch-depth: 0
-          ref: ${{ github.event.pull_request.base.sha }}
-          persist-credentials: false
-      - name: Save trusted toolchain
-        id: trusted-toolchain
-        shell: bash
-        run: |
-          mkdir -p "$RUNNER_TEMP/taku-gates"
-          if ! git cat-file -e "$TRUSTED_REF:rust-toolchain.toml" 2>/dev/null; then
-            echo 'Trusted toolchain is not present at the base revision; the bootstrap guard requires manual validation.'
-            echo 'available=false' >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          git show "$TRUSTED_REF:rust-toolchain.toml" > "$RUNNER_TEMP/taku-gates/rust-toolchain.toml"
-          echo 'available=true' >> "$GITHUB_OUTPUT"
-      - name: Install trusted development tools
-        if: steps.trusted-toolchain.outputs.available == 'true'
-        working-directory: ${{ runner.temp }}
-        shell: bash
-        run: |
-          toolchain=$(awk -F '"' '/^channel = / { print $2 }' "$RUNNER_TEMP/taku-gates/rust-toolchain.toml")
-          rustup toolchain install "$toolchain" --profile minimal --component rustfmt --component clippy
-          rustup toolchain install 1.89.0 --profile minimal
-          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
-          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
-          sudo apt-get update
-          sudo apt-get install --yes shellcheck
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          fetch-depth: 0
-          ref: ${{ github.event.pull_request.head.sha }}
-          persist-credentials: false
-      - name: Run trusted code checks
-        if: steps.trusted-toolchain.outputs.available == 'true'
-        shell: bash
-        run: |
-          toolchain=$(awk -F '"' '/^channel = / { print $2 }' "$RUNNER_TEMP/taku-gates/rust-toolchain.toml")
-          rustup run "$toolchain" cargo fmt --all -- --check
-          shellcheck scripts/*.sh
-          actionlint
-          for script in scripts/*.sh; do bash -n "$script"; done
-          rustup run "$toolchain" rustfmt --edition 2024 --check scripts/check-openspec.rs
-          rustup run "$toolchain" cargo clippy --workspace --all-targets --locked -- -D warnings
-          rustup run "$toolchain" cargo test --workspace --locked
-          rustup run 1.89.0 cargo test --workspace --locked
 
   # Main and manually dispatched runs use trusted source from this repository.
   main:

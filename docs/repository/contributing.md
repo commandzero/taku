@@ -44,7 +44,7 @@ BASE_REF=origin/main OPENSPEC_CHANGES=my-change bash scripts/check-openspec.sh
 
 With `BASE_REF`, the gate checks committed HEAD state against the merge base. Without it, local preflight checks working-tree changes against HEAD, including untracked files. `OPENSPEC_CHANGES` adds IDs in either mode. Set `CHECK_ALL_ARCHIVES=1` to check all archives against current specs, useful for this initial adoption but not a permanent gate once later changes supersede old requirements.
 
-CI reruns on PR edits and synchronization, with no workflow path filters. After this adoption PR, require the `trusted code preflight`, `minimum compiler`, and `PR contract` results before merge when the GitHub plan permits branch protection. The adoption PR's bootstrap guard intentionally requires one manual preflight because its base revision cannot run a trusted workflow that does not exist there yet. The present private repository's API reports a plan restriction; until protection is available, maintainers must inspect those results before merging.
+CI reruns on PR edits and synchronization, with no workflow path filters. After this adoption PR, require the `preflight`, `minimum compiler`, and `PR contract` results before merge when the GitHub plan permits branch protection. The adoption PR's bootstrap guard intentionally requires one manual preflight because its base revision cannot run a trusted workflow that does not exist there yet. The present private repository's API reports a plan restriction; until protection is available, maintainers must inspect those results before merging.
 
 See [bundle rules](bundle.md) for documentation validation and [release policy](releases.md) for compatibility and distribution.
 
