@@ -13,7 +13,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: validate-${{ github.event.pull_request.number || github.ref }}
+  group: validate-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -38,8 +38,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes shellcheck
       - name: Run code preflight
-        env:
-          SKIP_GATE_TESTS: '1'
         run: bash scripts/preflight.sh code
 
   minimum:
@@ -76,18 +74,23 @@ jobs:
         shell: bash
         run: |
           mkdir -p "$RUNNER_TEMP/taku-gates"
+          awk -F '"' '/^channel = / { print $2 }' rust-toolchain.toml > "$RUNNER_TEMP/taku-gates/toolchain"
           for file in scripts/check-pr.sh scripts/check-docs.sh scripts/check-openspec.sh scripts/check-openspec.rs; do
             git show "$TRUSTED_REF:$file" > "$RUNNER_TEMP/taku-gates/$(basename "$file")"
           done
+      - name: Install trusted validation tools
+        working-directory: ${{ runner.temp }}
+        shell: bash
+        run: |
+          toolchain=$(cat "$RUNNER_TEMP/taku-gates/toolchain")
+          rustup toolchain install "$toolchain" --profile minimal --component rustfmt --component clippy
+          cargo install okf --version 0.2.7 --locked
+          npm install --global @fission-ai/openspec@1.11.0
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
-      - name: Install validation tools
-        run: |
-          cargo install okf --version 0.2.7 --locked
-          npm install --global @fission-ai/openspec@1.11.0
       - name: Validate documentation and PR contract
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
@@ -95,6 +98,8 @@ jobs:
           REPO_ROOT: ${{ github.workspace }}
           OPENSPEC_GATE_SOURCE: ${{ runner.temp }}/taku-gates/check-openspec.rs
         run: |
+          toolchain=$(cat "$RUNNER_TEMP/taku-gates/toolchain")
+          export OPENSPEC_TOOLCHAIN="$toolchain"
           bash "$RUNNER_TEMP/taku-gates/check-docs.sh"
           bash "$RUNNER_TEMP/taku-gates/check-pr.sh"
 
@@ -110,6 +115,8 @@ jobs:
           persist-credentials: false
       - name: Install validation tools
         run: |
+          toolchain=$(awk -F '"' '/^channel = / { print $2 }' rust-toolchain.toml)
+          rustup toolchain install "$toolchain" --profile minimal --component rustfmt --component clippy
           cargo install okf --version 0.2.7 --locked
           npm install --global @fission-ai/openspec@1.11.0
           go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12

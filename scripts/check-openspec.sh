@@ -10,7 +10,8 @@ export OPENSPEC_TELEMETRY=0
 }
 # Validate main specs only. Unrelated active changes do not gate this PR.
 openspec validate --specs --strict
-toolchain=$(awk -F '"' '/^channel = / { print $2 }' rust-toolchain.toml)
+toolchain=${OPENSPEC_TOOLCHAIN:-$(awk -F '"' '/^channel = / { print $2 }' rust-toolchain.toml)}
+[[ -n "$toolchain" ]] || { echo 'Unable to determine the Rust toolchain.' >&2; exit 1; }
 staging=$(mktemp -d)
 trap 'rm -rf "$staging"' EXIT
 gate_source=${OPENSPEC_GATE_SOURCE:-$repo_root/scripts/check-openspec.rs}

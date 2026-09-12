@@ -38,7 +38,7 @@ fn change_id(path: &str) -> Option<&str> {
     }
 }
 
-fn select(paths: &[String], explicit: &str) -> Result<BTreeSet<String>, String> {
+fn touched_ids(paths: &[String], archives_only: bool) -> Result<BTreeSet<String>, String> {
     for path in paths {
         if path
             .strip_prefix("openspec/changes/archive/")
@@ -50,10 +50,15 @@ fn select(paths: &[String], explicit: &str) -> Result<BTreeSet<String>, String> 
             ));
         }
     }
-    let mut ids: BTreeSet<String> = paths
+    Ok(paths
         .iter()
+        .filter(|p| !archives_only || p.starts_with("openspec/changes/archive/"))
         .filter_map(|p| change_id(p).map(str::to_owned))
-        .collect();
+        .collect())
+}
+
+fn select(paths: &[String], explicit: &str) -> Result<BTreeSet<String>, String> {
+    let mut ids = touched_ids(paths, false)?;
     for id in parse_explicit_ids(explicit)? {
         ids.insert(id);
     }
@@ -311,11 +316,10 @@ fn run() -> Result<(), String> {
         list = format!("{}{}", git(&["ls-files", "-z", "openspec"])?, untracked);
     }
     let mut files = Files::new();
-    for path in list
-        .split('\0')
-        .filter(|p| p.starts_with("openspec/") && p.ends_with(".md"))
-    {
-        let text = if base.is_some() {
+    for path in list.split('\0').filter(|p| p.starts_with("openspec/")) {
+        let text = if !path.ends_with(".md") {
+            String::new()
+        } else if base.is_some() {
             git(&["show", &format!("HEAD:{path}")])?
         } else {
             match fs::read_to_string(path) {
@@ -334,7 +338,8 @@ fn run() -> Result<(), String> {
                 .cloned(),
         );
     }
-    let mut explicit = env::var("OPENSPEC_CHANGES").unwrap_or_default();
+    let env_explicit = env::var("OPENSPEC_CHANGES").unwrap_or_default();
+    let env_ids = parse_explicit_ids(&env_explicit)?;
     let mut pr_association = None;
     if let Ok(body) = env::var("PR_BODY") {
         let associations: Vec<_> = body
@@ -348,19 +353,24 @@ fn run() -> Result<(), String> {
         }
         let association = associations[0].trim();
         pr_association = Some(parse_association(association)?);
-        if !explicit.trim().is_empty() {
-            explicit.push(',');
-        }
-        explicit.push_str(association);
     }
-    let ids = select(&paths, &explicit)?;
+    let mut ids = if pr_association.is_some() {
+        touched_ids(&paths, true)?
+    } else {
+        select(&paths, &env_explicit)?
+    };
+    ids.extend(env_ids.iter().cloned());
+    if let Some(association) = &pr_association {
+        ids.extend(association.iter().cloned());
+    }
     require_association_for_main_specs(&paths, &ids)?;
-    let associated_ids = pr_association
-        .clone()
-        .unwrap_or(parse_explicit_ids(&explicit)?);
+    let mut associated_ids = env_ids;
+    if let Some(association) = &pr_association {
+        associated_ids.extend(association.iter().cloned());
+    }
     if let Some(association) = &pr_association {
         for touched_id in paths.iter().filter_map(|path| {
-            if path.starts_with("openspec/changes/") {
+            if path.starts_with("openspec/changes/archive/") {
                 change_id(path)
             } else {
                 None
