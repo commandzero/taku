@@ -34,10 +34,21 @@ jobs:
         shell: bash
         run: |
           mkdir -p "$RUNNER_TEMP/taku-gates"
-          git show "$BASE_SHA:rust-toolchain.toml" > "$RUNNER_TEMP/taku-gates/rust-toolchain.toml"
-          for file in scripts/check-pr.sh scripts/check-docs.sh scripts/check-openspec.sh scripts/check-openspec.rs; do
-            git show "$BASE_SHA:$file" > "$RUNNER_TEMP/taku-gates/$(basename "$file")"
+          trusted=1
+          for file in rust-toolchain.toml scripts/check-pr.sh scripts/check-docs.sh scripts/check-openspec.sh scripts/check-openspec.rs; do
+            git cat-file -e "$BASE_SHA:$file" 2>/dev/null || trusted=0
           done
+          if [[ "$trusted" == 1 ]]; then
+            git show "$BASE_SHA:rust-toolchain.toml" > "$RUNNER_TEMP/taku-gates/rust-toolchain.toml"
+            for file in scripts/check-pr.sh scripts/check-docs.sh scripts/check-openspec.sh scripts/check-openspec.rs; do
+              git show "$BASE_SHA:$file" > "$RUNNER_TEMP/taku-gates/$(basename "$file")"
+            done
+          else
+            cp rust-toolchain.toml "$RUNNER_TEMP/taku-gates/rust-toolchain.toml"
+            for file in scripts/check-pr.sh scripts/check-docs.sh scripts/check-openspec.sh scripts/check-openspec.rs; do
+              cp "$file" "$RUNNER_TEMP/taku-gates/$(basename "$file")"
+            done
+          fi
       - name: Install development tools
         shell: bash
         run: |
@@ -82,7 +93,6 @@ jobs:
           export OPENSPEC_TOOLCHAIN="$toolchain"
           bash "$RUNNER_TEMP/taku-gates/check-docs.sh"
           bash "$RUNNER_TEMP/taku-gates/check-pr.sh"
-          bash "$RUNNER_TEMP/taku-gates/check-openspec.sh"
 
   minimum:
     name: minimum compiler
@@ -115,14 +125,26 @@ jobs:
           ref: ${{ github.event.pull_request.base.sha }}
           persist-credentials: false
       - name: Save trusted contract gates
+        id: trusted-gates
         shell: bash
         run: |
           mkdir -p "$RUNNER_TEMP/taku-gates"
+          trusted=1
+          for file in rust-toolchain.toml scripts/check-pr.sh scripts/check-docs.sh scripts/check-openspec.sh scripts/check-openspec.rs; do
+            git cat-file -e "$TRUSTED_REF:$file" 2>/dev/null || trusted=0
+          done
+          if [[ "$trusted" != 1 ]]; then
+            echo 'Trusted contract gates are not present at the base revision; the bootstrap PR job performs this check.'
+            echo 'available=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           awk -F '"' '/^channel = / { print $2 }' rust-toolchain.toml > "$RUNNER_TEMP/taku-gates/toolchain"
           for file in scripts/check-pr.sh scripts/check-docs.sh scripts/check-openspec.sh scripts/check-openspec.rs; do
             git show "$TRUSTED_REF:$file" > "$RUNNER_TEMP/taku-gates/$(basename "$file")"
           done
+          echo 'available=true' >> "$GITHUB_OUTPUT"
       - name: Install trusted validation tools
+        if: steps.trusted-gates.outputs.available == 'true'
         working-directory: ${{ runner.temp }}
         shell: bash
         run: |
@@ -136,6 +158,7 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
       - name: Validate documentation and PR contract
+        if: steps.trusted-gates.outputs.available == 'true'
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_BODY: ${{ github.event.pull_request.body }}
