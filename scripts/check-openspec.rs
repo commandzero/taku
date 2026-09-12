@@ -358,11 +358,10 @@ fn run() -> Result<(), String> {
     let base = env::var("BASE_REF").ok().filter(|s| !s.is_empty());
     let mut paths = Vec::new();
     let list;
-    let mut merge_base = None;
+    let content_revision;
     if let Some(base) = &base {
         let revision = git(&["merge-base", base, "HEAD"])?;
         let revision = revision.trim().to_owned();
-        merge_base = Some(revision.clone());
         // --no-renames yields both deleted and added paths, including directory renames.
         paths.extend(
             git(&[
@@ -377,8 +376,24 @@ fn run() -> Result<(), String> {
             .filter(|s| !s.is_empty())
             .map(str::to_owned),
         );
-        list = git(&["ls-tree", "-r", "--name-only", "-z", "HEAD", "openspec"])?;
+        // Validate the final tree that would be merged, so base-only archives
+        // and active changes remain visible to the contract gate.
+        content_revision = git(&["merge-tree", "--write-tree", base, "HEAD"])?
+            .lines()
+            .next()
+            .filter(|tree| !tree.is_empty())
+            .ok_or_else(|| "Unable to materialize the PR merge tree".to_owned())?
+            .to_owned();
+        list = git(&[
+            "ls-tree",
+            "-r",
+            "--name-only",
+            "-z",
+            &content_revision,
+            "openspec",
+        ])?;
     } else {
+        content_revision = "HEAD".to_owned();
         paths.extend(
             git(&["diff", "--no-renames", "--name-only", "-z", "HEAD"])?
                 .split('\0')
@@ -399,7 +414,7 @@ fn run() -> Result<(), String> {
         let text = if !path.ends_with(".md") {
             String::new()
         } else if base.is_some() {
-            git(&["show", &format!("HEAD:{path}")])?
+            git(&["show", &format!("{content_revision}:{path}")])?
         } else {
             match fs::read_to_string(path) {
                 Ok(s) => s,
@@ -498,7 +513,7 @@ fn run() -> Result<(), String> {
             let current = files
                 .get(path)
                 .ok_or_else(|| format!("missing current main spec {path}"))?;
-            let base_revision = merge_base.as_deref().unwrap_or("HEAD");
+            let base_revision = base.as_deref().unwrap_or("HEAD");
             let previous = git_show_optional(base_revision, path)?.unwrap_or_default();
             if !previous.trim().is_empty()
                 && non_requirement_text(&previous) != non_requirement_text(current)
