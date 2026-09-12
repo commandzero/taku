@@ -234,14 +234,14 @@ fn check(files: &Files, ids: &BTreeSet<String>) -> Result<(), String> {
                 .ok_or_else(|| format!("{id}: missing main spec {main_path}"))?;
             let main = requirements(main_text)?;
             let changes = requirements(delta)?;
-            if changes.is_empty() && !delta.contains("## RENAMED Requirements") {
+            if changes.is_empty() {
                 return Err(format!("{id}: {path} has no requirement deltas"));
             }
-            for (name, (mode, body)) in changes {
+            for (name, (mode, body)) in &changes {
                 match mode.as_str() {
                     "ADDED Requirements" | "MODIFIED Requirements" => {
                         if !body.contains("#### Scenario:")
-                            || !main.get(&name).is_some_and(|(_, actual)| actual == &body)
+                            || !main.get(name).is_some_and(|(_, actual)| actual == body)
                         {
                             return Err(format!(
                                 "{id}: {main_path}: unsynchronized requirement/scenarios: {name}"
@@ -249,7 +249,7 @@ fn check(files: &Files, ids: &BTreeSet<String>) -> Result<(), String> {
                         }
                     }
                     "REMOVED Requirements" => {
-                        if main.contains_key(&name) {
+                        if main.contains_key(name) {
                             return Err(format!(
                                 "{id}: {main_path}: removed requirement still present: {name}"
                             ));
@@ -260,6 +260,7 @@ fn check(files: &Files, ids: &BTreeSet<String>) -> Result<(), String> {
             }
             let mut renamed = false;
             let mut rename_pairs = 0;
+            let mut rename_targets = BTreeSet::new();
             let mut old: Option<&str> = None;
             for line in delta.lines() {
                 if line.starts_with("## ") {
@@ -284,6 +285,7 @@ fn check(files: &Files, ids: &BTreeSet<String>) -> Result<(), String> {
                                 "{id}: unsynchronized rename {previous} -> {name}"
                             ));
                         }
+                        rename_targets.insert(name.to_owned());
                         rename_pairs += 1;
                     } else if !line.trim().is_empty() {
                         return Err(format!("{id}: unsupported rename syntax: {line}"));
@@ -295,6 +297,16 @@ fn check(files: &Files, ids: &BTreeSet<String>) -> Result<(), String> {
             }
             if renamed && rename_pairs == 0 {
                 return Err(format!("{id}: rename section must contain a FROM/TO pair"));
+            }
+            for name in rename_targets {
+                if !changes
+                    .get(&name)
+                    .is_some_and(|(mode, _)| mode == "MODIFIED Requirements")
+                {
+                    return Err(format!(
+                        "{id}: renamed requirement must include a MODIFIED Requirements body: {name}"
+                    ));
+                }
             }
         }
     }
@@ -396,6 +408,8 @@ fn run() -> Result<(), String> {
     let mut associated_ids = env_ids;
     if let Some(association) = &pr_association {
         associated_ids.extend(association.iter().cloned());
+    } else {
+        associated_ids.extend(ids.iter().cloned());
     }
     if let Some(association) = &pr_association {
         for touched_id in paths.iter().filter_map(|path| {
@@ -569,7 +583,7 @@ mod tests {
     fn removals_and_renames_check_final_state() {
         let mut files = fixture("safe-write");
         let delta = "openspec/changes/archive/2026-09-06-safe-write/specs/safety/spec.md";
-        files.insert(delta.into(), "## REMOVED Requirements\n### Requirement: Old write\nReason: replaced\n## RENAMED Requirements\n- FROM: `### Requirement: Old write`\n- TO: `### Requirement: Safe write`\n".into());
+        files.insert(delta.into(), format!("## REMOVED Requirements\n### Requirement: Old write\nReason: replaced\n## MODIFIED Requirements\n{REQUIREMENT}\n## RENAMED Requirements\n- FROM: `### Requirement: Old write`\n- TO: `### Requirement: Safe write`\n"));
         assert!(check(&files, &ids("safe-write")).is_ok());
         files
             .get_mut("openspec/specs/safety/spec.md")
