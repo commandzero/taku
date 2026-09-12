@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
-cd "$(dirname "$0")/.."
+script_dir=$(cd "$(dirname "$0")" && pwd)
+repo_root=${REPO_ROOT:-$(cd "$script_dir/.." && pwd)}
+cd "$repo_root"
 
 # Modes keep docs-only PRs cheap while sharing exactly the same local commands.
 mode=${1:-all}
@@ -15,17 +17,19 @@ if [[ "$mode" == all || "$mode" == code ]]; then
   shellcheck scripts/*.sh
   actionlint
   for script in scripts/*.sh; do bash -n "$script"; done
-  rustup run "$toolchain" rustfmt --edition 2024 --check scripts/check-openspec.rs
+  gate_source=${OPENSPEC_GATE_SOURCE:-$repo_root/scripts/check-openspec.rs}
+  rustup run "$toolchain" rustfmt --edition 2024 --check "$gate_source"
   rustup run "$toolchain" cargo clippy --workspace --all-targets --locked -- -D warnings
   rustup run "$toolchain" cargo test --workspace --locked
   staging=$(mktemp -d)
   trap 'rm -rf "$staging"' EXIT
-  rustup run "$toolchain" rustc --edition 2024 -D warnings --test scripts/check-openspec.rs -o "$staging/tests"
+  gate_source=${OPENSPEC_GATE_SOURCE:-$repo_root/scripts/check-openspec.rs}
+  rustup run "$toolchain" rustc --edition 2024 -D warnings --test "$gate_source" -o "$staging/tests"
   "$staging/tests"
 fi
 if [[ "$mode" == all || "$mode" == docs ]]; then
-  bash scripts/check-docs.sh
-  bash scripts/check-openspec.sh
+  bash "$script_dir/check-docs.sh"
+  bash "$script_dir/check-openspec.sh"
 fi
 if [[ "$mode" == msrv ]]; then
   minimum=$(awk -F '"' '/^rust-version = / { print $2 }' Cargo.toml)

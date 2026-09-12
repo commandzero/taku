@@ -69,6 +69,22 @@ fn select(paths: &[String], explicit: &str) -> Result<BTreeSet<String>, String> 
     Ok(ids)
 }
 
+fn require_association_for_main_specs(
+    paths: &[String],
+    ids: &BTreeSet<String>,
+) -> Result<(), String> {
+    let touched_main_specs = paths
+        .iter()
+        .any(|path| path.starts_with("openspec/specs/") && path.ends_with(".md"));
+    if touched_main_specs && ids.is_empty() {
+        return Err(
+            "main OpenSpec specs changed without an associated archived change; set OpenSpec: change-id"
+                .into(),
+        );
+    }
+    Ok(())
+}
+
 // Compare complete requirement/scenario text, tolerating only whitespace changes.
 fn requirements(text: &str) -> Result<BTreeMap<String, (String, String)>, String> {
     let mut result = BTreeMap::new();
@@ -154,7 +170,10 @@ fn check(files: &Files, ids: &BTreeSet<String>) -> Result<(), String> {
         }
         for (path, delta) in deltas {
             let main_path = format!("openspec/specs/{}", path.strip_prefix(&prefix).unwrap());
-            let main = requirements(files.get(&main_path).map(String::as_str).unwrap_or(""))?;
+            let main_text = files
+                .get(&main_path)
+                .ok_or_else(|| format!("{id}: missing main spec {main_path}"))?;
+            let main = requirements(main_text)?;
             let changes = requirements(delta)?;
             if changes.is_empty() && !delta.contains("## RENAMED Requirements") {
                 return Err(format!("{id}: {path} has no requirement deltas"));
@@ -181,6 +200,7 @@ fn check(files: &Files, ids: &BTreeSet<String>) -> Result<(), String> {
                 }
             }
             let mut renamed = false;
+            let mut rename_pairs = 0;
             let mut old: Option<&str> = None;
             for line in delta.lines() {
                 if line.starts_with("## ") {
@@ -205,6 +225,7 @@ fn check(files: &Files, ids: &BTreeSet<String>) -> Result<(), String> {
                                 "{id}: unsynchronized rename {previous} -> {name}"
                             ));
                         }
+                        rename_pairs += 1;
                     } else if !line.trim().is_empty() {
                         return Err(format!("{id}: unsupported rename syntax: {line}"));
                     }
@@ -212,6 +233,9 @@ fn check(files: &Files, ids: &BTreeSet<String>) -> Result<(), String> {
             }
             if old.is_some() {
                 return Err(format!("{id}: rename missing TO"));
+            }
+            if renamed && rename_pairs == 0 {
+                return Err(format!("{id}: rename section must contain a FROM/TO pair"));
             }
         }
     }
@@ -294,6 +318,7 @@ fn run() -> Result<(), String> {
         explicit.push_str(associations[0]);
     }
     let ids = select(&paths, &explicit)?;
+    require_association_for_main_specs(&paths, &ids)?;
     check(&files, &ids)?;
     if ids.is_empty() {
         println!("OpenSpec completion: not applicable, no associated changes");
@@ -425,5 +450,22 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn empty_rename_section_is_not_a_delta() {
+        let mut files = fixture("safe-write");
+        files.insert(
+            "openspec/changes/archive/2026-09-06-safe-write/specs/safety/spec.md".into(),
+            "## RENAMED Requirements\n".into(),
+        );
+        assert!(check(&files, &ids("safe-write")).is_err());
+    }
+
+    #[test]
+    fn direct_main_spec_edits_require_an_associated_change() {
+        let paths = vec!["openspec/specs/safety/spec.md".to_owned()];
+        assert!(require_association_for_main_specs(&paths, &BTreeSet::new()).is_err());
+        assert!(require_association_for_main_specs(&paths, &ids("safe-write")).is_ok());
     }
 }

@@ -13,6 +13,7 @@ Install the toolchain from `rust-toolchain.toml`, Rust 1.89.0 for minimum-compil
 rustup toolchain install 1.97.1 --profile minimal --component rustfmt --component clippy
 rustup toolchain install 1.89.0 --profile minimal
 cargo install okf --version 0.2.7 --locked
+cargo install tq-cli --version 0.3.0 --locked
 go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
 bun install --global @fission-ai/openspec@1.11.0
 bash scripts/preflight.sh

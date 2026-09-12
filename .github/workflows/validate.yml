@@ -3,7 +3,7 @@ name: Validate
 on:
   push:
     branches: [main]
-  pull_request:
+  pull_request_target:
     types: [opened, synchronize, reopened, edited, ready_for_review]
   workflow_dispatch:
 
@@ -20,8 +20,21 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
+      TRUSTED_REF: ${{ github.event.pull_request.base.sha || github.sha }}
       OPENSPEC_TELEMETRY: '0'
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.base.sha || github.sha }}
+          persist-credentials: false
+      - name: Save trusted validation gates
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/taku-gates"
+          for file in scripts/preflight.sh scripts/check-docs.sh scripts/check-openspec.sh scripts/check-openspec.rs; do
+            git show "$TRUSTED_REF:$file" > "$RUNNER_TEMP/taku-gates/$(basename "$file")"
+          done
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
@@ -65,20 +78,33 @@ jobs:
       - name: Run shared preflight
         env:
           MODE: ${{ steps.scope.outputs.mode }}
-        run: bash scripts/preflight.sh "$MODE"
+          REPO_ROOT: ${{ github.workspace }}
+          OPENSPEC_GATE_SOURCE: ${{ runner.temp }}/taku-gates/check-openspec.rs
+        run: bash "$RUNNER_TEMP/taku-gates/preflight.sh" "$MODE"
 
   minimum:
     name: minimum compiler
     runs-on: ubuntu-24.04
+    env:
+      BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
+      TRUSTED_REF: ${{ github.event.pull_request.base.sha || github.sha }}
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.base.sha || github.sha }}
+          persist-credentials: false
+      - name: Save trusted validation gate
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/taku-gates"
+          git show "$TRUSTED_REF:scripts/preflight.sh" > "$RUNNER_TEMP/taku-gates/preflight.sh"
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - name: Install and test minimum compiler
-        env:
-          BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
         shell: bash
         run: |
           if [[ -n "$BASE_REF" ]] && git cat-file -e "$BASE_REF^{commit}" 2>/dev/null; then
@@ -89,19 +115,34 @@ jobs:
           fi
           minimum=$(awk -F '"' '/^rust-version = / { print $2 }' Cargo.toml)
           rustup toolchain install "$minimum.0" --profile minimal
-          bash scripts/preflight.sh msrv
+          REPO_ROOT="$GITHUB_WORKSPACE" bash "$RUNNER_TEMP/taku-gates/preflight.sh" msrv
 
   contract:
     name: PR contract
     runs-on: ubuntu-24.04
+    env:
+      BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
+      TRUSTED_REF: ${{ github.event.pull_request.base.sha || github.sha }}
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.base.sha || github.sha }}
+          persist-credentials: false
+      - name: Save trusted PR contract gates
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/taku-gates"
+          for file in scripts/check-pr.sh scripts/check-openspec.sh scripts/check-openspec.rs; do
+            git show "$TRUSTED_REF:$file" > "$RUNNER_TEMP/taku-gates/$(basename "$file")"
+          done
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - name: Validate PR title and associated OpenSpec changes
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request_target'
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_BODY: ${{ github.event.pull_request.body }}
@@ -111,7 +152,7 @@ jobs:
           toolchain=$(awk -F '"' '/^channel = / { print $2 }' rust-toolchain.toml)
           rustup toolchain install "$toolchain" --profile minimal
           npm install --global @fission-ai/openspec@1.11.0
-          bash scripts/check-pr.sh
+          REPO_ROOT="$GITHUB_WORKSPACE" OPENSPEC_GATE_SOURCE="$RUNNER_TEMP/taku-gates/check-openspec.rs" bash "$RUNNER_TEMP/taku-gates/check-pr.sh"
       - name: Not a pull request
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request_target'
         run: echo 'PR contract not applicable'

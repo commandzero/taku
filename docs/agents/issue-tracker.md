@@ -11,6 +11,8 @@ Issues and specs for this repo live as GitHub issues in `commandzero/taku`. Use 
 
 The private GitHub repository is `commandzero/taku`. The local checkout may not have a configured remote, so pass `--repo commandzero/taku` to applicable `gh` commands when inference is unavailable.
 
+These examples use CommandZero's `tq` JSON/TOON query tool. Install the pinned release with `cargo install tq-cli --version 0.3.0 --locked`, or use the package manager documented by the `tq` project, before running the pipelines below.
+
 ## Conventions
 
 - **Create an issue**: `gh issue create --title "..." --body "..."`. Write multi-line bodies to a temporary file and use `--body-file`.

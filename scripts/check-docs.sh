@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
-cd "$(dirname "$0")/.."
+script_dir=$(cd "$(dirname "$0")" && pwd)
+repo_root=${REPO_ROOT:-$(cd "$script_dir/.." && pwd)}
+cd "$repo_root"
 
 case "$(okf --version)" in
   'okf 0.2.7 '*) ;;
