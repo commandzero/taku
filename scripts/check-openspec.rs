@@ -504,7 +504,7 @@ fn run() -> Result<(), String> {
                 && non_requirement_text(&previous) != non_requirement_text(current)
             {
                 return Err(format!(
-                    "{path} changed outside requirement blocks; record that contract text in an archive delta"
+                    "{path} changed outside requirement blocks; non-requirement spec edits are unsupported"
                 ));
             }
             let before = requirements(&previous)?;
