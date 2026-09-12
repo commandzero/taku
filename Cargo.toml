@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 repository.workspace = true
 license.workspace = true
-publish.workspace = true
+publish = false
 
 [lints]
 workspace = true
@@ -37,7 +37,6 @@ edition = "2024"
 rust-version = "1.89"
 repository = "https://github.com/commandzero/taku"
 license = "Apache-2.0"
-publish = false
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
