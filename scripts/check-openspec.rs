@@ -181,6 +181,24 @@ fn requirements(text: &str) -> Result<BTreeMap<String, (String, String)>, String
     Ok(result)
 }
 
+fn non_requirement_text(text: &str) -> String {
+    let mut in_requirement = false;
+    let mut result = String::new();
+    for line in text.lines() {
+        if line.starts_with("## ") {
+            in_requirement = false;
+            result.push_str(line);
+            result.push('\n');
+        } else if line.starts_with("### Requirement: ") {
+            in_requirement = true;
+        } else if !in_requirement {
+            result.push_str(line);
+            result.push('\n');
+        }
+    }
+    result.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 fn delta_names(delta: &str) -> Result<BTreeSet<String>, String> {
     let mut names: BTreeSet<String> = requirements(delta)?.into_keys().collect();
     let mut renamed = false;
@@ -482,6 +500,13 @@ fn run() -> Result<(), String> {
                 .ok_or_else(|| format!("missing current main spec {path}"))?;
             let base_revision = merge_base.as_deref().unwrap_or("HEAD");
             let previous = git_show_optional(base_revision, path)?.unwrap_or_default();
+            if !previous.trim().is_empty()
+                && non_requirement_text(&previous) != non_requirement_text(current)
+            {
+                return Err(format!(
+                    "{path} changed outside requirement blocks; record that contract text in an archive delta"
+                ));
+            }
             let before = requirements(&previous)?;
             let after = requirements(current)?;
             let changed_names: BTreeSet<_> = before

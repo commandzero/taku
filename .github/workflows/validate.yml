@@ -137,8 +137,8 @@ jobs:
         run: rustup run 1.89.0 cargo test --workspace --locked
 
   # pull_request_target uses the workflow from the base branch. Contract gates
-  # and code commands are therefore fixed by the trusted revision; the checked
-  # out PR code runs without secrets or a writable token.
+  # and workflow integrity checks are therefore fixed by the trusted revision;
+  # no PR code is executed in this job.
   contract:
     name: PR contract
     if: github.event_name == 'pull_request_target'
@@ -186,6 +186,15 @@ jobs:
           repository: ${{ github.event.pull_request.head.repo.full_name }}
           ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
+      - name: Verify workflow definition is trusted
+        shell: bash
+        run: |
+          while IFS= read -r path; do
+            if [[ "$path" == .github/workflows/* ]]; then
+              echo "Workflow changes require manual maintainer review: $path" >&2
+              exit 1
+            fi
+          done < <(git diff --name-only "$BASE_REF...HEAD")
       - name: Validate documentation and PR contract
         if: steps.trusted-gates.outputs.available == 'true'
         env:
