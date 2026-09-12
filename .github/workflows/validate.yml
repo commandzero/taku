@@ -35,7 +35,7 @@ jobs:
         shell: bash
         run: |
           missing=0
-          for file in .github/workflows/validate.yml rust-toolchain.toml scripts/check-pr.sh scripts/check-docs.sh scripts/check-openspec.sh scripts/check-openspec.rs; do
+          for file in .github/workflows/validate.yml rust-toolchain.toml scripts/preflight.sh scripts/check-pr.sh scripts/check-docs.sh scripts/check-openspec.sh scripts/check-openspec.rs; do
             git cat-file -e "$BASE_SHA:$file" 2>/dev/null || missing=1
           done
           if [[ "$missing" == 1 ]]; then
@@ -190,7 +190,7 @@ jobs:
         shell: bash
         run: |
           while IFS= read -r path; do
-            if [[ "$path" == .github/workflows/* ]]; then
+            if [[ "$path" == .github/workflows/* || "$path" == rust-toolchain.toml || "$path" == scripts/preflight.sh || "$path" == scripts/check-pr.sh || "$path" == scripts/check-docs.sh || "$path" == scripts/check-openspec.sh || "$path" == scripts/check-openspec.rs ]]; then
               echo "Workflow changes require manual maintainer review: $path" >&2
               exit 1
             fi

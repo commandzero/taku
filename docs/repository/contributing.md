@@ -50,4 +50,4 @@ See [bundle rules](bundle.md) for documentation validation and [release policy](
 
 ## Shared standards
 
-The local shared bundle is `../../../repo-man/index.md` relative to this document's directory. Agents use the nearest workspace standards pointer and the repo-man skill when contributing. The repository adopts the audit remediation rules documented here; this does not change draft status in the shared standards bundle.
+Agents use the repo-man skill and the repository policies documented here when contributing. The repository adopts the audit remediation rules documented here; this does not change draft status in any external standards bundle.
