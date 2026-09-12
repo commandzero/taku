@@ -54,10 +54,22 @@ fn select(paths: &[String], explicit: &str) -> Result<BTreeSet<String>, String> 
         .iter()
         .filter_map(|p| change_id(p).map(str::to_owned))
         .collect();
-    for id in explicit
-        .split(|c: char| c == ',' || c.is_whitespace())
-        .filter(|s| !s.is_empty() && *s != "none")
-    {
+    for id in parse_explicit_ids(explicit)? {
+        ids.insert(id);
+    }
+    Ok(ids)
+}
+
+fn parse_explicit_ids(explicit: &str) -> Result<BTreeSet<String>, String> {
+    let trimmed = explicit.trim();
+    if trimmed.is_empty() || trimmed == "none" {
+        return Ok(BTreeSet::new());
+    }
+    let mut ids = BTreeSet::new();
+    for id in trimmed.split(|c: char| c == ',' || c.is_whitespace()) {
+        if id.is_empty() || id == "none" {
+            return Err(format!("Invalid OpenSpec change ID list: {explicit}"));
+        }
         if !id
             .bytes()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
@@ -66,7 +78,21 @@ fn select(paths: &[String], explicit: &str) -> Result<BTreeSet<String>, String> 
         }
         ids.insert(id.to_owned());
     }
+    if ids.is_empty() {
+        return Err(format!("Invalid OpenSpec change ID list: {explicit}"));
+    }
     Ok(ids)
+}
+
+fn parse_association(value: &str) -> Result<BTreeSet<String>, String> {
+    let trimmed = value.trim();
+    if trimmed == "none" {
+        return Ok(BTreeSet::new());
+    }
+    if trimmed.is_empty() {
+        return Err("OpenSpec association must be none or one or more change IDs".into());
+    }
+    parse_explicit_ids(trimmed)
 }
 
 fn require_association_for_main_specs(
@@ -304,21 +330,53 @@ fn run() -> Result<(), String> {
         );
     }
     let mut explicit = env::var("OPENSPEC_CHANGES").unwrap_or_default();
+    let mut pr_association = None;
     if let Ok(body) = env::var("PR_BODY") {
         let associations: Vec<_> = body
             .lines()
             .filter_map(|l| l.strip_prefix("OpenSpec:"))
             .collect();
-        if associations.len() != 1 || associations[0].trim().is_empty() {
+        if associations.len() != 1 {
             return Err(
                 "PR body must contain one OpenSpec: none or OpenSpec: change-id line".into(),
             );
         }
-        explicit.push(',');
-        explicit.push_str(associations[0]);
+        let association = associations[0].trim();
+        pr_association = Some(parse_association(association)?);
+        if !explicit.trim().is_empty() {
+            explicit.push(',');
+        }
+        explicit.push_str(association);
     }
     let ids = select(&paths, &explicit)?;
     require_association_for_main_specs(&paths, &ids)?;
+    let associated_ids = pr_association.unwrap_or(parse_explicit_ids(&explicit)?);
+    let touched_specs: Vec<_> = paths
+        .iter()
+        .filter(|path| path.starts_with("openspec/specs/") && path.ends_with(".md"))
+        .collect();
+    if !touched_specs.is_empty() {
+        if associated_ids.is_empty() {
+            return Err(
+                "main OpenSpec specs changed without an associated archived change; set OpenSpec: change-id"
+                    .into(),
+            );
+        }
+        for path in touched_specs {
+            let relative = path.strip_prefix("openspec/specs/").unwrap();
+            let covered = associated_ids.iter().any(|associated_id| {
+                files.keys().any(|candidate| {
+                    change_id(candidate) == Some(associated_id.as_str())
+                        && candidate.ends_with(&format!("/specs/{relative}"))
+                })
+            });
+            if !covered {
+                return Err(format!(
+                    "{path} changed without a matching delta in its associated archived change"
+                ));
+            }
+        }
+    }
     check(&files, &ids)?;
     if ids.is_empty() {
         println!("OpenSpec completion: not applicable, no associated changes");
@@ -467,5 +525,13 @@ mod tests {
         let paths = vec!["openspec/specs/safety/spec.md".to_owned()];
         assert!(require_association_for_main_specs(&paths, &BTreeSet::new()).is_err());
         assert!(require_association_for_main_specs(&paths, &ids("safe-write")).is_ok());
+    }
+
+    #[test]
+    fn association_parser_rejects_empty_values_and_accepts_none() {
+        assert!(parse_association("").is_err());
+        assert!(parse_association(",").is_err());
+        assert!(parse_association("none").unwrap().is_empty());
+        assert_eq!(parse_association("safe-write").unwrap(), ids("safe-write"));
     }
 }

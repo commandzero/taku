@@ -21,11 +21,13 @@ if [[ "$mode" == all || "$mode" == code ]]; then
   rustup run "$toolchain" rustfmt --edition 2024 --check "$gate_source"
   rustup run "$toolchain" cargo clippy --workspace --all-targets --locked -- -D warnings
   rustup run "$toolchain" cargo test --workspace --locked
-  staging=$(mktemp -d)
-  trap 'rm -rf "$staging"' EXIT
-  gate_source=${OPENSPEC_GATE_SOURCE:-$repo_root/scripts/check-openspec.rs}
-  rustup run "$toolchain" rustc --edition 2024 -D warnings --test "$gate_source" -o "$staging/tests"
-  "$staging/tests"
+  if [[ ${SKIP_GATE_TESTS:-0} != 1 ]]; then
+    staging=$(mktemp -d)
+    trap 'rm -rf "$staging"' EXIT
+    gate_source=${OPENSPEC_GATE_SOURCE:-$repo_root/scripts/check-openspec.rs}
+    rustup run "$toolchain" rustc --edition 2024 -D warnings --test "$gate_source" -o "$staging/tests"
+    "$staging/tests"
+  fi
 fi
 if [[ "$mode" == all || "$mode" == docs ]]; then
   bash "$script_dir/check-docs.sh"

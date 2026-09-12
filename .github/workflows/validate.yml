@@ -79,8 +79,13 @@ jobs:
         env:
           MODE: ${{ steps.scope.outputs.mode }}
           REPO_ROOT: ${{ github.workspace }}
-          OPENSPEC_GATE_SOURCE: ${{ runner.temp }}/taku-gates/check-openspec.rs
-        run: bash "$RUNNER_TEMP/taku-gates/preflight.sh" "$MODE"
+          SKIP_GATE_TESTS: '1'
+        run: |
+          if [[ "$MODE" == docs ]]; then
+            echo 'Documentation-only change: trusted gates run in the contract job'
+          else
+            bash "$RUNNER_TEMP/taku-gates/preflight.sh" code
+          fi
 
   minimum:
     name: minimum compiler
@@ -151,7 +156,9 @@ jobs:
         run: |
           toolchain=$(awk -F '"' '/^channel = / { print $2 }' rust-toolchain.toml)
           rustup toolchain install "$toolchain" --profile minimal
+          cargo install okf --version 0.2.7 --locked
           npm install --global @fission-ai/openspec@1.11.0
+          REPO_ROOT="$GITHUB_WORKSPACE" bash "$RUNNER_TEMP/taku-gates/check-docs.sh"
           REPO_ROOT="$GITHUB_WORKSPACE" OPENSPEC_GATE_SOURCE="$RUNNER_TEMP/taku-gates/check-openspec.rs" bash "$RUNNER_TEMP/taku-gates/check-pr.sh"
       - name: Not a pull request
         if: github.event_name != 'pull_request_target'
