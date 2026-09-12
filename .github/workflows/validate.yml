@@ -222,6 +222,7 @@ jobs:
         run: |
           toolchain=$(awk -F '"' '/^channel = / { print $2 }' rust-toolchain.toml)
           rustup toolchain install "$toolchain" --profile minimal --component rustfmt --component clippy
+          rustup toolchain install 1.89.0 --profile minimal
           cargo install okf --version 0.2.7 --locked
           npm install --global @fission-ai/openspec@1.11.0
           go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
@@ -230,3 +231,5 @@ jobs:
           sudo apt-get install --yes shellcheck
       - name: Run complete preflight
         run: bash scripts/preflight.sh all
+      - name: Run minimum compiler check
+        run: bash scripts/preflight.sh msrv

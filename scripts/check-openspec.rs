@@ -36,6 +36,15 @@ fn git_show_optional(revision: &str, path: &str) -> Result<Option<String>, Strin
     }
 }
 
+fn valid_id(id: &str) -> bool {
+    !id.is_empty()
+        && id != "archive"
+        && id != "none"
+        && id
+            .bytes()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
+}
+
 fn change_id(path: &str) -> Option<&str> {
     let rest = path.strip_prefix("openspec/changes/")?;
     if let Some(rest) = rest.strip_prefix("archive/") {
@@ -47,10 +56,7 @@ fn change_id(path: &str) -> Option<&str> {
             } else {
                 c.is_ascii_digit()
             }
-        }) && !id.is_empty()
-            && id
-                .bytes()
-                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
+        }) && valid_id(id)
         {
             Some(id)
         } else {
@@ -100,13 +106,7 @@ fn parse_explicit_ids(explicit: &str) -> Result<BTreeSet<String>, String> {
         trimmed.split_whitespace().collect()
     };
     for id in fields {
-        if id.is_empty() || id == "none" {
-            return Err(format!("Invalid OpenSpec change ID list: {explicit}"));
-        }
-        if !id
-            .bytes()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
-        {
+        if !valid_id(id) {
             return Err(format!("Invalid OpenSpec change ID: {id}"));
         }
         ids.insert(id.to_owned());
@@ -690,6 +690,7 @@ mod tests {
     fn association_parser_rejects_empty_values_and_accepts_none() {
         assert!(parse_association("").is_err());
         assert!(parse_association(",").is_err());
+        assert!(parse_association("archive").is_err());
         assert!(parse_association("none").unwrap().is_empty());
         assert_eq!(parse_association("safe-write").unwrap(), ids("safe-write"));
         assert_eq!(
