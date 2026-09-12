@@ -26,7 +26,10 @@ fn git_show_optional(revision: &str, path: &str) -> Result<Option<String>, Strin
         return git(&["show", &object]).map(Some);
     }
     let stderr = String::from_utf8_lossy(&probe.stderr);
-    if stderr.starts_with("fatal: path '") && stderr.contains("' does not exist in '") {
+    if stderr.starts_with("fatal: path '")
+        && (stderr.contains("' does not exist in '")
+            || stderr.contains("' exists on disk, but not in '"))
+    {
         Ok(None)
     } else {
         Err(stderr.into_owned())

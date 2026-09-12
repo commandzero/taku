@@ -17,8 +17,30 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # A pull_request runner has no repository secrets or write token. It is the
-  # only job that executes code supplied by a pull request.
+  # This guard deliberately fails while the repository is adopting this
+  # workflow. The base revision cannot provide a trusted workflow for its own
+  # introduction; maintainers must use the documented manual preflight once.
+  bootstrap:
+    name: trusted workflow bootstrap
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    env:
+      BASE_SHA: ${{ github.event.pull_request.base.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require trusted workflow for normal PRs
+        shell: bash
+        run: |
+          if ! git cat-file -e "$BASE_SHA:.github/workflows/validate.yml" 2>/dev/null; then
+            echo 'This adoption PR introduces the trusted workflow. Run the documented local preflight and obtain manual maintainer approval before merging.' >&2
+            exit 1
+          fi
+
+  # A pull_request runner has no repository secrets or write token. It is used
+  # for fast feedback; the trusted target workflow is the merge gate later.
   preflight:
     name: preflight
     if: github.event_name == 'pull_request'
@@ -31,6 +53,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Save trusted contract gates
+        id: trusted-gates
         shell: bash
         run: |
           mkdir -p "$RUNNER_TEMP/taku-gates"
@@ -38,17 +61,16 @@ jobs:
           for file in rust-toolchain.toml scripts/check-pr.sh scripts/check-docs.sh scripts/check-openspec.sh scripts/check-openspec.rs; do
             git cat-file -e "$BASE_SHA:$file" 2>/dev/null || trusted=0
           done
-          if [[ "$trusted" == 1 ]]; then
-            git show "$BASE_SHA:rust-toolchain.toml" > "$RUNNER_TEMP/taku-gates/rust-toolchain.toml"
-            for file in scripts/check-pr.sh scripts/check-docs.sh scripts/check-openspec.sh scripts/check-openspec.rs; do
-              git show "$BASE_SHA:$file" > "$RUNNER_TEMP/taku-gates/$(basename "$file")"
-            done
-          else
-            cp rust-toolchain.toml "$RUNNER_TEMP/taku-gates/rust-toolchain.toml"
-            for file in scripts/check-pr.sh scripts/check-docs.sh scripts/check-openspec.sh scripts/check-openspec.rs; do
-              cp "$file" "$RUNNER_TEMP/taku-gates/$(basename "$file")"
-            done
+          if [[ "$trusted" != 1 ]]; then
+            echo 'Trusted contract gates are not present at the base revision; the bootstrap guard requires manual validation.'
+            echo 'available=false' >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+          git show "$BASE_SHA:rust-toolchain.toml" > "$RUNNER_TEMP/taku-gates/rust-toolchain.toml"
+          for file in scripts/check-pr.sh scripts/check-docs.sh scripts/check-openspec.sh scripts/check-openspec.rs; do
+            git show "$BASE_SHA:$file" > "$RUNNER_TEMP/taku-gates/$(basename "$file")"
+          done
+          echo 'available=true' >> "$GITHUB_OUTPUT"
       - name: Install development tools
         shell: bash
         run: |
@@ -59,6 +81,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes shellcheck
       - name: Install trusted contract tools
+        if: steps.trusted-gates.outputs.available == 'true'
         working-directory: ${{ runner.temp }}
         shell: bash
         run: |
@@ -82,6 +105,7 @@ jobs:
           rustup run "$toolchain" rustc --edition 2024 -D warnings --test scripts/check-openspec.rs -o "$staging/tests"
           "$staging/tests"
       - name: Run trusted PR contract
+        if: steps.trusted-gates.outputs.available == 'true'
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_BODY: ${{ github.event.pull_request.body }}
@@ -108,9 +132,9 @@ jobs:
       - name: Run minimum compiler tests
         run: rustup run 1.89.0 cargo test --workspace --locked
 
-  # pull_request_target uses the workflow from the base branch. It executes
-  # only pinned tools and gate code copied from that trusted revision; it never
-  # builds or runs the PR's Rust code.
+  # pull_request_target uses the workflow from the base branch. Contract gates
+  # and code commands are therefore fixed by the trusted revision; the checked
+  # out PR code runs without secrets or a writable token.
   contract:
     name: PR contract
     if: github.event_name == 'pull_request_target'
@@ -169,6 +193,61 @@ jobs:
           export OPENSPEC_TOOLCHAIN="$toolchain"
           bash "$RUNNER_TEMP/taku-gates/check-docs.sh"
           bash "$RUNNER_TEMP/taku-gates/check-pr.sh"
+
+  trusted-code:
+    name: trusted code preflight
+    if: github.event_name == 'pull_request_target'
+    runs-on: ubuntu-24.04
+    env:
+      TRUSTED_REF: ${{ github.event.pull_request.base.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+      - name: Save trusted toolchain
+        id: trusted-toolchain
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/taku-gates"
+          if ! git cat-file -e "$TRUSTED_REF:rust-toolchain.toml" 2>/dev/null; then
+            echo 'Trusted toolchain is not present at the base revision; the bootstrap guard requires manual validation.'
+            echo 'available=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git show "$TRUSTED_REF:rust-toolchain.toml" > "$RUNNER_TEMP/taku-gates/rust-toolchain.toml"
+          echo 'available=true' >> "$GITHUB_OUTPUT"
+      - name: Install trusted development tools
+        if: steps.trusted-toolchain.outputs.available == 'true'
+        working-directory: ${{ runner.temp }}
+        shell: bash
+        run: |
+          toolchain=$(awk -F '"' '/^channel = / { print $2 }' "$RUNNER_TEMP/taku-gates/rust-toolchain.toml")
+          rustup toolchain install "$toolchain" --profile minimal --component rustfmt --component clippy
+          rustup toolchain install 1.89.0 --profile minimal
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          sudo apt-get update
+          sudo apt-get install --yes shellcheck
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Run trusted code checks
+        if: steps.trusted-toolchain.outputs.available == 'true'
+        shell: bash
+        run: |
+          toolchain=$(awk -F '"' '/^channel = / { print $2 }' "$RUNNER_TEMP/taku-gates/rust-toolchain.toml")
+          rustup run "$toolchain" cargo fmt --all -- --check
+          shellcheck scripts/*.sh
+          actionlint
+          for script in scripts/*.sh; do bash -n "$script"; done
+          rustup run "$toolchain" rustfmt --edition 2024 --check scripts/check-openspec.rs
+          rustup run "$toolchain" cargo clippy --workspace --all-targets --locked -- -D warnings
+          rustup run "$toolchain" cargo test --workspace --locked
+          rustup run 1.89.0 cargo test --workspace --locked
 
   # Main and manually dispatched runs use trusted source from this repository.
   main:
