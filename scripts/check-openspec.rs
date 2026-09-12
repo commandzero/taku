@@ -632,7 +632,12 @@ mod tests {
     fn removals_and_renames_check_final_state() {
         let mut files = fixture("safe-write");
         let delta = "openspec/changes/archive/2026-09-06-safe-write/specs/safety/spec.md";
-        files.insert(delta.into(), format!("## REMOVED Requirements\n### Requirement: Old write\nReason: replaced\n## MODIFIED Requirements\n{REQUIREMENT}\n## RENAMED Requirements\n- FROM: `### Requirement: Old write`\n- TO: `### Requirement: Safe write`\n"));
+        let delta_body = format!(
+            "## REMOVED Requirements\n### Requirement: Old write\nReason: replaced\n\
+             ## MODIFIED Requirements\n{REQUIREMENT}\n## RENAMED Requirements\n\
+             - FROM: `### Requirement: Old write`\n- TO: `### Requirement: Safe write`\n"
+        );
+        files.insert(delta.into(), delta_body);
         assert!(check(&files, &ids("safe-write")).is_ok());
         files
             .get_mut("openspec/specs/safety/spec.md")

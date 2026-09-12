@@ -189,12 +189,12 @@ jobs:
       - name: Verify workflow definition is trusted
         shell: bash
         run: |
-          while IFS= read -r path; do
+          while IFS= read -r -d '' path; do
             if [[ "$path" == .github/workflows/* || "$path" == rust-toolchain.toml || "$path" == scripts/preflight.sh || "$path" == scripts/check-pr.sh || "$path" == scripts/check-docs.sh || "$path" == scripts/check-openspec.sh || "$path" == scripts/check-openspec.rs ]]; then
               echo "Workflow changes require manual maintainer review: $path" >&2
               exit 1
             fi
-          done < <(git diff --name-only "$BASE_REF...HEAD")
+          done < <(git diff --name-only -z "$BASE_REF...HEAD")
       - name: Validate documentation and PR contract
         if: steps.trusted-gates.outputs.available == 'true'
         env:
