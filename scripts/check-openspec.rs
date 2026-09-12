@@ -66,7 +66,12 @@ fn parse_explicit_ids(explicit: &str) -> Result<BTreeSet<String>, String> {
         return Ok(BTreeSet::new());
     }
     let mut ids = BTreeSet::new();
-    for id in trimmed.split(|c: char| c == ',' || c.is_whitespace()) {
+    let fields: Vec<&str> = if trimmed.contains(',') {
+        trimmed.split(',').map(str::trim).collect()
+    } else {
+        trimmed.split_whitespace().collect()
+    };
+    for id in fields {
         if id.is_empty() || id == "none" {
             return Err(format!("Invalid OpenSpec change ID list: {explicit}"));
         }
@@ -350,7 +355,24 @@ fn run() -> Result<(), String> {
     }
     let ids = select(&paths, &explicit)?;
     require_association_for_main_specs(&paths, &ids)?;
-    let associated_ids = pr_association.unwrap_or(parse_explicit_ids(&explicit)?);
+    let associated_ids = pr_association
+        .clone()
+        .unwrap_or(parse_explicit_ids(&explicit)?);
+    if let Some(association) = &pr_association {
+        for touched_id in paths.iter().filter_map(|path| {
+            if path.starts_with("openspec/changes/") {
+                change_id(path)
+            } else {
+                None
+            }
+        }) {
+            if !association.contains(touched_id) {
+                return Err(format!(
+                    "OpenSpec association omits touched change {touched_id}"
+                ));
+            }
+        }
+    }
     let touched_specs: Vec<_> = paths
         .iter()
         .filter(|path| path.starts_with("openspec/specs/") && path.ends_with(".md"))
@@ -533,5 +555,9 @@ mod tests {
         assert!(parse_association(",").is_err());
         assert!(parse_association("none").unwrap().is_empty());
         assert_eq!(parse_association("safe-write").unwrap(), ids("safe-write"));
+        assert_eq!(
+            parse_association("safe-write, another-change").unwrap(),
+            ids("safe-write,another-change")
+        );
     }
 }

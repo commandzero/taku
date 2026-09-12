@@ -5,7 +5,7 @@ repo_root=${REPO_ROOT:-$(cd "$script_dir/.." && pwd)}
 cd "$repo_root"
 
 case "$(okf --version)" in
-  'okf 0.2.7 '*) ;;
+  'okf 0.2.7'|'okf 0.2.7 '*) ;;
   *) echo 'Install okf 0.2.7: cargo install okf --version 0.2.7 --locked' >&2; exit 1 ;;
 esac
 okf validate docs

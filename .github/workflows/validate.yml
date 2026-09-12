@@ -3,6 +3,8 @@ name: Validate
 on:
   push:
     branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   pull_request_target:
     types: [opened, synchronize, reopened, edited, ready_for_review]
   workflow_dispatch:
@@ -15,58 +17,97 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # A pull_request runner has no repository secrets or write token. It is the
+  # only job that executes code supplied by a pull request.
   preflight:
     name: preflight
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Install development tools
+        shell: bash
+        run: |
+          toolchain=$(awk -F '"' '/^channel = / { print $2 }' rust-toolchain.toml)
+          rustup toolchain install "$toolchain" --profile minimal --component rustfmt --component clippy
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          sudo apt-get update
+          sudo apt-get install --yes shellcheck
+      - name: Run code preflight
+        env:
+          SKIP_GATE_TESTS: '1'
+        run: bash scripts/preflight.sh code
+
+  minimum:
+    name: minimum compiler
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Install Rust 1.89
+        run: rustup toolchain install 1.89.0 --profile minimal
+      - name: Run minimum compiler tests
+        run: rustup run 1.89.0 cargo test --workspace --locked
+
+  # pull_request_target uses the workflow from the base branch. It executes
+  # only pinned tools and gate code copied from that trusted revision; it never
+  # builds or runs the PR's Rust code.
+  contract:
+    name: PR contract
+    if: github.event_name == 'pull_request_target'
     runs-on: ubuntu-24.04
     env:
-      BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
-      TRUSTED_REF: ${{ github.event.pull_request.base.sha || github.sha }}
-      OPENSPEC_TELEMETRY: '0'
+      BASE_REF: ${{ github.event.pull_request.base.sha }}
+      TRUSTED_REF: ${{ github.event.pull_request.base.sha }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
-          ref: ${{ github.event.pull_request.base.sha || github.sha }}
+          ref: ${{ github.event.pull_request.base.sha }}
           persist-credentials: false
-      - name: Save trusted validation gates
+      - name: Save trusted contract gates
         shell: bash
         run: |
           mkdir -p "$RUNNER_TEMP/taku-gates"
-          for file in scripts/preflight.sh scripts/check-docs.sh scripts/check-openspec.sh scripts/check-openspec.rs; do
+          for file in scripts/check-pr.sh scripts/check-docs.sh scripts/check-openspec.sh scripts/check-openspec.rs; do
             git show "$TRUSTED_REF:$file" > "$RUNNER_TEMP/taku-gates/$(basename "$file")"
           done
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
-      - name: Select checks
-        id: scope
-        shell: bash
+      - name: Install validation tools
         run: |
-          mode=all
-          if [[ -n "$BASE_REF" ]] && git cat-file -e "$BASE_REF^{commit}" 2>/dev/null; then
-            changed=$(git diff --no-renames --name-only "$BASE_REF...HEAD")
-            if ! printf '%s\n' "$changed" | rg -qv '^(docs/|openspec/|[^/]+\.md$|$)'; then
-              mode=docs
-            fi
-          else
-            echo 'BASE_REF=' >> "$GITHUB_ENV"
-          fi
-          echo "mode=$mode" >> "$GITHUB_OUTPUT"
-      - name: Install development toolchain
-        shell: bash
+          cargo install okf --version 0.2.7 --locked
+          npm install --global @fission-ai/openspec@1.11.0
+      - name: Validate documentation and PR contract
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          REPO_ROOT: ${{ github.workspace }}
+          OPENSPEC_GATE_SOURCE: ${{ runner.temp }}/taku-gates/check-openspec.rs
         run: |
-          toolchain=$(awk -F '"' '/^channel = / { print $2 }' rust-toolchain.toml)
-          rustup toolchain install "$toolchain" --profile minimal --component rustfmt --component clippy
-          echo "TOOLCHAIN=$toolchain" >> "$GITHUB_ENV"
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+          bash "$RUNNER_TEMP/taku-gates/check-docs.sh"
+          bash "$RUNNER_TEMP/taku-gates/check-pr.sh"
+
+  # Main and manually dispatched runs use trusted source from this repository.
+  main:
+    name: main preflight
+    if: github.event_name != 'pull_request' && github.event_name != 'pull_request_target'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: preflight-${{ runner.os }}-${{ env.TOOLCHAIN }}-${{ hashFiles('Cargo.lock') }}
+          fetch-depth: 0
+          persist-credentials: false
       - name: Install validation tools
         run: |
           cargo install okf --version 0.2.7 --locked
@@ -75,91 +116,5 @@ jobs:
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
           sudo apt-get update
           sudo apt-get install --yes shellcheck
-      - name: Run shared preflight
-        env:
-          MODE: ${{ steps.scope.outputs.mode }}
-          REPO_ROOT: ${{ github.workspace }}
-          SKIP_GATE_TESTS: '1'
-        run: |
-          if [[ "$MODE" == docs ]]; then
-            echo 'Documentation-only change: trusted gates run in the contract job'
-          else
-            bash "$RUNNER_TEMP/taku-gates/preflight.sh" code
-          fi
-
-  minimum:
-    name: minimum compiler
-    runs-on: ubuntu-24.04
-    env:
-      BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
-      TRUSTED_REF: ${{ github.event.pull_request.base.sha || github.sha }}
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          fetch-depth: 0
-          ref: ${{ github.event.pull_request.base.sha || github.sha }}
-          persist-credentials: false
-      - name: Save trusted validation gate
-        shell: bash
-        run: |
-          mkdir -p "$RUNNER_TEMP/taku-gates"
-          git show "$TRUSTED_REF:scripts/preflight.sh" > "$RUNNER_TEMP/taku-gates/preflight.sh"
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          fetch-depth: 0
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
-          persist-credentials: false
-      - name: Install and test minimum compiler
-        shell: bash
-        run: |
-          if [[ -n "$BASE_REF" ]] && git cat-file -e "$BASE_REF^{commit}" 2>/dev/null; then
-            if ! git diff --no-renames --name-only "$BASE_REF...HEAD" | rg -qv '^(docs/|openspec/|[^/]+\.md$|$)'; then
-              echo 'Documentation-only change: minimum compiler check not applicable'
-              exit 0
-            fi
-          fi
-          minimum=$(awk -F '"' '/^rust-version = / { print $2 }' Cargo.toml)
-          rustup toolchain install "$minimum.0" --profile minimal
-          REPO_ROOT="$GITHUB_WORKSPACE" bash "$RUNNER_TEMP/taku-gates/preflight.sh" msrv
-
-  contract:
-    name: PR contract
-    runs-on: ubuntu-24.04
-    env:
-      BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before }}
-      TRUSTED_REF: ${{ github.event.pull_request.base.sha || github.sha }}
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          fetch-depth: 0
-          ref: ${{ github.event.pull_request.base.sha || github.sha }}
-          persist-credentials: false
-      - name: Save trusted PR contract gates
-        shell: bash
-        run: |
-          mkdir -p "$RUNNER_TEMP/taku-gates"
-          for file in scripts/check-pr.sh scripts/check-openspec.sh scripts/check-openspec.rs; do
-            git show "$TRUSTED_REF:$file" > "$RUNNER_TEMP/taku-gates/$(basename "$file")"
-          done
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          fetch-depth: 0
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
-          persist-credentials: false
-      - name: Validate PR title and associated OpenSpec changes
-        if: github.event_name == 'pull_request_target'
-        env:
-          PR_TITLE: ${{ github.event.pull_request.title }}
-          PR_BODY: ${{ github.event.pull_request.body }}
-          BASE_REF: ${{ github.event.pull_request.base.sha }}
-        shell: bash
-        run: |
-          toolchain=$(awk -F '"' '/^channel = / { print $2 }' rust-toolchain.toml)
-          rustup toolchain install "$toolchain" --profile minimal
-          cargo install okf --version 0.2.7 --locked
-          npm install --global @fission-ai/openspec@1.11.0
-          REPO_ROOT="$GITHUB_WORKSPACE" bash "$RUNNER_TEMP/taku-gates/check-docs.sh"
-          REPO_ROOT="$GITHUB_WORKSPACE" OPENSPEC_GATE_SOURCE="$RUNNER_TEMP/taku-gates/check-openspec.rs" bash "$RUNNER_TEMP/taku-gates/check-pr.sh"
-      - name: Not a pull request
-        if: github.event_name != 'pull_request_target'
-        run: echo 'PR contract not applicable'
+      - name: Run complete preflight
+        run: bash scripts/preflight.sh all
