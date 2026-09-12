@@ -38,27 +38,27 @@ fn change_id(path: &str) -> Option<&str> {
     }
 }
 
-fn touched_ids(paths: &[String], archives_only: bool) -> Result<BTreeSet<String>, String> {
+fn touched_ids(paths: &[String]) -> Result<BTreeSet<String>, String> {
     for path in paths {
-        if path
-            .strip_prefix("openspec/changes/archive/")
-            .is_some_and(|rest| rest.contains('/'))
-            && change_id(path).is_none()
-        {
-            return Err(format!(
-                "Invalid archive path, expected YYYY-MM-DD-change-id: {path}"
-            ));
+        if let Some(rest) = path.strip_prefix("openspec/changes/archive/") {
+            let valid = rest.split_once('/').is_some_and(|(archive, file)| {
+                !archive.is_empty() && !file.is_empty() && change_id(path).is_some()
+            });
+            if !valid {
+                return Err(format!(
+                    "Invalid archive path, expected YYYY-MM-DD-change-id/file: {path}"
+                ));
+            }
         }
     }
     Ok(paths
         .iter()
-        .filter(|p| !archives_only || p.starts_with("openspec/changes/archive/"))
         .filter_map(|p| change_id(p).map(str::to_owned))
         .collect())
 }
 
 fn select(paths: &[String], explicit: &str) -> Result<BTreeSet<String>, String> {
-    let mut ids = touched_ids(paths, false)?;
+    let mut ids = touched_ids(paths)?;
     for id in parse_explicit_ids(explicit)? {
         ids.insert(id);
     }
@@ -156,6 +156,29 @@ fn requirements(text: &str) -> Result<BTreeMap<String, (String, String)>, String
     }
     save(&mut current, &mut result)?;
     Ok(result)
+}
+
+fn delta_names(delta: &str) -> Result<BTreeSet<String>, String> {
+    let mut names: BTreeSet<String> = requirements(delta)?.into_keys().collect();
+    let mut renamed = false;
+    for line in delta.lines() {
+        if line.starts_with("## ") {
+            renamed = line == "## RENAMED Requirements";
+        } else if renamed {
+            if let Some(name) = line
+                .strip_prefix("- FROM: `### Requirement: ")
+                .and_then(|s| s.strip_suffix('`'))
+            {
+                names.insert(name.to_owned());
+            } else if let Some(name) = line
+                .strip_prefix("- TO: `### Requirement: ")
+                .and_then(|s| s.strip_suffix('`'))
+            {
+                names.insert(name.to_owned());
+            }
+        }
+    }
+    Ok(names)
 }
 
 fn check(files: &Files, ids: &BTreeSet<String>) -> Result<(), String> {
@@ -282,8 +305,11 @@ fn run() -> Result<(), String> {
     let base = env::var("BASE_REF").ok().filter(|s| !s.is_empty());
     let mut paths = Vec::new();
     let list;
+    let mut merge_base = None;
     if let Some(base) = &base {
-        let merge_base = git(&["merge-base", base, "HEAD"])?;
+        let revision = git(&["merge-base", base, "HEAD"])?;
+        let revision = revision.trim().to_owned();
+        merge_base = Some(revision.clone());
         // --no-renames yields both deleted and added paths, including directory renames.
         paths.extend(
             git(&[
@@ -291,7 +317,7 @@ fn run() -> Result<(), String> {
                 "--no-renames",
                 "--name-only",
                 "-z",
-                merge_base.trim(),
+                &revision,
                 "HEAD",
             ])?
             .split('\0')
@@ -355,7 +381,10 @@ fn run() -> Result<(), String> {
         pr_association = Some(parse_association(association)?);
     }
     let mut ids = if pr_association.is_some() {
-        touched_ids(&paths, true)?
+        // Any active change path in the PR must be synchronized and archived.
+        // Active changes that are present only on the base branch are not in
+        // `paths` and therefore do not gate unrelated work.
+        touched_ids(&paths)?
     } else {
         select(&paths, &env_explicit)?
     };
@@ -396,15 +425,44 @@ fn run() -> Result<(), String> {
         }
         for path in touched_specs {
             let relative = path.strip_prefix("openspec/specs/").unwrap();
-            let covered = associated_ids.iter().any(|associated_id| {
-                files.keys().any(|candidate| {
-                    change_id(candidate) == Some(associated_id.as_str())
-                        && candidate.ends_with(&format!("/specs/{relative}"))
+            let matching_deltas: Vec<_> = associated_ids
+                .iter()
+                .flat_map(|associated_id| {
+                    files.iter().filter_map(move |(candidate, contents)| {
+                        (change_id(candidate) == Some(associated_id.as_str())
+                            && candidate.ends_with(&format!("/specs/{relative}")))
+                        .then_some((candidate, contents))
+                    })
                 })
-            });
-            if !covered {
+                .collect();
+            if matching_deltas.is_empty() {
                 return Err(format!(
                     "{path} changed without a matching delta in its associated archived change"
+                ));
+            }
+            let current = files
+                .get(path)
+                .ok_or_else(|| format!("missing current main spec {path}"))?;
+            let base_revision = merge_base.as_deref().unwrap_or("HEAD");
+            let previous = git(&["show", &format!("{base_revision}:{path}")]).unwrap_or_default();
+            let before = requirements(&previous)?;
+            let after = requirements(current)?;
+            let changed_names: BTreeSet<_> = before
+                .keys()
+                .chain(after.keys())
+                .filter(|name| before.get(*name) != after.get(*name))
+                .cloned()
+                .collect();
+            let mut covered_names = BTreeSet::new();
+            for (_, delta) in matching_deltas {
+                covered_names.extend(delta_names(delta)?);
+            }
+            if let Some(name) = changed_names
+                .iter()
+                .find(|name| !covered_names.contains(*name))
+            {
+                return Err(format!(
+                    "{path} requirement changed without a matching archived delta: {name}"
                 ));
             }
         }
@@ -540,6 +598,7 @@ mod tests {
             )
             .is_err()
         );
+        assert!(select(&["openspec/changes/archive/foo".into()], "none").is_err());
     }
 
     #[test]

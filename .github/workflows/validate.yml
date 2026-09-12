@@ -38,7 +38,20 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes shellcheck
       - name: Run code preflight
-        run: bash scripts/preflight.sh code
+        shell: bash
+        run: |
+          toolchain=$(awk -F '"' '/^channel = / { print $2 }' rust-toolchain.toml)
+          rustup run "$toolchain" cargo fmt --all -- --check
+          shellcheck scripts/*.sh
+          actionlint
+          for script in scripts/*.sh; do bash -n "$script"; done
+          rustup run "$toolchain" rustfmt --edition 2024 --check scripts/check-openspec.rs
+          rustup run "$toolchain" cargo clippy --workspace --all-targets --locked -- -D warnings
+          rustup run "$toolchain" cargo test --workspace --locked
+          staging=$(mktemp -d)
+          trap 'rm -rf "$staging"' EXIT
+          rustup run "$toolchain" rustc --edition 2024 -D warnings --test scripts/check-openspec.rs -o "$staging/tests"
+          "$staging/tests"
 
   minimum:
     name: minimum compiler
