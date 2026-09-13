@@ -1,3 +1,10 @@
+---
+type: Decision
+title: "Default Commands to the Current Environment"
+description: "Default Commands to the Current Environment."
+generated: { by: codex/gpt-6, at: 2026-09-07T05:34:57Z }
+---
+
 # Default Commands to the Current Environment
 
 In a Multi-layout Project, an unqualified Resource command selects all managed Resources across all Targets in the current Environment. If no current Environment is available, it fails rather than choosing one. Operations spanning Environment boundaries require explicit repeated `--environment` selectors or `--all-environments`.

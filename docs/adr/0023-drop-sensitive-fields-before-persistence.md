@@ -1,3 +1,10 @@
+---
+type: Decision
+title: "Drop Sensitive Fields Before Persistence"
+description: "Drop Sensitive Fields Before Persistence."
+generated: { by: codex/gpt-6, at: 2026-09-07T05:34:57Z }
+---
+
 # Drop Sensitive Fields Before Persistence
 
 Resource Types may declare exact JSON-pointer-like Sensitive Fields, and Project configuration may add stricter pointers without removing catalog declarations. Taku drops these fields from parsed remote responses before writing a Canonical Resource, Observed State cache, output document, journal, or any other persistent representation. A Sensitive Field is therefore absent rather than stored with a mask.

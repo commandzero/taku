@@ -1002,16 +1002,41 @@ fn confirm(label: &str) -> Result<bool> {
 }
 
 fn emit<T: Serialize>(format: OutputFormat, value: &T) -> Result<()> {
-    match format {
-        OutputFormat::Yaml => print!("{}", serde_yaml::to_string(value)?),
-        OutputFormat::Json => println!("{}", serde_json::to_string_pretty(value)?),
-    }
+    let document = match format {
+        OutputFormat::Yaml => serde_yaml::to_string(value)?,
+        OutputFormat::Json => format!("{}\n", serde_json::to_string_pretty(value)?),
+    };
+    write_document(&mut io::stdout().lock(), document.as_bytes())?;
     Ok(())
+}
+
+fn write_document(writer: &mut impl Write, document: &[u8]) -> io::Result<()> {
+    writer.write_all(document)?;
+    writer.flush()
 }
 
 #[cfg(test)]
 mod cli_tests {
     use super::*;
+
+    #[test]
+    fn output_write_errors_propagate_without_panicking() {
+        struct ClosedPipe;
+        impl Write for ClosedPipe {
+            fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+                Err(io::Error::from(io::ErrorKind::BrokenPipe))
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        assert_eq!(
+            write_document(&mut ClosedPipe, b"report")
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::BrokenPipe
+        );
+    }
 
     fn parse(args: &[&str]) -> Result<Cli, clap::Error> {
         Cli::try_parse_from(std::iter::once("taku").chain(args.iter().copied()))

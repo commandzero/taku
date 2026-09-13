@@ -261,7 +261,7 @@ The Resource Type policy governing protection against writes based on stale Obse
 _Avoid_: Retry Safety, per-Resource override
 
 **Concurrency Class**:
-The Resource Type or Operation scheduling hint: Serial Operations never overlap one another, while Parallel Operations may share the remaining global request slots. Serial is the default.
+The Resource Type or Operation scheduling hint: Serial Operations never overlap one another, while Parallel Operations may share the remaining global request slots. Parallel is the default.
 _Avoid_: Concurrency Mode, request weight
 
 **Embedded Document**:

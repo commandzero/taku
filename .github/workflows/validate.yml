@@ -1,0 +1,235 @@
+name: Validate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  pull_request_target:
+    types: [opened, synchronize, reopened, edited, ready_for_review]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # This guard deliberately fails while the repository is adopting this
+  # workflow. The base revision cannot provide a trusted workflow for its own
+  # introduction; maintainers must use the documented manual preflight once.
+  bootstrap:
+    name: trusted workflow bootstrap
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    env:
+      BASE_SHA: ${{ github.event.pull_request.base.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require trusted workflow for normal PRs
+        shell: bash
+        run: |
+          missing=0
+          for file in .github/workflows/validate.yml rust-toolchain.toml scripts/preflight.sh scripts/check-pr.sh scripts/check-docs.sh scripts/check-openspec.sh scripts/check-openspec.rs; do
+            git cat-file -e "$BASE_SHA:$file" 2>/dev/null || missing=1
+          done
+          if [[ "$missing" == 1 ]]; then
+            echo 'This adoption PR introduces the trusted workflow and gates. Run the documented local preflight and obtain manual maintainer approval before merging.' >&2
+            exit 1
+          fi
+
+  # A pull_request runner has no repository secrets or write token. It is used
+  # for fast feedback; the trusted target workflow is the merge gate later.
+  preflight:
+    name: preflight
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    env:
+      BASE_SHA: ${{ github.event.pull_request.base.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Save trusted contract gates
+        id: trusted-gates
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/taku-gates"
+          trusted=1
+          for file in rust-toolchain.toml scripts/check-pr.sh scripts/check-docs.sh scripts/check-openspec.sh scripts/check-openspec.rs; do
+            git cat-file -e "$BASE_SHA:$file" 2>/dev/null || trusted=0
+          done
+          if [[ "$trusted" != 1 ]]; then
+            echo 'Trusted contract gates are not present at the base revision; the bootstrap guard requires manual validation.'
+            echo 'available=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git show "$BASE_SHA:rust-toolchain.toml" > "$RUNNER_TEMP/taku-gates/rust-toolchain.toml"
+          for file in scripts/check-pr.sh scripts/check-docs.sh scripts/check-openspec.sh scripts/check-openspec.rs; do
+            git show "$BASE_SHA:$file" > "$RUNNER_TEMP/taku-gates/$(basename "$file")"
+          done
+          echo 'available=true' >> "$GITHUB_OUTPUT"
+      - name: Install development tools
+        shell: bash
+        run: |
+          toolchain=$(awk -F '"' '/^channel = / { print $2 }' rust-toolchain.toml)
+          rustup toolchain install "$toolchain" --profile minimal --component rustfmt --component clippy
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          sudo apt-get update
+          sudo apt-get install --yes shellcheck
+      - name: Install trusted contract tools
+        if: steps.trusted-gates.outputs.available == 'true'
+        working-directory: ${{ runner.temp }}
+        shell: bash
+        run: |
+          toolchain=$(awk -F '"' '/^channel = / { print $2 }' "$RUNNER_TEMP/taku-gates/rust-toolchain.toml")
+          rustup toolchain install "$toolchain" --profile minimal --component rustfmt --component clippy
+          cargo install okf --version 0.2.7 --locked
+          npm install --global @fission-ai/openspec@1.11.0
+      - name: Run code preflight
+        shell: bash
+        run: |
+          toolchain=$(awk -F '"' '/^channel = / { print $2 }' rust-toolchain.toml)
+          rustup run "$toolchain" cargo fmt --all -- --check
+          shellcheck scripts/*.sh
+          actionlint
+          for script in scripts/*.sh; do bash -n "$script"; done
+          rustup run "$toolchain" rustfmt --edition 2024 --check scripts/check-openspec.rs
+          rustup run "$toolchain" cargo clippy --workspace --all-targets --locked -- -D warnings
+          rustup run "$toolchain" cargo test --workspace --locked
+          staging=$(mktemp -d)
+          trap 'rm -rf "$staging"' EXIT
+          rustup run "$toolchain" rustc --edition 2024 -D warnings --test scripts/check-openspec.rs -o "$staging/tests"
+          "$staging/tests"
+      - name: Run trusted PR contract
+        if: steps.trusted-gates.outputs.available == 'true'
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          REPO_ROOT: ${{ github.workspace }}
+          OPENSPEC_GATE_SOURCE: ${{ runner.temp }}/taku-gates/check-openspec.rs
+        run: |
+          export BASE_REF="$BASE_SHA"
+          toolchain=$(awk -F '"' '/^channel = / { print $2 }' "$RUNNER_TEMP/taku-gates/rust-toolchain.toml")
+          export OPENSPEC_TOOLCHAIN="$toolchain"
+          bash "$RUNNER_TEMP/taku-gates/check-docs.sh"
+          bash "$RUNNER_TEMP/taku-gates/check-pr.sh"
+
+  minimum:
+    name: minimum compiler
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Install Rust 1.89
+        run: rustup toolchain install 1.89.0 --profile minimal
+      - name: Run minimum compiler tests
+        run: rustup run 1.89.0 cargo test --workspace --locked
+
+  # pull_request_target uses the workflow from the base branch. Contract gates
+  # and workflow integrity checks are therefore fixed by the trusted revision;
+  # no PR code is executed in this job.
+  contract:
+    name: PR contract
+    if: github.event_name == 'pull_request_target'
+    runs-on: ubuntu-24.04
+    env:
+      BASE_REF: ${{ github.event.pull_request.base.sha }}
+      TRUSTED_REF: ${{ github.event.pull_request.base.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+      - name: Save trusted contract gates
+        id: trusted-gates
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/taku-gates"
+          trusted=1
+          for file in rust-toolchain.toml scripts/check-pr.sh scripts/check-docs.sh scripts/check-openspec.sh scripts/check-openspec.rs; do
+            git cat-file -e "$TRUSTED_REF:$file" 2>/dev/null || trusted=0
+          done
+          if [[ "$trusted" != 1 ]]; then
+            echo 'Trusted contract gates are not present at the base revision; the bootstrap PR job performs this check.'
+            echo 'available=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          awk -F '"' '/^channel = / { print $2 }' rust-toolchain.toml > "$RUNNER_TEMP/taku-gates/toolchain"
+          for file in scripts/check-pr.sh scripts/check-docs.sh scripts/check-openspec.sh scripts/check-openspec.rs; do
+            git show "$TRUSTED_REF:$file" > "$RUNNER_TEMP/taku-gates/$(basename "$file")"
+          done
+          echo 'available=true' >> "$GITHUB_OUTPUT"
+      - name: Install trusted validation tools
+        if: steps.trusted-gates.outputs.available == 'true'
+        working-directory: ${{ runner.temp }}
+        shell: bash
+        run: |
+          toolchain=$(cat "$RUNNER_TEMP/taku-gates/toolchain")
+          rustup toolchain install "$toolchain" --profile minimal --component rustfmt --component clippy
+          cargo install okf --version 0.2.7 --locked
+          npm install --global @fission-ai/openspec@1.11.0
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Verify workflow definition is trusted
+        shell: bash
+        run: |
+          while IFS= read -r -d '' path; do
+            if [[ "$path" == .github/workflows/* || "$path" == rust-toolchain.toml || "$path" == scripts/preflight.sh || "$path" == scripts/check-pr.sh || "$path" == scripts/check-docs.sh || "$path" == scripts/check-openspec.sh || "$path" == scripts/check-openspec.rs ]]; then
+              echo "Workflow changes require manual maintainer review: $path" >&2
+              exit 1
+            fi
+          done < <(git diff --no-renames --name-only -z "$BASE_REF...HEAD")
+      - name: Validate documentation and PR contract
+        if: steps.trusted-gates.outputs.available == 'true'
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          REPO_ROOT: ${{ github.workspace }}
+          OPENSPEC_GATE_SOURCE: ${{ runner.temp }}/taku-gates/check-openspec.rs
+        run: |
+          toolchain=$(cat "$RUNNER_TEMP/taku-gates/toolchain")
+          export OPENSPEC_TOOLCHAIN="$toolchain"
+          bash "$RUNNER_TEMP/taku-gates/check-docs.sh"
+          bash "$RUNNER_TEMP/taku-gates/check-pr.sh"
+
+  # Main and manually dispatched runs use trusted source from this repository.
+  main:
+    name: main preflight
+    if: github.event_name != 'pull_request' && github.event_name != 'pull_request_target'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install validation tools
+        run: |
+          toolchain=$(awk -F '"' '/^channel = / { print $2 }' rust-toolchain.toml)
+          rustup toolchain install "$toolchain" --profile minimal --component rustfmt --component clippy
+          rustup toolchain install 1.89.0 --profile minimal
+          cargo install okf --version 0.2.7 --locked
+          npm install --global @fission-ai/openspec@1.11.0
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          sudo apt-get update
+          sudo apt-get install --yes shellcheck
+      - name: Run complete preflight
+        run: bash scripts/preflight.sh all
+      - name: Run minimum compiler check
+        run: bash scripts/preflight.sh msrv

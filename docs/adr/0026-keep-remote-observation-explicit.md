@@ -1,3 +1,10 @@
+---
+type: Decision
+title: "Keep Remote Observation Explicit"
+description: "Keep Remote Observation Explicit."
+generated: { by: codex/gpt-6, at: 2026-09-07T05:34:57Z }
+---
+
 # Keep Remote Observation Explicit
 
 Fetch and `list --remote` are Taku's explicit broad-read workflows. Status and Diff never contact a Target, and Pull requires a structurally valid Observed State Cache. Push performs only reads required by selected Operations, existence guarantees, or concurrency guards and never hides an implicit Many Fetch inside planning or execution.

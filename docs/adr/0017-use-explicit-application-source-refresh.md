@@ -1,3 +1,10 @@
+---
+type: Decision
+title: "Use Explicit Application Source Refresh"
+description: "Use Explicit Application Source Refresh."
+generated: { by: codex/gpt-6, at: 2026-09-07T05:34:57Z }
+---
+
 # Use Explicit Application Source Refresh
 
 A Project may configure one Git Application Source that supplements the Applications embedded in the Taku binary. Application lookup precedence is an explicit `--from` source, then the Project-configured source, then embedded Applications. Taku must expose the selected and shadowed sources when names collide.

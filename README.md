@@ -40,7 +40,22 @@ taku push es ingest_pipelines
 
 `fetch` writes only ignored Observed State. `status` and `diff` never contact a Target. `pull` changes only local desired files. `push` is the only remote mutator. `remove` creates a guarded Deletion Marker for a later Push; `forget` only stops local management.
 
-All commands emit a schema-versioned YAML envelope by default. Use `--output json` for JSON. Differences exit successfully unless `status --check` or `diff --exit-code` is used.
+Data commands emit a schema-versioned YAML envelope by default. Use `--output json` for JSON. Help, version, and completion scripts use their native text formats. Differences exit successfully unless `status --check` or `diff --exit-code` is used; conflicts always fail.
+
+| Exit code | Meaning |
+| --- | --- |
+| 0 | Command completed; differences alone are successful unless checking was requested. |
+| 2 | Invalid arguments, configuration, I/O, or another command error. Diagnostics go to stderr. |
+| 3 | Status or Diff found differences with `--check` or `--exit-code`. |
+| 4 | Structured conflict or unsuccessful Resource operation. Inspect the output envelope. |
+
+Use `--non-interactive` for automation and supply required options explicitly. Taku reads Resource inputs from files; `-` is not a stdin alias. JSON and YAML reports contain one complete document and are assembled in memory. They are not streaming record protocols.
+
+Network requests have a 30-second timeout. `max_requests` bounds concurrently scheduled requests, not total memory. Resource inventories, parsed documents, response bodies, and reports may remain in memory; there is no configurable input-size or nesting-depth budget. Use narrower Resource Paths for large inventories. Cancellation can interrupt execution after a remote operation succeeds. Inspect the Push Journal and reconcile before retrying; Taku does not promise rollback or a complete report after interruption. Output write failures return code 2; a partial output document is not valid confirmation of success.
+
+## Development
+
+See [contributing](docs/repository/contributing.md) for the shared preflight and PR checks, [releases](docs/repository/releases.md) for package versions and compiler support, and the [documentation index](docs/index.md) for repository guidance.
 
 ## Project files
 
@@ -290,3 +305,9 @@ Configure `application_source.location` in `.taku/project.yaml`, run `taku app r
 - Serial Operations never overlap each other. Parallel Operations share the remaining capacity under `max_requests`.
 - Confirmed Push outcomes are journaled durably. An identical retry skips successes; changed inputs cannot resume an incomplete plan.
 - Failures block dependent Resource Types while independent work continues. Taku promises neither cross-API atomicity nor rollback.
+
+## License
+
+Copyright 2026 CommandZero contributors.
+
+Licensed under the [Apache License, Version 2.0](LICENSE).

@@ -1,3 +1,10 @@
+---
+type: Guide
+title: "Triage Labels"
+description: "Triage Labels."
+generated: { by: codex/gpt-6, at: 2026-09-07T05:34:57Z }
+---
+
 # Triage Labels
 
 The skills speak in terms of five canonical triage roles. This file maps those roles to the actual label strings used in this repo's issue tracker.
