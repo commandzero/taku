@@ -1,0 +1,88 @@
+# Intended compatibility contract, not an expected-failure test.
+# On Kibana 9.4.2, export of an absent object returns outer 400 / nested 404;
+# the shipped catalog cannot yet establish absence before push --missing restore.
+# Keep that failure visible. Never normalize all HTTP 400 responses to not_found.
+targets:
+  kb:
+    application: ../../../crates/resource-control/assets/applications/kibana/application.yaml
+    url_env: LIVE_KB_URL
+    authorization_env: LIVE_KB_AUTHORIZATION
+    headers:
+      kbn-xsrf: taku-live-validator
+      x-elastic-internal-origin: Kibana
+cases:
+  - name: space
+    target: kb
+    resource_type: spaces
+    steps:
+      - {
+          kind: http,
+          method: GET,
+          path: "/api/spaces/space/{{id}}",
+          status: 404,
+        }
+      - kind: http
+        method: POST
+        path: /api/spaces/space
+        body:
+          {
+            id: "{{id}}",
+            name: "{{id}}",
+            description: Retained saved-object validator fixture,
+            disabledFeatures: [],
+          }
+        status: 200
+        assertions: [{ kind: json, pointer: /id, equals: "{{id}}" }]
+      - { kind: cli, command: add }
+      - { kind: cli, command: fetch }
+      - { kind: cli, command: pull }
+  - name: saved-object
+    target: kb
+    resource_type: saved_objects
+    namespace: "{{run}}-space"
+    steps:
+      - kind: http
+        method: GET
+        path: /s/{{run}}-space/api/saved_objects/dashboard/{{id}}
+        status: 404
+      - kind: write
+        path: kb/{{run}}-space/saved_objects/dashboard/{{id}}.json
+        content: |
+          {"_taku":{"id":"{{id}}"},"id":"{{id}}","type":"dashboard","attributes":{"title":"Live validator {{id}}","description":"created-by-taku","panelsJSON":[],"optionsJSON":{},"timeRestore":false,"kibanaSavedObjectMeta":{"searchSourceJSON":{}}},"references":[]}
+      - kind: cli
+        command: fetch
+        assertions: [{ kind: json, pointer: /result/0/outcome, equals: absent }]
+      - kind: cli
+        command: push
+        assertions:
+          [{ kind: json, pointer: /result/0/outcome, equals: success }]
+      - kind: http
+        method: GET
+        path: /s/{{run}}-space/api/saved_objects/dashboard/{{id}}
+        status: 200
+        assertions:
+          - { kind: json, pointer: /id, equals: "{{id}}" }
+          - { kind: json, pointer: /type, equals: dashboard }
+          - {
+              kind: json,
+              pointer: /attributes/description,
+              equals: created-by-taku,
+            }
+      - { kind: cli, command: fetch }
+      - { kind: cli, command: pull }
+      - kind: cli
+        command: push
+        assertions:
+          [{ kind: json, pointer: /result/0/outcome, equals: in_sync }]
+      - kind: http
+        method: GET
+        path: /s/{{run}}-space/api/saved_objects/dashboard/{{id}}
+        status: 200
+        assertions:
+          [
+            {
+              kind: json,
+              pointer: /attributes/description,
+              equals: created-by-taku,
+            },
+          ]

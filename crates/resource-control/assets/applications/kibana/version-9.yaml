@@ -1,5 +1,5 @@
 schema_version: 1
-version: "1.9.0"
+version: "1.9.1"
 application:
   name: kibana
   version: ">=9.0.0, <10.0.0"
@@ -250,6 +250,7 @@ resource_types:
           - /schema
           - /built_in
           - /source
+          - /experimental
           - /created_at
           - /updated_at
       operations:
@@ -348,6 +349,8 @@ resource_types:
         fields:
           - /readonly
           - /schema
+          - /created_by
+          - /type
       operations:
         read:
           method: GET

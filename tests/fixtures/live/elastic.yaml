@@ -1,0 +1,458 @@
+# Synthetic, retained fixtures. Requires Elasticsearch/Kibana 9.4 with Agent Builder.
+# Application paths resolve relative to this file; credentials only come from env.
+targets:
+  es:
+    application: ../../../crates/resource-control/assets/applications/elasticsearch/application.yaml
+    url_env: LIVE_ES_URL
+    authorization_env: LIVE_ES_AUTHORIZATION
+  kb:
+    application: ../../../crates/resource-control/assets/applications/kibana/application.yaml
+    url_env: LIVE_KB_URL
+    authorization_env: LIVE_KB_AUTHORIZATION
+    headers:
+      kbn-xsrf: taku-live-validator
+      x-elastic-internal-origin: Kibana
+cases:
+  - name: space
+    target: kb
+    resource_type: spaces
+    steps:
+      - {
+          kind: http,
+          method: GET,
+          path: "/api/spaces/space/{{id}}",
+          status: 404,
+        }
+      - kind: http
+        method: POST
+        path: /api/spaces/space
+        body:
+          {
+            id: "{{id}}",
+            name: "{{id}}",
+            description: Retained live validator fixtures,
+            disabledFeatures: [],
+          }
+        status: 200
+        assertions: [{ kind: json, pointer: /id, equals: "{{id}}" }]
+      - { kind: cli, command: add }
+      - { kind: cli, command: fetch }
+      - { kind: cli, command: pull }
+
+  # Acquisition exercises server-generated timestamps and preserves user _meta.
+  - name: pipeline
+    target: es
+    resource_type: ingest_pipelines
+    steps:
+      - {
+          kind: http,
+          method: GET,
+          path: "/_ingest/pipeline/{{id}}",
+          status: 404,
+        }
+      - kind: http
+        method: PUT
+        path: /_ingest/pipeline/{{id}}
+        body:
+          description: live-before
+          processors: [{ set: { field: validator, value: "{{id}}" } }]
+          _meta: { owner: live-validator }
+        status: 200
+        assertions: [{ kind: json, pointer: /acknowledged, equals: true }]
+      - { kind: cli, command: add }
+      - { kind: cli, command: fetch }
+      - { kind: cli, command: pull }
+      - kind: file
+        path: es/ingest_pipelines/{{id}}-pipeline.json
+        assertions:
+          - { kind: json, pointer: /description, equals: live-before }
+          - { kind: json, pointer: /_meta/owner, equals: live-validator }
+          - { kind: not_contains, text: created_date_millis }
+          - { kind: not_contains, text: modified_date_millis }
+      - {
+          kind: replace,
+          path: "es/ingest_pipelines/{{id}}-pipeline.json",
+          old: live-before,
+          new: live-after,
+        }
+      - kind: cli
+        command: push
+        assertions:
+          [{ kind: json, pointer: /result/0/outcome, equals: success }]
+      - kind: http
+        method: GET
+        path: /_ingest/pipeline/{{id}}
+        status: 200
+        assertions:
+          - { kind: json, pointer: "/{{id}}/description", equals: live-after }
+          - {
+              kind: json,
+              pointer: "/{{id}}/_meta/owner",
+              equals: live-validator,
+            }
+          - {
+              kind: json,
+              pointer: "/{{id}}/processors",
+              equals: [{ set: { field: validator, value: "{{id}}" } }],
+            }
+      - { kind: cli, command: fetch }
+      - kind: cli
+        command: status
+        assertions: [{ kind: json, pointer: /result/0/state, equals: in_sync }]
+      - { kind: cli, command: pull }
+      - kind: cli
+        command: push
+        assertions:
+          [{ kind: json, pointer: /result/0/outcome, equals: in_sync }]
+      - kind: http
+        method: GET
+        path: /_ingest/pipeline/{{id}}
+        status: 200
+        assertions:
+          [{ kind: json, pointer: "/{{id}}/description", equals: live-after }]
+
+  - name: pipeline-create
+    target: es
+    resource_type: ingest_pipelines
+    steps:
+      - {
+          kind: http,
+          method: GET,
+          path: "/_ingest/pipeline/{{id}}",
+          status: 404,
+        }
+      - kind: write
+        path: es/ingest_pipelines/{{id}}.json
+        content: |
+          {"_taku":{"id":"{{id}}"},"description":"created-by-taku","processors":[],"_meta":{"owner":"live-validator"}}
+      - { kind: cli, command: fetch }
+      - kind: cli
+        command: push
+        assertions:
+          [{ kind: json, pointer: /result/0/outcome, equals: success }]
+      - kind: http
+        method: GET
+        path: /_ingest/pipeline/{{id}}
+        status: 200
+        assertions:
+          - {
+              kind: json,
+              pointer: "/{{id}}/description",
+              equals: created-by-taku,
+            }
+          - { kind: json, pointer: "/{{id}}/processors", equals: [] }
+          - {
+              kind: json,
+              pointer: "/{{id}}/_meta/owner",
+              equals: live-validator,
+            }
+      - { kind: cli, command: fetch }
+      - kind: cli
+        command: status
+        assertions: [{ kind: json, pointer: /result/0/state, equals: in_sync }]
+
+  - name: skillapi
+    target: kb
+    resource_type: skills
+    namespace: "{{run}}-space"
+    steps:
+      - {
+          kind: http,
+          method: GET,
+          path: "/s/{{run}}-space/api/agent_builder/skills/{{id}}",
+          status: 404,
+        }
+      - kind: http
+        method: POST
+        path: /s/{{run}}-space/api/agent_builder/skills
+        body:
+          id: "{{id}}"
+          name: "{{id}}"
+          description: live-before
+          content: "# Validator\nInspect evidence; do not execute tools.\n"
+          referenced_content:
+            - {
+                relativePath: ./references,
+                name: checklist,
+                content: "Check before.\n",
+              }
+          tool_ids: []
+        status: 200
+        assertions: [{ kind: json, pointer: /id, equals: "{{id}}" }]
+      - { kind: cli, command: add }
+      - { kind: cli, command: fetch }
+      - { kind: cli, command: pull }
+      - kind: file
+        path: kb/{{run}}-space/skills/{{id}}/SKILL.md
+        assertions:
+          - { kind: contains, text: "description: live-before" }
+          - { kind: contains, text: "# Validator" }
+          - { kind: not_contains, text: "experimental:" }
+      - kind: file
+        path: kb/{{run}}-space/skills/{{id}}/references/checklist.md
+        assertions: [{ kind: contains, text: Check before. }]
+      - {
+          kind: replace,
+          path: "kb/{{run}}-space/skills/{{id}}/SKILL.md",
+          old: live-before,
+          new: live-after,
+        }
+      - {
+          kind: replace,
+          path: "kb/{{run}}-space/skills/{{id}}/references/checklist.md",
+          old: Check before.,
+          new: Check after.,
+        }
+      - kind: cli
+        command: push
+        assertions:
+          [{ kind: json, pointer: /result/0/outcome, equals: success }]
+      - kind: http
+        method: GET
+        path: /s/{{run}}-space/api/agent_builder/skills/{{id}}
+        status: 200
+        assertions:
+          - { kind: json, pointer: /id, equals: "{{id}}" }
+          - { kind: json, pointer: /name, equals: "{{id}}" }
+          - { kind: json, pointer: /description, equals: live-after }
+          - { kind: json, pointer: /tool_ids, equals: [] }
+          - {
+              kind: json,
+              pointer: /content,
+              equals: "# Validator\nInspect evidence; do not execute tools.\n",
+            }
+          - kind: json
+            pointer: /referenced_content
+            equals:
+              - {
+                  relativePath: ./references,
+                  name: checklist,
+                  content: "Check after.\n",
+                }
+      - { kind: cli, command: fetch }
+      - kind: cli
+        command: status
+        assertions: [{ kind: json, pointer: /result/0/state, equals: in_sync }]
+      - { kind: cli, command: pull }
+      - kind: cli
+        command: push
+        assertions:
+          [{ kind: json, pointer: /result/0/outcome, equals: in_sync }]
+      - kind: http
+        method: GET
+        path: /s/{{run}}-space/api/agent_builder/skills/{{id}}
+        status: 200
+        assertions:
+          - { kind: json, pointer: /description, equals: live-after }
+          - {
+              kind: json,
+              pointer: /referenced_content/0/content,
+              equals: "Check after.\n",
+            }
+
+  - name: skill-create
+    target: kb
+    resource_type: skills
+    namespace: "{{run}}-space"
+    steps:
+      - {
+          kind: http,
+          method: GET,
+          path: "/s/{{run}}-space/api/agent_builder/skills/{{id}}",
+          status: 404,
+        }
+      - kind: write
+        path: kb/{{run}}-space/skills/{{id}}/SKILL.md
+        content: |
+          ---
+          id: {{id}}
+          name: {{id}}
+          description: created-by-taku
+          experimental: false
+          tool_ids: []
+          ---
+          # Validator
+          Never execute tools.
+      - kind: write
+        path: kb/{{run}}-space/skills/{{id}}/references/checklist.md
+        content: "Check evidence.\n"
+      - { kind: cli, command: fetch }
+      - kind: cli
+        command: push
+        assertions:
+          [{ kind: json, pointer: /result/0/outcome, equals: success }]
+      - kind: http
+        method: GET
+        path: /s/{{run}}-space/api/agent_builder/skills/{{id}}
+        status: 200
+        assertions:
+          - { kind: json, pointer: /id, equals: "{{id}}" }
+          - { kind: json, pointer: /name, equals: "{{id}}" }
+          - { kind: json, pointer: /description, equals: created-by-taku }
+          - { kind: json, pointer: /tool_ids, equals: [] }
+          - {
+              kind: json,
+              pointer: /content,
+              equals: "# Validator\nNever execute tools.\n",
+            }
+          - kind: json
+            pointer: /referenced_content
+            equals:
+              - {
+                  relativePath: ./references,
+                  name: checklist,
+                  content: "Check evidence.\n",
+                }
+      - { kind: cli, command: fetch }
+      - { kind: cli, command: pull }
+      - kind: file
+        path: kb/{{run}}-space/skills/{{id}}/SKILL.md
+        assertions:
+          - { kind: contains, text: "\nid: {{id}}\n" }
+          - { kind: contains, text: "\nname: {{id}}\n" }
+          - { kind: contains, text: "\ndescription: created-by-taku\n" }
+          - { kind: contains, text: "\ntool_ids: []\n" }
+          - { kind: contains, text: "# Validator\nNever execute tools.\n" }
+      - kind: file
+        path: kb/{{run}}-space/skills/{{id}}/references/checklist.md
+        assertions: [{ kind: contains, text: "Check evidence.\n" }]
+      - kind: cli
+        command: push
+        assertions:
+          [{ kind: json, pointer: /result/0/outcome, equals: in_sync }]
+      - kind: http
+        method: GET
+        path: /s/{{run}}-space/api/agent_builder/skills/{{id}}
+        status: 200
+        assertions:
+          [{ kind: json, pointer: /description, equals: created-by-taku }]
+
+  - name: agentapi
+    target: kb
+    resource_type: agents
+    namespace: "{{run}}-space"
+    steps:
+      - {
+          kind: http,
+          method: GET,
+          path: "/s/{{run}}-space/api/agent_builder/agents/{{id}}",
+          status: 404,
+        }
+      - kind: http
+        method: POST
+        path: /s/{{run}}-space/api/agent_builder/agents
+        body:
+          id: "{{id}}"
+          name: Live-validator-agent
+          description: live-before
+          configuration: { instructions: Never execute tools., tools: [] }
+        status: 200
+        assertions: [{ kind: json, pointer: /id, equals: "{{id}}" }]
+      - { kind: cli, command: add }
+      - { kind: cli, command: fetch }
+      - { kind: cli, command: pull }
+      - kind: file
+        path: kb/{{run}}-space/agents/Live-validator-agent-agentapi.json
+        assertions:
+          - { kind: json, pointer: /description, equals: live-before }
+          - { kind: not_contains, text: '"created_by"' }
+          - { kind: not_contains, text: '"type"' }
+      - {
+          kind: replace,
+          path: "kb/{{run}}-space/agents/Live-validator-agent-agentapi.json",
+          old: live-before,
+          new: live-after,
+        }
+      - kind: cli
+        command: push
+        assertions:
+          [{ kind: json, pointer: /result/0/outcome, equals: success }]
+      - kind: http
+        method: GET
+        path: /s/{{run}}-space/api/agent_builder/agents/{{id}}
+        status: 200
+        assertions:
+          - { kind: json, pointer: /id, equals: "{{id}}" }
+          - { kind: json, pointer: /name, equals: Live-validator-agent }
+          - { kind: json, pointer: /description, equals: live-after }
+          - { kind: json, pointer: /configuration/tools, equals: [] }
+          - {
+              kind: json,
+              pointer: /configuration/instructions,
+              equals: Never execute tools.,
+            }
+      - { kind: cli, command: fetch }
+      - kind: cli
+        command: status
+        assertions: [{ kind: json, pointer: /result/0/state, equals: in_sync }]
+      - { kind: cli, command: pull }
+      - kind: cli
+        command: push
+        assertions:
+          [{ kind: json, pointer: /result/0/outcome, equals: in_sync }]
+      - kind: http
+        method: GET
+        path: /s/{{run}}-space/api/agent_builder/agents/{{id}}
+        status: 200
+        assertions: [{ kind: json, pointer: /description, equals: live-after }]
+
+  - name: agent-create
+    target: kb
+    resource_type: agents
+    namespace: "{{run}}-space"
+    steps:
+      - {
+          kind: http,
+          method: GET,
+          path: "/s/{{run}}-space/api/agent_builder/agents/{{id}}",
+          status: 404,
+        }
+      - kind: write
+        path: kb/{{run}}-space/agents/{{id}}.json
+        content: |
+          {"_taku":{"id":"{{id}}"},"id":"{{id}}","name":"Live-validator-created-agent","description":"created-by-taku","configuration":{"instructions":"Never execute tools.","tools":[]},"created_by":{"username":"fixture"},"type":"chat"}
+      - { kind: cli, command: fetch }
+      - kind: cli
+        command: push
+        assertions:
+          [{ kind: json, pointer: /result/0/outcome, equals: success }]
+      - kind: http
+        method: GET
+        path: /s/{{run}}-space/api/agent_builder/agents/{{id}}
+        status: 200
+        assertions:
+          - { kind: json, pointer: /id, equals: "{{id}}" }
+          - { kind: json, pointer: /name, equals: Live-validator-created-agent }
+          - { kind: json, pointer: /description, equals: created-by-taku }
+          - { kind: json, pointer: /configuration/tools, equals: [] }
+          - {
+              kind: json,
+              pointer: /configuration/instructions,
+              equals: Never execute tools.,
+            }
+      - { kind: cli, command: fetch }
+      - { kind: cli, command: pull }
+      - kind: file
+        path: kb/{{run}}-space/agents/{{id}}.json
+        assertions:
+          - { kind: json, pointer: /id, equals: "{{id}}" }
+          - { kind: json, pointer: /name, equals: Live-validator-created-agent }
+          - { kind: json, pointer: /description, equals: created-by-taku }
+          - { kind: json, pointer: /configuration/tools, equals: [] }
+          - {
+              kind: json,
+              pointer: /configuration/instructions,
+              equals: Never execute tools.,
+            }
+          - { kind: not_contains, text: '"created_by"' }
+          - { kind: not_contains, text: '"type"' }
+      - kind: cli
+        command: push
+        assertions:
+          [{ kind: json, pointer: /result/0/outcome, equals: in_sync }]
+      - kind: http
+        method: GET
+        path: /s/{{run}}-space/api/agent_builder/agents/{{id}}
+        status: 200
+        assertions:
+          [{ kind: json, pointer: /description, equals: created-by-taku }]
