@@ -92,7 +92,9 @@ jobs:
           toolchain=$(awk -F '"' '/^channel = / { print $2 }' "$RUNNER_TEMP/taku-gates/rust-toolchain.toml")
           rustup toolchain install "$toolchain" --profile minimal --component rustfmt --component clippy
           cargo install okf --version 0.2.7 --locked
-          npm install --global @fission-ai/openspec@1.14.0
+          openspec_version=$(awk '/^\[\[.*openspec --version/ { print $5 }' "$RUNNER_TEMP/taku-gates/check-openspec.sh")
+          [[ "$openspec_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'Unable to determine trusted OpenSpec version.' >&2; exit 1; }
+          npm install --global "@fission-ai/openspec@$openspec_version"
       - name: Run code preflight
         shell: bash
         run: |
@@ -179,7 +181,9 @@ jobs:
           toolchain=$(cat "$RUNNER_TEMP/taku-gates/toolchain")
           rustup toolchain install "$toolchain" --profile minimal --component rustfmt --component clippy
           cargo install okf --version 0.2.7 --locked
-          npm install --global @fission-ai/openspec@1.14.0
+          openspec_version=$(awk '/^\[\[.*openspec --version/ { print $5 }' "$RUNNER_TEMP/taku-gates/check-openspec.sh")
+          [[ "$openspec_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'Unable to determine trusted OpenSpec version.' >&2; exit 1; }
+          npm install --global "@fission-ai/openspec@$openspec_version"
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0

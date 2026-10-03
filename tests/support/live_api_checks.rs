@@ -17,6 +17,7 @@ enum Behavior {
 struct MockApi {
     url: String,
     requests: Arc<Mutex<Vec<(String, String)>>>,
+    request_headers: Arc<Mutex<Vec<BTreeMap<String, String>>>>,
     stop: Arc<AtomicBool>,
     thread: Option<thread::JoinHandle<()>>,
 }
@@ -26,6 +27,8 @@ impl MockApi {
         let server = Server::http("127.0.0.1:0").unwrap();
         let url = format!("http://{}", server.server_addr());
         let requests = Arc::new(Mutex::new(Vec::new()));
+        let request_headers = Arc::new(Mutex::new(Vec::new()));
+        let captured_headers = request_headers.clone();
         let stop = Arc::new(AtomicBool::new(false));
         let (captured, stopping) = (requests.clone(), stop.clone());
         let thread = thread::spawn(move || {
@@ -37,6 +40,18 @@ impl MockApi {
                 };
                 let method = request.method().as_str().to_owned();
                 let path = request.url().to_owned();
+                captured_headers.lock().unwrap().push(
+                    request
+                        .headers()
+                        .iter()
+                        .map(|header| {
+                            (
+                                header.field.as_str().as_str().to_ascii_lowercase(),
+                                header.value.as_str().to_owned(),
+                            )
+                        })
+                        .collect(),
+                );
                 let mut body = String::new();
                 request.as_reader().read_to_string(&mut body).unwrap();
                 captured
@@ -90,6 +105,7 @@ impl MockApi {
         Self {
             url,
             requests,
+            request_headers,
             stop,
             thread: Some(thread),
         }
@@ -221,6 +237,30 @@ fn compiled_cli_and_independent_http_complete_the_declarative_workflow() {
         requests.first().unwrap(),
         &("GET".into(), format!("/widgets/{run}-widget"))
     );
+    let headers = api.request_headers.lock().unwrap();
+    assert_eq!(headers.len(), requests.len());
+    // The first probe and seed are direct HTTP; version discovery is CLI-only.
+    assert_eq!(
+        requests[1],
+        ("PUT".into(), format!("/widgets/{run}-widget"))
+    );
+    assert!(
+        requests
+            .iter()
+            .any(|(method, path)| method == "GET" && path == "/version")
+    );
+    for ((method, path), headers) in requests.iter().zip(headers.iter()) {
+        assert_eq!(
+            headers.get("authorization").map(String::as_str),
+            Some("Bearer mock-secret-token"),
+            "{method} {path}: authorization"
+        );
+        assert_eq!(
+            headers.get("x-live-test").map(String::as_str),
+            Some("true"),
+            "{method} {path}: shared target header"
+        );
+    }
     assert!(!requests.iter().any(|(method, _)| method == "DELETE"));
     assert!(
         requests
@@ -229,6 +269,52 @@ fn compiled_cli_and_independent_http_complete_the_declarative_workflow() {
             .count()
             >= 2
     );
+}
+
+#[test]
+fn captured_headers_expose_missing_auth_and_shared_headers_on_both_transports() {
+    for missing in ["authorization", "x-live-test"] {
+        let directory = TempDir::new().unwrap();
+        catalogs(directory.path());
+        let api = MockApi::start(Behavior::Normal);
+        let run = run_id().unwrap();
+        let mut suite = ready(&fixture(), directory.path(), &api.url, &run).unwrap();
+        let target = suite.targets.get_mut("api").unwrap();
+        target.headers.remove(missing);
+        if missing == "authorization" {
+            target.config["auth"]["fields"]
+                .as_object_mut()
+                .unwrap()
+                .remove("authorization");
+        } else {
+            target.config["headers"]
+                .as_object_mut()
+                .unwrap()
+                .remove(missing);
+        }
+        // The permissive mock still succeeds, so workflow success alone cannot
+        // prove that either transport sent the configured headers.
+        let result = suite.run(directory.path());
+        assert!(result.is_ok(), "{result:?}");
+        let requests = api.requests.lock().unwrap();
+        let headers = api.request_headers.lock().unwrap();
+        assert_eq!(headers.len(), requests.len());
+        assert_eq!(requests[0].0, "GET");
+        assert_eq!(requests[0].1, format!("/widgets/{run}-widget"));
+        assert!(requests.iter().any(|(_, path)| path == "/version"));
+        for ((method, path), headers) in requests.iter().zip(headers.iter()) {
+            assert!(
+                !headers.contains_key(missing),
+                "{method} {path}: unexpectedly captured {missing}"
+            );
+            let (present, expected) = if missing == "authorization" {
+                ("x-live-test", "true")
+            } else {
+                ("authorization", "Bearer mock-secret-token")
+            };
+            assert_eq!(headers.get(present).map(String::as_str), Some(expected));
+        }
+    }
 }
 
 #[test]
