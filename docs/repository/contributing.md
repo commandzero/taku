@@ -2,12 +2,12 @@
 type: Guide
 title: Contributing
 description: Local validation, PR conventions, and OpenSpec completion checks.
-generated: { by: codex/gpt-6, at: 2026-09-07T05:34:57Z }
+generated: { by: zed/gpt-6.1-sol, at: 2026-10-03T20:24:16Z }
 ---
 
 # Contributing
 
-Install the toolchain from `rust-toolchain.toml`, Rust 1.89.0 for minimum-compiler checks, ShellCheck, actionlint 1.7.12, OKF 0.2.7, and OpenSpec 1.11.0. OpenSpec is external authoring tooling; the application has no JavaScript build.
+Install the toolchain from `rust-toolchain.toml`, Rust 1.89.0 for minimum-compiler checks, ShellCheck, actionlint 1.7.12, OKF 0.2.7, and OpenSpec 1.14.0. OpenSpec is external authoring tooling; the application has no JavaScript build.
 
 ```sh
 rustup toolchain install 1.97.1 --profile minimal --component rustfmt --component clippy
@@ -15,12 +15,12 @@ rustup toolchain install 1.89.0 --profile minimal
 cargo install okf --version 0.2.7 --locked
 cargo install tq-cli --version 0.3.0 --locked
 go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
-bun install --global @fission-ai/openspec@1.11.0
+bun install --global @fission-ai/openspec@1.14.0
 bash scripts/preflight.sh
 bash scripts/preflight.sh msrv
 ```
 
-Use `docs` mode for documentation-only changes and `code` for Rust and validation-tool changes. The default `all` runs both. Tests use local temporary projects and mock servers. The 11 live Elastic tests remain opt-in because they require external services and include remote mutations. Follow the root README when explicitly running them.
+Use `docs` mode for documentation-only changes and `code` for Rust and validation-tool changes. The default `all` runs both. Ordinary tests use local temporary projects and mock servers; live validation is a separate, explicit opt-in, not evidence supplied by preflight. Follow the [recommended live API validator](../../README.md#configuration-driven-api-validation), not the legacy `live_elastic` tests: the latter perform automatic DELETE cleanup and must not be run. Do not use a blanket command to run all ignored tests.
 
 Keep the installed tools on PATH, including the Go and Bun global binary directories. CI uses the runner's npm to install the same pinned OpenSpec CLI.
 
@@ -29,6 +29,24 @@ CI runs Rust code checks in an unprivileged `pull_request` job with no repositor
 Both packages inherit one version and compiler policy. Keep application builds locked. Run the minimum compiler separately; optional feature combinations need new checks if package features are introduced. The library remains reusable, but neither package publishes to a registry today.
 
 Use Conventional Commit PR titles with `feat`, `fix`, `docs`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, or `revert`. Add `!` and explain migration when the public contract breaks. Squash coherent changes into main; preserve historical commits. Add notable user effects to the changelog, keeping empty categories out.
+
+## Configuration-driven validation
+
+Keep API scenarios declarative. The generic [live harness](../../tests/live_api.rs) validates Taku/resource-control workflows through Application definitions, Resource Type Catalogs, direct HTTP observations, and the compiled CLI. Extend YAML fixtures rather than adding application-specific harness code; no legacy suite-format compatibility is required. The [live fixture guide](../../tests/fixtures/live/README.md) defines the current schema and safety contract.
+
+The Elastic suite requires Elasticsearch/Kibana 9.4 with Agent Builder enabled. Externally supply `LIVE_ES_URL`, `LIVE_ES_AUTHORIZATION`, `LIVE_KB_URL`, and `LIVE_KB_AUTHORIZATION` in the process environment, never in secret files. A live invocation requires `TAKU_LIVE_SUITE`, an already-existing `TAKU_LIVE_ARTIFACTS` directory, and exactly `TAKU_LIVE_ALLOW_MUTATIONS=1`. Every HTTP request and CLI invocation is bounded to 60 seconds. Review fixtures and catalogs before granting access: the guardrails are not a security sandbox. Projects, reports, and remote resources remain after success or failure; there is no automatic cleanup.
+
+Use the narrowly selected command in the root README. The `elastic.yaml` fixture covers pipeline create/update, a unique Kibana space, and skill/agent create/update. The separate `saved-objects.yaml` fixture is an honest known-failure diagnostic for fresh saved-object absence detection; preserve strict expectations rather than turning an unexpected response into a pass. Record the actual product versions, suite, and retained report when reporting results. Acquisition, create, update, and no-op coverage must be established by the authored steps and assertions; passing a suite is not complete API compatibility certification.
+
+Run offline transport contracts without service credentials:
+
+```sh
+cargo test -p resource-control --locked catalog_fixtures -- --nocapture
+```
+
+The [offline suite](../../crates/resource-control/tests/fixtures/transport/suite.yaml) uses suite-relative catalogs and independent literal expectations for inbound data and create/update/upsert payloads, checking each declared write with metadata tracking both off and on. Set `TAKU_TRANSPORT_SUITE` to select an alternative suite. These checks do not establish live server compatibility.
+
+When editing documentation in `docs/`, preserve existing metadata fields and update `generated.by` and `generated.at` to the actual editor and UTC edit timestamp. Follow the [bundle rules](bundle.md); regenerate indexes only when concept additions, renames, titles, or descriptions require it.
 
 ## OpenSpec completion
 

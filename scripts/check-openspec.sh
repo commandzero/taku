@@ -4,8 +4,8 @@ script_dir=$(cd "$(dirname "$0")" && pwd)
 repo_root=${REPO_ROOT:-$(cd "$script_dir/.." && pwd)}
 cd "$repo_root"
 export OPENSPEC_TELEMETRY=0
-[[ "$(openspec --version)" == 1.11.0 ]] || {
-  echo 'Install @fission-ai/openspec 1.11.0 before running this check.' >&2
+[[ "$(openspec --version)" == 1.14.0 ]] || {
+  echo 'Install @fission-ai/openspec 1.14.0 before running this check.' >&2
   exit 1
 }
 # Validate main specs only. Unrelated active changes do not gate this PR.

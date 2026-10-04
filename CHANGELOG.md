@@ -6,11 +6,14 @@ Notable user-facing changes are recorded here. Taku has no published release yet
 
 ### Fixed
 
+- Exclude Kibana Skill `experimental` and Agent `created_by`/`type` response fields from create and update payloads, including when Resource metadata tracking is enabled.
 - Return an I/O error instead of panicking when a data-report output pipe closes.
 - Correct the domain glossary to describe parallel scheduling as the default.
 
 ### Added
 
+- Add a configuration-driven live API validator for Taku/resource-control workflows, using declarative suites and real Application/Resource Type Catalogs rather than application-specific harness code. Require explicit mutation opt-in and externally supplied endpoint/auth environment variables; retain projects and reports without cleanup, with 60-second HTTP/CLI timeouts and strict fixture-defined assertions. Live success and complete API compatibility are not yet established; the saved-object absence diagnostic remains a known failure.
+- Add offline catalog-driven transport fixtures with independent inbound and create/update/upsert expectations, checked with metadata tracking disabled and enabled.
 - License Taku and resource-control under Apache-2.0.
 
 - Manage selected remote Resources through explicit observation, comparison, adoption, promotion, and guarded Push workflows.

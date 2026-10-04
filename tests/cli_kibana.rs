@@ -1080,7 +1080,6 @@ fn pushing_a_projected_resource_merges_passthrough_frontmatter_and_files() {
     let bodies = fake.bodies.lock().unwrap();
     let body: Value = serde_json::from_str(bodies.last().unwrap()).unwrap();
     assert_eq!(body["metadata"]["owner"], "field-engineering");
-    assert_eq!(body["experimental"], true);
     assert_eq!(
         body["referenced_content"][0]["content"],
         "# Runbook\n\nInspect the updated diagnostics.\n"

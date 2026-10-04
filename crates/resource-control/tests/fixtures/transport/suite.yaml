@@ -1,0 +1,194 @@
+# Catalog paths resolve relative to this file. Variants are zero-based.
+# All expected documents are independent literals, not computed from catalog rules.
+# Each write expectation is checked with metadata tracking both disabled and enabled.
+fixtures:
+  - catalog: ../../../assets/applications/kibana/version-9.yaml
+    cases:
+      - name: skill server metadata never enters create or update payloads
+        resource_type: skills
+        variant: 0
+        input:
+          id: incident-review
+          name: Incident review
+          description: Review an incident
+          content: "# Review\nInspect the evidence.\n"
+          referenced_content:
+            - relativePath: ./references
+              name: checklist
+              content: "Check the timeline.\n"
+          tool_ids: [search-events]
+          readonly: false
+          schema: { type: object }
+          built_in: false
+          source: ui
+          experimental: true
+          created_at: "2026-09-01T00:00:00Z"
+          updated_at: "2026-09-02T00:00:00Z"
+        expected_inbound:
+          untracked:
+            id: incident-review
+            name: Incident review
+            description: Review an incident
+            content: "# Review\nInspect the evidence.\n"
+            referenced_content:
+              - relativePath: ./references
+                name: checklist
+                content: "Check the timeline.\n"
+            tool_ids: [search-events]
+          tracked:
+            id: incident-review
+            name: Incident review
+            description: Review an incident
+            content: "# Review\nInspect the evidence.\n"
+            referenced_content:
+              - relativePath: ./references
+                name: checklist
+                content: "Check the timeline.\n"
+            tool_ids: [search-events]
+            readonly: false
+            schema: { type: object }
+            built_in: false
+            source: ui
+            experimental: true
+            created_at: "2026-09-01T00:00:00Z"
+            updated_at: "2026-09-02T00:00:00Z"
+        expected_outbound:
+          create:
+            id: incident-review
+            name: Incident review
+            description: Review an incident
+            content: "# Review\nInspect the evidence.\n"
+            referenced_content:
+              - relativePath: ./references
+                name: checklist
+                content: "Check the timeline.\n"
+            tool_ids: [search-events]
+          update:
+            name: Incident review
+            description: Review an incident
+            content: "# Review\nInspect the evidence.\n"
+            referenced_content:
+              - relativePath: ./references
+                name: checklist
+                content: "Check the timeline.\n"
+            tool_ids: [search-events]
+      - name: agent provenance and type stay out of create and update payloads
+        resource_type: agents
+        variant: 0
+        input:
+          id: incident-agent
+          name: Incident agent
+          description: Reviews incidents
+          configuration:
+            instructions: Inspect evidence before concluding.
+            tools: [{ tool_ids: [search-events] }]
+          readonly: false
+          schema: { type: object }
+          created_by: {username: analyst}
+          type: chat
+        expected_inbound:
+          untracked:
+            id: incident-agent
+            name: Incident agent
+            description: Reviews incidents
+            configuration:
+              instructions: Inspect evidence before concluding.
+              tools: [{ tool_ids: [search-events] }]
+          tracked:
+            id: incident-agent
+            name: Incident agent
+            description: Reviews incidents
+            configuration:
+              instructions: Inspect evidence before concluding.
+              tools: [{ tool_ids: [search-events] }]
+            readonly: false
+            schema: { type: object }
+            created_by: {username: analyst}
+            type: chat
+        expected_outbound:
+          create:
+            id: incident-agent
+            name: Incident agent
+            description: Reviews incidents
+            configuration:
+              instructions: Inspect evidence before concluding.
+              tools: [{ tool_ids: [search-events] }]
+          update:
+            name: Incident agent
+            description: Reviews incidents
+            configuration:
+              instructions: Inspect evidence before concluding.
+              tools: [{ tool_ids: [search-events] }]
+  - catalog: ../../../assets/applications/elasticsearch/version-9.yaml
+    cases:
+      - name: pipeline timestamps stay out of all writes without stripping user metadata
+        resource_type: ingest_pipelines
+        variant: 0
+        input:
+          id: normalize-events
+          description: Normalize events
+          processors: [{ set: { field: event.dataset, value: audit } }]
+          _meta: { owner: security }
+          created_date_millis: 1788220800000
+          modified_date_millis: 1788307200000
+        expected_inbound:
+          untracked:
+            id: normalize-events
+            description: Normalize events
+            processors: [{ set: { field: event.dataset, value: audit } }]
+            _meta: { owner: security }
+          tracked:
+            id: normalize-events
+            description: Normalize events
+            processors: [{ set: { field: event.dataset, value: audit } }]
+            _meta: { owner: security }
+            created_date_millis: 1788220800000
+            modified_date_millis: 1788307200000
+        expected_outbound:
+          create:
+            description: Normalize events
+            processors: [{ set: { field: event.dataset, value: audit } }]
+            _meta: { owner: security }
+          update:
+            description: Normalize events
+            processors: [{ set: { field: event.dataset, value: audit } }]
+            _meta: { owner: security }
+          upsert:
+            description: Normalize events
+            processors: [{ set: { field: event.dataset, value: audit } }]
+            _meta: { owner: security }
+      - name: lifecycle policy metadata is removed before selecting the update body
+        resource_type: ilm_policies
+        variant: 0
+        input:
+          id: retain-events
+          policy:
+            phases:
+              delete: { min_age: 30d, actions: { delete: {} } }
+            _meta: { owner: security }
+          version: 7
+          modified_date: "2026-09-02T00:00:00Z"
+          modified_date_millis: 1788307200000
+          in_use_by: { indices: [events-000001] }
+        expected_inbound:
+          untracked:
+            id: retain-events
+            policy:
+              phases:
+                delete: { min_age: 30d, actions: { delete: {} } }
+              _meta: { owner: security }
+          tracked:
+            id: retain-events
+            policy:
+              phases:
+                delete: { min_age: 30d, actions: { delete: {} } }
+              _meta: { owner: security }
+            version: 7
+            modified_date: "2026-09-02T00:00:00Z"
+            modified_date_millis: 1788307200000
+            in_use_by: { indices: [events-000001] }
+        expected_outbound:
+          update:
+            phases:
+              delete: { min_age: 30d, actions: { delete: {} } }
+            _meta: { owner: security }
