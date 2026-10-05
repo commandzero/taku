@@ -15,6 +15,17 @@ version=${tag#v}
 stage=$(mktemp -d)
 remote=false
 trap 'rm -rf "$stage"' EXIT
+tagged_commit=$(git rev-parse --verify "$tag^{commit}") || {
+  echo "Fetch the reviewed release tag before generating a formula: $tag" >&2; exit 1;
+}
+git show "$tag:LICENCE.md" > "$stage/LICENSE"
+git show "$tag:NOTICES.md" > "$stage/NOTICES.md"
+native_target=
+case "$(uname -sm)" in
+  'Darwin arm64') native_target=aarch64-apple-darwin ;;
+  'Linux x86_64') native_target=x86_64-unknown-linux-gnu ;;
+  'Linux aarch64') native_target=aarch64-unknown-linux-gnu ;;
+esac
 if [ "$source" = --release ]; then
   remote=true
   # Missing or private GitHub releases fail closed; no formula with invented URLs.
@@ -39,8 +50,6 @@ asset_url() {
   fi
 }
 
-release_commit=
-
 for target in aarch64-apple-darwin x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu; do
   archive="taku-$tag-$target.tar.gz"
   [ -f "$source/$archive" ] || continue
@@ -61,25 +70,23 @@ for target in aarch64-apple-darwin x86_64-unknown-linux-gnu aarch64-unknown-linu
     /^commit=[0-9a-f]+$/ { commit = substr($0, 8) }
     END { if (tag_ok && target_ok && features_ok && commit != "") print commit; else exit 1 }
   ') || { echo "Release provenance mismatch: $archive" >&2; exit 1; }
-  if [ -n "$release_commit" ] && [ "$commit" != "$release_commit" ]; then
-    echo "Mixed source commits in release archives: $archive" >&2; exit 1
-  fi
-  release_commit=$commit
+  [ "$commit" = "$tagged_commit" ] || {
+    echo "Release archive commit differs from reviewed tag: $tag" >&2; exit 1;
+  }
   mkdir "$stage/$target"
   tar -xzf "$source/$archive" -C "$stage/$target"
   if [ ! -x "$stage/$target/taku" ] || [ ! -s "$stage/$target/LICENSE" ] || [ ! -s "$stage/$target/NOTICES.md" ]; then
     echo "Missing executable, license, or notices: $archive" >&2; exit 1;
   fi
+  cmp "$stage/LICENSE" "$stage/$target/LICENSE"
+  cmp "$stage/NOTICES.md" "$stage/$target/NOTICES.md"
+  # Foreign binaries must be smoke-tested by release-package.sh on their native hosts.
+  if [ "$target" = "$native_target" ]; then
+    [ "$("$stage/$target/taku" --version)" = "taku $version" ] || {
+      echo "Extracted binary version mismatch: $archive" >&2; exit 1;
+    }
+  fi
 done
-
-if [ "$remote" = true ]; then
-  tagged_commit=$(git rev-parse --verify "$tag^{commit}") || {
-    echo "Fetch the reviewed release tag before generating the public formula: $tag" >&2; exit 1;
-  }
-  [ "$release_commit" = "$tagged_commit" ] || {
-    echo "Release archive commit differs from reviewed tag: $tag" >&2; exit 1;
-  }
-fi
 
 # A single locally built archive can exercise a reviewable macOS-arm formula
 # against file:// URLs before publication; it never alters the public tap.

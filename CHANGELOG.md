@@ -22,6 +22,7 @@ Notable user-facing changes are recorded here. The dated 0.1.0 section is the fi
 - Declare Git as a runtime dependency in generated Homebrew formulas.
 - Keep README documentation links usable from packaged CLI source.
 - Require manual review for changes to dependency-notice validation code and inputs.
+- Verify Homebrew archive licenses and notices against the reviewed tag, require matching provenance in local mode, and check the native binary version before formula generation.
 
 ### Added
 
