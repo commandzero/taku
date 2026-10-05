@@ -7,6 +7,8 @@ Notable user-facing changes are recorded here. The dated 0.1.0 section is the fi
 ### Fixed
 
 - Reject overlapping version-qualified Resource Type definitions and unavailable or cyclic dependencies before installing any selected Application, using the same validation for Elasticsearch, Kibana, and external Applications.
+- Confine Target addition and rename to safe Environment/Target paths; reject symlinked Resource or cleanup paths and existing rename destinations before modifying desired state.
+- Preserve Environment names requiring YAML quoting when saving Context.
 
 ## [0.1.0] - 2026-10-05
 

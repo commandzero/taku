@@ -2,7 +2,7 @@
 type: Guide
 title: Using Taku
 description: Resource workflows, project configuration, output, completion, and safety.
-generated: { by: openai-codex/gpt-6-sol, at: 2026-10-05T01:20:56Z }
+generated: { by: openai-codex/gpt-6.1-sol, at: 2026-10-05T04:12:29Z }
 ---
 
 # Using Taku
@@ -19,6 +19,10 @@ taku target add kibana kb --url https://localhost:5601
 ```
 
 Replace the example URLs with your own authorized endpoints. Installation vendors Application definitions into the Project; it does not install software on the Targets. For a Multi Project, initialize with `--layout multi --environments dev,stage,prod`, then select a default with `taku context set dev`. `taku app` lists Applications; `taku target` lists the current Environment's Targets.
+
+Environment and Target names must be single, non-empty directory segments: separators, `.`/`..`, and the reserved `.git`/`.taku` names are rejected. Names containing YAML punctuation are preserved when saving the local Context. Target names are unique within one Environment; another Environment may use the same name.
+
+`taku target rename <old> <new>` moves the complete Resource tree only in the current or explicit Environment and invalidates the old Target's disposable state without contacting its API or changing Resource IDs. It refuses an existing destination directory and checks Resource and cleanup paths for symlinks before moving or deleting anything. First-use `target add` requires interactive installation confirmation or explicit `--yes`; it uses available local definitions without refreshing an Application Source.
 
 ## Resource scope and reconciliation
 
