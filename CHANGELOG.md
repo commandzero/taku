@@ -9,6 +9,7 @@ Notable user-facing changes are recorded here. Taku has no published release yet
 - Exclude Kibana Skill `experimental` and Agent `created_by`/`type` response fields from create and update payloads, including when Resource metadata tracking is enabled.
 - Return an I/O error instead of panicking when a data-report output pipe closes.
 - Correct the domain glossary to describe parallel scheduling as the default.
+- Allow reviewed CI and validation-gate changes through exact-head human maintainer approval instead of an unconditional workflow-integrity failure, while retaining trusted-base execution and read-only credentials.
 
 ### Added
 

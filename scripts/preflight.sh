@@ -19,6 +19,7 @@ if [[ "$mode" == all || "$mode" == code ]]; then
   for script in scripts/*.sh; do bash -n "$script"; done
   gate_source=${OPENSPEC_GATE_SOURCE:-$repo_root/scripts/check-openspec.rs}
   rustup run "$toolchain" rustfmt --edition 2024 --check "$gate_source"
+  bash "$script_dir/check-workflow-review-test.sh"
   rustup run "$toolchain" cargo clippy --workspace --all-targets --locked -- -D warnings
   rustup run "$toolchain" cargo test --workspace --locked
   if [[ ${SKIP_GATE_TESTS:-0} != 1 ]]; then
