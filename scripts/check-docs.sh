@@ -16,8 +16,8 @@ okf links --check docs
 staging=$(mktemp -d)
 trap 'rm -rf "$staging"' EXIT
 cp -R docs "$staging/docs"
-okf index "$staging/docs"
+bash "$script_dir/docs-index.sh" "$staging/docs"
 diff -ru docs "$staging/docs" || {
-  echo 'Documentation indexes are stale. Run: okf index docs' >&2
+  echo 'Documentation indexes are stale. Run: bash scripts/docs-index.sh' >&2
   exit 1
 }

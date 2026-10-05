@@ -2,31 +2,34 @@
 type: Guide
 title: Contributing
 description: Local validation, PR conventions, and OpenSpec completion checks.
-generated: { by: zed/gpt-6.1-sol, at: 2026-10-03T20:24:16Z }
+generated: { by: openai-codex/gpt-6.1-sol, at: 2026-10-05T03:00:25Z }
 ---
 
 # Contributing
 
-Install the toolchain from `rust-toolchain.toml`, Rust 1.89.0 for minimum-compiler checks, ShellCheck, actionlint 1.7.12, OKF 0.2.7, and OpenSpec 1.14.0. OpenSpec is external authoring tooling; the application has no JavaScript build.
+Install the toolchain from `rust-toolchain.toml`, Rust 1.89.0 for minimum-compiler checks, ShellCheck, actionlint 1.7.12, OKF 0.2.7, cargo-about 0.8.4, and OpenSpec 1.14.0. OpenSpec is external authoring tooling; the application has no JavaScript build.
 
 ```sh
 rustup toolchain install 1.97.1 --profile minimal --component rustfmt --component clippy
 rustup toolchain install 1.89.0 --profile minimal
 cargo install okf --version 0.2.7 --locked
 cargo install tq-cli --version 0.3.0 --locked
+rustup run 1.97.1 cargo install cargo-about --version 0.8.4 --locked
 go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
 bun install --global @fission-ai/openspec@1.14.0
 bash scripts/preflight.sh
 bash scripts/preflight.sh msrv
 ```
 
-Use `docs` mode for documentation-only changes and `code` for Rust and validation-tool changes. The default `all` runs both. Ordinary tests use local temporary projects and mock servers; live validation is a separate, explicit opt-in, not evidence supplied by preflight. Follow the [recommended live API validator](../../README.md#configuration-driven-api-validation), not the legacy `live_elastic` tests: the latter perform automatic DELETE cleanup and must not be run. Do not use a blanket command to run all ignored tests.
+Use `docs` mode for documentation-only changes and `code` for Rust and validation-tool changes. The default `all` runs both. Ordinary tests use local temporary projects and mock servers; live validation is a separate, explicit opt-in, not evidence supplied by preflight. Follow the [recommended live API validator](../live-api-validation.md), not the legacy `live_elastic` tests: the latter perform automatic DELETE cleanup and must not be run. Do not use a blanket command to run all ignored tests.
 
 Keep the installed tools on PATH, including the Go and Bun global binary directories. CI uses the runner's npm to install the same pinned OpenSpec CLI.
 
 CI runs Rust code checks in an unprivileged `pull_request` job with no repository secrets or shared dependency cache. A separate `pull_request_target` job runs documentation and OpenSpec contract checks from gate code copied from the trusted base revision. Pushes to `main` and manual runs execute the complete preflight from trusted repository contents.
 
-Both packages inherit one version and compiler policy. Keep application builds locked. Run the minimum compiler separately; optional feature combinations need new checks if package features are introduced. The library remains reusable, but neither package publishes to a registry today.
+Both packages inherit one version and compiler policy. Keep application builds locked. Run the minimum compiler separately; optional feature combinations need new checks if package features are introduced. The library remains reusable and publishes before the CLI; use the reviewed [release procedure](releases.md) and confirm its exact registry version resolves before publishing the CLI. Neither package has been published yet.
+
+After dependency changes, run `bash scripts/license-notices.sh` and review `NOTICES.md`. Code preflight and archive packaging regenerate notices into a temporary file and reject stale output or synthesized license text without a source. `about.toml` selects existing permissive license alternatives across the release targets; new obligations or changed hash-verified clarifications need review.
 
 Use Conventional Commit PR titles with `feat`, `fix`, `docs`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, or `revert`. Add `!` and explain migration when the public contract breaks. Squash coherent changes into main; preserve historical commits. Add notable user effects to the changelog, keeping empty categories out.
 
@@ -36,7 +39,7 @@ Keep API scenarios declarative. The generic [live harness](../../tests/live_api.
 
 The Elastic suite requires Elasticsearch/Kibana 9.4 with Agent Builder enabled. Externally supply `LIVE_ES_URL`, `LIVE_ES_AUTHORIZATION`, `LIVE_KB_URL`, and `LIVE_KB_AUTHORIZATION` in the process environment, never in secret files. A live invocation requires `TAKU_LIVE_SUITE`, an already-existing `TAKU_LIVE_ARTIFACTS` directory, and exactly `TAKU_LIVE_ALLOW_MUTATIONS=1`. Every HTTP request and CLI invocation is bounded to 60 seconds. Review fixtures and catalogs before granting access: the guardrails are not a security sandbox. Projects, reports, and remote resources remain after success or failure; there is no automatic cleanup.
 
-Use the narrowly selected command in the root README. The `elastic.yaml` fixture covers pipeline create/update, a unique Kibana space, and skill/agent create/update. The separate `saved-objects.yaml` fixture is an honest known-failure diagnostic for fresh saved-object absence detection; preserve strict expectations rather than turning an unexpected response into a pass. Record the actual product versions, suite, and retained report when reporting results. Acquisition, create, update, and no-op coverage must be established by the authored steps and assertions; passing a suite is not complete API compatibility certification.
+Use the narrowly selected command in the [live API validation guide](../live-api-validation.md). The `elastic.yaml` fixture covers pipeline create/update, a unique Kibana space, and skill/agent create/update. The separate `saved-objects.yaml` fixture is an honest known-failure diagnostic for fresh saved-object absence detection; preserve strict expectations rather than turning an unexpected response into a pass. Record the actual product versions, suite, and retained report when reporting results. Acquisition, create, update, and no-op coverage must be established by the authored steps and assertions; passing a suite is not complete API compatibility certification.
 
 Run offline transport contracts without service credentials:
 
@@ -62,7 +65,7 @@ BASE_REF=origin/main OPENSPEC_CHANGES=my-change bash scripts/check-openspec.sh
 
 With `BASE_REF`, the gate checks committed HEAD state against the merge base. Without it, local preflight checks working-tree changes against HEAD, including untracked files. `OPENSPEC_CHANGES` adds IDs in either mode. Set `CHECK_ALL_ARCHIVES=1` to check all archives against current specs, useful for this initial adoption but not a permanent gate once later changes supersede old requirements.
 
-CI reruns on PR edits and synchronization, with no workflow path filters. After this adoption PR, require the `preflight`, `minimum compiler`, and `PR contract` results before merge when the GitHub plan permits branch protection. The adoption PR's bootstrap guard intentionally requires one manual preflight because its base revision cannot run a trusted workflow that does not exist there yet. The present private repository's API reports a plan restriction; until protection is available, maintainers must inspect those results before merging.
+CI reruns on PR edits and synchronization, with no workflow path filters. Require the `preflight`, `minimum compiler`, and `PR contract` results before merge. Changes to trusted gate code or workflow integrity inputs require maintainer review and manual validation when the base revision cannot run the new trusted contract; the bootstrap guard must not be bypassed with PR-supplied code. The public repository's main branch is currently unprotected (API check on 2026-10-05 returned `Branch not protected`); maintainers must inspect the required results and any bootstrap exceptions before merging until protection is configured.
 
 See [bundle rules](bundle.md) for documentation validation and [release policy](releases.md) for compatibility and distribution.
 

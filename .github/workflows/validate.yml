@@ -35,7 +35,7 @@ jobs:
         shell: bash
         run: |
           missing=0
-          for file in .github/workflows/validate.yml rust-toolchain.toml scripts/preflight.sh scripts/check-pr.sh scripts/check-docs.sh scripts/check-openspec.sh scripts/check-openspec.rs; do
+          for file in .github/workflows/validate.yml rust-toolchain.toml scripts/preflight.sh scripts/check-pr.sh scripts/check-docs.sh scripts/docs-index.sh scripts/check-openspec.sh scripts/check-openspec.rs; do
             git cat-file -e "$BASE_SHA:$file" 2>/dev/null || missing=1
           done
           if [[ "$missing" == 1 ]]; then
@@ -62,7 +62,7 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/taku-gates"
           trusted=1
-          for file in rust-toolchain.toml scripts/check-pr.sh scripts/check-docs.sh scripts/check-openspec.sh scripts/check-openspec.rs; do
+          for file in rust-toolchain.toml scripts/check-pr.sh scripts/check-docs.sh scripts/docs-index.sh scripts/check-openspec.sh scripts/check-openspec.rs; do
             git cat-file -e "$BASE_SHA:$file" 2>/dev/null || trusted=0
           done
           if [[ "$trusted" != 1 ]]; then
@@ -71,7 +71,7 @@ jobs:
             exit 0
           fi
           git show "$BASE_SHA:rust-toolchain.toml" > "$RUNNER_TEMP/taku-gates/rust-toolchain.toml"
-          for file in scripts/check-pr.sh scripts/check-docs.sh scripts/check-openspec.sh scripts/check-openspec.rs; do
+          for file in scripts/check-pr.sh scripts/check-docs.sh scripts/docs-index.sh scripts/check-openspec.sh scripts/check-openspec.rs; do
             git show "$BASE_SHA:$file" > "$RUNNER_TEMP/taku-gates/$(basename "$file")"
           done
           echo 'available=true' >> "$GITHUB_OUTPUT"
@@ -80,6 +80,7 @@ jobs:
         run: |
           toolchain=$(awk -F '"' '/^channel = / { print $2 }' rust-toolchain.toml)
           rustup toolchain install "$toolchain" --profile minimal --component rustfmt --component clippy
+          rustup run "$toolchain" cargo install cargo-about --version 0.8.4 --locked
           go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
           sudo apt-get update
@@ -104,6 +105,7 @@ jobs:
           actionlint
           for script in scripts/*.sh; do bash -n "$script"; done
           rustup run "$toolchain" rustfmt --edition 2024 --check scripts/check-openspec.rs
+          bash scripts/license-notices.sh --check
           rustup run "$toolchain" cargo clippy --workspace --all-targets --locked -- -D warnings
           rustup run "$toolchain" cargo test --workspace --locked
           staging=$(mktemp -d)
@@ -160,7 +162,7 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/taku-gates"
           trusted=1
-          for file in rust-toolchain.toml scripts/check-pr.sh scripts/check-docs.sh scripts/check-openspec.sh scripts/check-openspec.rs; do
+          for file in rust-toolchain.toml scripts/check-pr.sh scripts/check-docs.sh scripts/docs-index.sh scripts/check-openspec.sh scripts/check-openspec.rs; do
             git cat-file -e "$TRUSTED_REF:$file" 2>/dev/null || trusted=0
           done
           if [[ "$trusted" != 1 ]]; then
@@ -169,7 +171,7 @@ jobs:
             exit 0
           fi
           awk -F '"' '/^channel = / { print $2 }' rust-toolchain.toml > "$RUNNER_TEMP/taku-gates/toolchain"
-          for file in scripts/check-pr.sh scripts/check-docs.sh scripts/check-openspec.sh scripts/check-openspec.rs; do
+          for file in scripts/check-pr.sh scripts/check-docs.sh scripts/docs-index.sh scripts/check-openspec.sh scripts/check-openspec.rs; do
             git show "$TRUSTED_REF:$file" > "$RUNNER_TEMP/taku-gates/$(basename "$file")"
           done
           echo 'available=true' >> "$GITHUB_OUTPUT"
@@ -194,7 +196,7 @@ jobs:
         shell: bash
         run: |
           while IFS= read -r -d '' path; do
-            if [[ "$path" == .github/workflows/* || "$path" == rust-toolchain.toml || "$path" == scripts/preflight.sh || "$path" == scripts/check-pr.sh || "$path" == scripts/check-docs.sh || "$path" == scripts/check-openspec.sh || "$path" == scripts/check-openspec.rs ]]; then
+            if [[ "$path" == .github/workflows/* || "$path" == rust-toolchain.toml || "$path" == scripts/preflight.sh || "$path" == scripts/check-pr.sh || "$path" == scripts/check-docs.sh || "$path" == scripts/docs-index.sh || "$path" == scripts/check-openspec.sh || "$path" == scripts/check-openspec.rs ]]; then
               echo "Workflow changes require manual maintainer review: $path" >&2
               exit 1
             fi
@@ -227,6 +229,7 @@ jobs:
           toolchain=$(awk -F '"' '/^channel = / { print $2 }' rust-toolchain.toml)
           rustup toolchain install "$toolchain" --profile minimal --component rustfmt --component clippy
           rustup toolchain install 1.89.0 --profile minimal
+          rustup run "$toolchain" cargo install cargo-about --version 0.8.4 --locked
           cargo install okf --version 0.2.7 --locked
           npm install --global @fission-ai/openspec@1.14.0
           go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
