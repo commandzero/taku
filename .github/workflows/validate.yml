@@ -27,7 +27,7 @@ jobs:
     env:
       BASE_SHA: ${{ github.event.pull_request.base.sha }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -52,7 +52,7 @@ jobs:
     env:
       BASE_SHA: ${{ github.event.pull_request.base.sha }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -131,7 +131,7 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
           persist-credentials: false
@@ -151,7 +151,7 @@ jobs:
       BASE_REF: ${{ github.event.pull_request.base.sha }}
       TRUSTED_REF: ${{ github.event.pull_request.base.sha }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.base.sha }}
@@ -186,7 +186,7 @@ jobs:
           openspec_version=$(awk '/^\[\[.*openspec --version/ { print $5 }' "$RUNNER_TEMP/taku-gates/check-openspec.sh")
           [[ "$openspec_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'Unable to determine trusted OpenSpec version.' >&2; exit 1; }
           npm install --global "@fission-ai/openspec@$openspec_version"
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           repository: ${{ github.event.pull_request.head.repo.full_name }}
@@ -220,7 +220,7 @@ jobs:
     if: github.event_name != 'pull_request' && github.event_name != 'pull_request_target'
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
