@@ -2,7 +2,7 @@
 type: Policy
 title: Releases and compatibility
 description: Package versions, compiler support, registry publication, and reviewed binary and Homebrew distribution.
-generated: { by: openai-codex/gpt-6.1-sol, at: 2026-10-05T03:00:25Z }
+generated: { by: openai-codex/gpt-6.1-sol, at: 2026-10-05T03:11:43Z }
 ---
 
 # Releases and compatibility
@@ -14,6 +14,8 @@ The first release proposal is 0.1.0; packages and binary assets have not been pu
 From the first published 0.x release, incompatible CLI, library, or persisted-format changes require a minor version increase and migration notes. Compatible fixes use patch releases. Preserve YAML as the default output and version persisted and output schemas explicitly. Review behavior, not just commit prefixes, when selecting a version.
 
 Rust 1.89 is the minimum supported compiler. Development and release builds use pinned Rust 1.97.1. Verify the minimum with complete locked workspace tests and a fresh consumer of the published library. Compiler minimum increases belong in minor releases with changelog notes; verify selected dependency versions too.
+
+Release helpers must support macOS's system Bash 3.2 and pass CI's ShellCheck as well as local preflight. Keep compound validation failures in explicit `if` branches to avoid `SC2015` diagnostics without suppressing guard checks.
 
 ## Dependency license notices
 

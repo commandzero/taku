@@ -67,9 +67,9 @@ for target in aarch64-apple-darwin x86_64-unknown-linux-gnu aarch64-unknown-linu
   release_commit=$commit
   mkdir "$stage/$target"
   tar -xzf "$source/$archive" -C "$stage/$target"
-  [ -x "$stage/$target/taku" ] && [ -s "$stage/$target/LICENSE" ] && [ -s "$stage/$target/NOTICES.md" ] || {
+  if [ ! -x "$stage/$target/taku" ] || [ ! -s "$stage/$target/LICENSE" ] || [ ! -s "$stage/$target/NOTICES.md" ]; then
     echo "Missing executable, license, or notices: $archive" >&2; exit 1;
-  }
+  fi
 done
 
 if [ "$remote" = true ]; then

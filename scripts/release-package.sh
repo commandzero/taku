@@ -14,9 +14,9 @@ esac
 package_id=$(rustup run 1.97.1 cargo pkgid --locked -p taku)
 version=${package_id##*#}
 version=${version##*@}
-[ -n "$version" ] && [[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-rc\.(0|[1-9][0-9]*))?$ ]] || {
+if [ -z "$version" ] || ! [[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-rc\.(0|[1-9][0-9]*))?$ ]]; then
   echo "Invalid workspace version: $version" >&2; exit 1;
-}
+fi
 [ "$tag" = "v$version" ] || { echo "Tag must be v$version" >&2; exit 1; }
 [ "$(git rev-parse --verify "$tag^{commit}")" = "$(git rev-parse HEAD)" ] || {
   echo 'Tag must point to checked-out commit' >&2; exit 1;
@@ -35,9 +35,9 @@ host=$(rustup run 1.97.1 rustc -vV | awk '/^host:/ { print $2 }')
 mkdir -p "$destination"
 destination=$(CDPATH='' cd -- "$destination" && pwd)
 archive="taku-$tag-$target.tar.gz"
-[ ! -e "$destination/$archive" ] && [ ! -e "$destination/$archive.sha256" ] || {
+if [ -e "$destination/$archive" ] || [ -e "$destination/$archive.sha256" ]; then
   echo 'Refusing to replace existing release artifacts' >&2; exit 1;
-}
+fi
 bash scripts/license-notices.sh --check
 rustup run 1.97.1 cargo build --release --locked --target "$target" -p taku
 stage=$(mktemp -d)
