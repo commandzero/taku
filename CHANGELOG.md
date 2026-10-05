@@ -17,6 +17,7 @@ Notable user-facing changes are recorded here. The dated 0.1.0 section is the fi
 - Correct the domain glossary to describe parallel scheduling as the default.
 - Declare Git as a runtime dependency in generated Homebrew formulas.
 - Keep README documentation links usable from packaged CLI source.
+- Require manual review for changes to dependency-notice validation code and inputs.
 
 ### Added
 

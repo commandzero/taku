@@ -2,7 +2,7 @@
 type: Guide
 title: Contributing
 description: Local validation, PR conventions, and OpenSpec completion checks.
-generated: { by: openai-codex/gpt-6.1-sol, at: 2026-10-05T03:00:25Z }
+generated: { by: openai-codex/gpt-6.1-sol, at: 2026-10-05T03:44:15Z }
 ---
 
 # Contributing
@@ -26,6 +26,8 @@ Use `docs` mode for documentation-only changes and `code` for Rust and validatio
 Keep the installed tools on PATH, including the Go and Bun global binary directories. CI uses the runner's npm to install the same pinned OpenSpec CLI.
 
 CI runs Rust code checks in an unprivileged `pull_request` job with no repository secrets or shared dependency cache. A separate `pull_request_target` job runs documentation and OpenSpec contract checks from gate code copied from the trusted base revision. Pushes to `main` and manual runs execute the complete preflight from trusted repository contents.
+
+The workflow's integrity check requires manual maintainer review for changes to validation-gate code and inputs, including `scripts/license-notices.sh`, `scripts/license-notices.hbs`, and `about.toml`. Normal-PR bootstrap checks also require these files in the trusted base. License generation remains in the unprivileged code job; do not run a PR-supplied helper in `pull_request_target`.
 
 Both packages inherit one version and compiler policy. Keep application builds locked. Run the minimum compiler separately; optional feature combinations need new checks if package features are introduced. The library remains reusable and publishes before the CLI; use the reviewed [release procedure](releases.md) and confirm its exact registry version resolves before publishing the CLI. Neither package has been published yet.
 
