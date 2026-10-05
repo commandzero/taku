@@ -15,6 +15,8 @@ Notable user-facing changes are recorded here. The dated 0.1.0 section is the fi
 - Exclude Kibana Skill `experimental` and Agent `created_by`/`type` response fields from create and update payloads, including when Resource metadata tracking is enabled.
 - Return an I/O error instead of panicking when a data-report output pipe closes.
 - Correct the domain glossary to describe parallel scheduling as the default.
+- Declare Git as a runtime dependency in generated Homebrew formulas.
+- Keep README documentation links usable from packaged CLI source.
 
 ### Added
 

@@ -94,6 +94,7 @@ trap 'rm -rf "$stage"; rm -f "$temporary"' EXIT
   printf '  homepage "https://github.com/commandzero/taku"\n'
   printf '  version "%s"\n' "$version"
   printf '  license "Apache-2.0"\n\n'
+  printf '  depends_on "git"\n\n'
   printf '  on_macos do\n'
   printf '    depends_on arch: :arm64\n'
   printf '    on_arm do\n'

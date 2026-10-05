@@ -2,7 +2,7 @@
 type: Policy
 title: Releases and compatibility
 description: Package versions, compiler support, registry publication, and reviewed binary and Homebrew distribution.
-generated: { by: openai-codex/gpt-6.1-sol, at: 2026-10-05T03:11:43Z }
+generated: { by: openai-codex/gpt-6.1-sol, at: 2026-10-05T03:30:38Z }
 ---
 
 # Releases and compatibility
@@ -16,6 +16,8 @@ From the first published 0.x release, incompatible CLI, library, or persisted-fo
 Rust 1.89 is the minimum supported compiler. Development and release builds use pinned Rust 1.97.1. Verify the minimum with complete locked workspace tests and a fresh consumer of the published library. Compiler minimum increases belong in minor releases with changelog notes; verify selected dependency versions too.
 
 Release helpers must support macOS's system Bash 3.2 and pass CI's ShellCheck as well as local preflight. Keep compound validation failures in explicit `if` branches to avoid `SC2015` diagnostics without suppressing guard checks.
+
+Git is a runtime requirement for project discovery, history operations, and Git Application Sources. Generated Homebrew formulas declare `git` as a runtime dependency; binary-archive users must provide Git on PATH. README documentation links point to the repository so they also work from source packages that do not include `docs/`.
 
 ## Dependency license notices
 
