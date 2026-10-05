@@ -2,12 +2,12 @@
 type: Guide
 title: Contributing
 description: Local validation, PR conventions, and OpenSpec completion checks.
-generated: { by: openai-codex/gpt-6.1-sol, at: 2026-10-05T03:44:15Z }
+generated: { by: openai-codex/gpt-6.1-sol, at: 2026-10-05T16:16:35Z }
 ---
 
 # Contributing
 
-Install the toolchain from `rust-toolchain.toml`, Rust 1.89.0 for minimum-compiler checks, ShellCheck, actionlint 1.7.12, OKF 0.2.7, cargo-about 0.8.4, and OpenSpec 1.14.0. OpenSpec is external authoring tooling; the application has no JavaScript build.
+Install the toolchain from `rust-toolchain.toml`, Rust 1.89.0 for minimum-compiler checks, ShellCheck, actionlint 1.7.12, OKF 0.2.7, tq 0.3.0, cargo-about 0.8.4, and OpenSpec 1.14.0. OpenSpec is external authoring tooling; the application has no JavaScript build.
 
 ```sh
 rustup toolchain install 1.97.1 --profile minimal --component rustfmt --component clippy
@@ -27,7 +27,13 @@ Keep the installed tools on PATH, including the Go and Bun global binary directo
 
 CI runs Rust code checks in an unprivileged `pull_request` job with no repository secrets or shared dependency cache. A separate `pull_request_target` job runs documentation and OpenSpec contract checks from gate code copied from the trusted base revision. Pushes to `main` and manual runs execute the complete preflight from trusted repository contents.
 
-The workflow's integrity check requires manual maintainer review for changes to validation-gate code and inputs, including `scripts/license-notices.sh`, `scripts/license-notices.hbs`, and `about.toml`. Normal-PR bootstrap checks also require these files in the trusted base. License generation remains in the unprivileged code job; do not run a PR-supplied helper in `pull_request_target`.
+Changes to workflows, toolchain selection, preflight, contract helpers and dependency-notice inputs require an `APPROVED` review of the exact PR head from a human collaborator with write, maintain or admin access. `scripts/check-workflow-review.sh` is copied from the trusted base; neither a PR-supplied replacement, a bot, the PR author, a read-only reviewer nor an approval of an earlier commit can satisfy this gate. A reviewer's later request for changes or dismissal invalidates that reviewer's approval; an ordinary comment does not.
+
+After a maintainer approves the current head, rerun the failed `PR contract` job (`gh run rerun RUN_ID --failed`). A new commit requires new approval. No write token or repository secret is needed; `pull_request_target` has only contents/read and pull-requests/read permissions and executes only base-snapshot helpers. An optional base `docs-index.sh` is copied when present so older trusted gates do not require newer PR-only helper inputs.
+
+The initial CI bootstrap PR cannot change the workflow already executing from its base. Review its implementation, full local preflight and minimum-compiler evidence, then land that focused PR through the existing documented manual bootstrap exception. Do not merge a release PR to bootstrap its own trusted workflow. After the bootstrap lands, synchronize dependent PR workflows with it and approve their exact new heads before rerunning contract checks.
+
+License generation remains in the unprivileged code job; do not run a PR-supplied helper in `pull_request_target`.
 
 Both packages inherit one version and compiler policy. Keep application builds locked. Run the minimum compiler separately; optional feature combinations need new checks if package features are introduced. The library remains reusable and publishes before the CLI; use the reviewed [release procedure](releases.md) and confirm its exact registry version resolves before publishing the CLI. Neither package has been published yet.
 
@@ -67,7 +73,7 @@ BASE_REF=origin/main OPENSPEC_CHANGES=my-change bash scripts/check-openspec.sh
 
 With `BASE_REF`, the gate checks committed HEAD state against the merge base. Without it, local preflight checks working-tree changes against HEAD, including untracked files. `OPENSPEC_CHANGES` adds IDs in either mode. Set `CHECK_ALL_ARCHIVES=1` to check all archives against current specs, useful for this initial adoption but not a permanent gate once later changes supersede old requirements.
 
-CI reruns on PR edits and synchronization, with no workflow path filters. Require the `preflight`, `minimum compiler`, and `PR contract` results before merge. Changes to trusted gate code or workflow integrity inputs require maintainer review and manual validation when the base revision cannot run the new trusted contract; the bootstrap guard must not be bypassed with PR-supplied code. The public repository's main branch is currently unprotected (API check on 2026-10-05 returned `Branch not protected`); maintainers must inspect the required results and any bootstrap exceptions before merging until protection is configured.
+CI reruns on PR edits and synchronization, with no workflow path filters. Require the `preflight`, `minimum compiler`, and `PR contract` results before merge. The normal-PR bootstrap job checks that the base contains the actual contract-gate dependencies, not every new unprivileged validation input introduced by the PR. Maintainers must inspect required results and exact-head integrity approval; repository branch protection is an additional control, not a replacement for validation.
 
 See [bundle rules](bundle.md) for documentation validation and [release policy](releases.md) for compatibility and distribution.
 
