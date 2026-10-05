@@ -2,7 +2,7 @@
 type: Guide
 title: Application definitions
 description: Versioned catalogs, operation mappings, projections, and Git sources.
-generated: { by: openai-codex/gpt-6-sol, at: 2026-10-05T01:20:56Z }
+generated: { by: openai-codex/gpt-6.1-sol, at: 2026-10-05T03:48:30Z }
 ---
 
 # Application definitions
@@ -51,6 +51,8 @@ resource_types:
 ```
 
 An omitted Resource Type `version` inherits `application.version`; omitted `stability` defaults to `stable`. Zero matching definitions makes that Resource Type unavailable for the Target. More than one match is invalid configuration. Definitions are complete objects—Taku does not merge version overlays.
+
+The generic loader validates all supported version partitions before an Application can be installed, including prerelease constraints. Overlapping definitions, dependencies unavailable in any selected version, and version-specific dependency cycles are rejected without contacting a Target. This applies equally to embedded and Git-sourced Applications. A multi-Application installation validates the complete selected set before writing any installed definition; disjoint version definitions remain valid even when their combined dependency graph would contain a cycle.
 
 `id.pointer` identifies an API field when a Resource carries its identity on the wire. Canonical Resources persist the stable ID separately at `/_taku/id`, so response mapping never has to overwrite an ordinary API field such as `name`.
 

@@ -4,6 +4,10 @@ Notable user-facing changes are recorded here. The dated 0.1.0 section is the fi
 
 ## [Unreleased]
 
+### Fixed
+
+- Reject overlapping version-qualified Resource Type definitions and unavailable or cyclic dependencies before installing any selected Application, using the same validation for Elasticsearch, Kibana, and external Applications.
+
 ## [0.1.0] - 2026-10-05
 
 ### Changed
