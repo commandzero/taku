@@ -2,7 +2,7 @@
 type: Policy
 title: Documentation bundle
 description: Bundle boundary and checks for Taku documentation.
-generated: { by: openai-codex/gpt-6.1-sol, at: 2026-10-05T01:27:25Z }
+generated: { by: openai-codex/gpt-6.1-sol, at: 2026-10-06T20:06:31Z }
 ---
 
 # Documentation bundle
