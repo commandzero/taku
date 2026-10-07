@@ -2,18 +2,17 @@
 type: Guide
 title: Contributing
 description: Local validation, PR conventions, and OpenSpec completion checks.
-generated: { by: openai-codex/gpt-6.1-sol, at: 2026-10-07T03:54:39Z }
+generated: { by: openai-codex/gpt-6.1-sol, at: 2026-10-07T04:14:11Z }
 ---
 
 # Contributing
 
-Install the toolchain from `rust-toolchain.toml`, Rust 1.89.0 for minimum-compiler checks, ShellCheck, actionlint 1.7.12, OKF 0.2.7, tq 0.3.0, and OpenSpec 1.14.0. OpenSpec is external authoring tooling; the application has no JavaScript build.
+Install the toolchain from `rust-toolchain.toml`, Rust 1.89.0 for minimum-compiler checks, ShellCheck, actionlint 1.7.12, OKF 0.2.7, and OpenSpec 1.14.0. OpenSpec is external authoring tooling; the application has no JavaScript build.
 
 ```sh
 rustup toolchain install 1.97.1 --profile minimal --component rustfmt --component clippy
 rustup toolchain install 1.89.0 --profile minimal
 cargo install okf --version 0.2.7 --locked
-cargo install tq-cli --version 0.3.0 --locked
 go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
 bun install --global @fission-ai/openspec@1.14.0
 bash scripts/preflight.sh

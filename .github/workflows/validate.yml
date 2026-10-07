@@ -82,7 +82,6 @@ jobs:
         run: |
           toolchain=$(awk -F '"' '/^channel = / { print $2 }' rust-toolchain.toml)
           rustup toolchain install "$toolchain" --profile minimal --component rustfmt --component clippy
-          cargo install tq-cli --version 0.3.0 --locked
           go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
           sudo apt-get update
@@ -224,7 +223,6 @@ jobs:
           rustup toolchain install "$toolchain" --profile minimal --component rustfmt --component clippy
           rustup toolchain install 1.89.0 --profile minimal
           cargo install okf --version 0.2.7 --locked
-          cargo install tq-cli --version 0.3.0 --locked
           npm install --global @fission-ai/openspec@1.14.0
           go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
