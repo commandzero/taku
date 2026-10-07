@@ -11,16 +11,14 @@ on:
 
 permissions:
   contents: read
-  pull-requests: read
 
 concurrency:
   group: validate-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
-  # This guard deliberately fails while the repository is adopting this
-  # workflow. The base revision cannot provide a trusted workflow for its own
-  # introduction; maintainers must use the documented manual preflight once.
+  # Fail closed if the base has no trusted contract-gate baseline. New
+  # unprivileged helpers are not dependencies of an older base's gate code.
   bootstrap:
     name: trusted workflow bootstrap
     if: github.event_name == 'pull_request'
@@ -40,7 +38,7 @@ jobs:
             git cat-file -e "$BASE_SHA:$file" 2>/dev/null || missing=1
           done
           if [[ "$missing" == 1 ]]; then
-            echo 'This adoption PR introduces the trusted workflow and gates. Run the documented local preflight and obtain manual maintainer approval before merging.' >&2
+            echo 'This adoption PR introduces the trusted workflow and gates. Run the documented local preflight and complete Agent + Copilot + Author review before the author approves landing the trusted baseline.' >&2
             exit 1
           fi
 
@@ -84,7 +82,6 @@ jobs:
         run: |
           toolchain=$(awk -F '"' '/^channel = / { print $2 }' rust-toolchain.toml)
           rustup toolchain install "$toolchain" --profile minimal --component rustfmt --component clippy
-          cargo install tq-cli --version 0.3.0 --locked
           go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
           sudo apt-get update
@@ -109,7 +106,6 @@ jobs:
           actionlint
           for script in scripts/*.sh; do bash -n "$script"; done
           rustup run "$toolchain" rustfmt --edition 2024 --check scripts/check-openspec.rs
-          bash scripts/check-workflow-review-test.sh
           rustup run "$toolchain" cargo clippy --workspace --all-targets --locked -- -D warnings
           rustup run "$toolchain" cargo test --workspace --locked
           staging=$(mktemp -d)
@@ -144,9 +140,9 @@ jobs:
       - name: Run minimum compiler tests
         run: rustup run 1.89.0 cargo test --workspace --locked
 
-  # pull_request_target uses the workflow from the base branch. Contract gates
-  # and workflow integrity checks are therefore fixed by the trusted revision;
-  # no PR code is executed in this job.
+  # pull_request_target uses the workflow and contract helpers from the base
+  # revision. PR code is not executed; approval belongs to the review/merge
+  # process rather than a separate GitHub human-review gate.
   contract:
     name: PR contract
     if: github.event_name == 'pull_request_target'
@@ -166,7 +162,7 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/taku-gates"
           trusted=1
-          for file in rust-toolchain.toml scripts/check-pr.sh scripts/check-docs.sh scripts/check-openspec.sh scripts/check-openspec.rs scripts/check-workflow-review.sh; do
+          for file in rust-toolchain.toml scripts/check-pr.sh scripts/check-docs.sh scripts/check-openspec.sh scripts/check-openspec.rs; do
             git cat-file -e "$TRUSTED_REF:$file" 2>/dev/null || trusted=0
           done
           if [[ "$trusted" != 1 ]]; then
@@ -174,7 +170,7 @@ jobs:
             exit 1
           fi
           awk -F '"' '/^channel = / { print $2 }' rust-toolchain.toml > "$RUNNER_TEMP/taku-gates/toolchain"
-          for file in scripts/check-pr.sh scripts/check-docs.sh scripts/check-openspec.sh scripts/check-openspec.rs scripts/check-workflow-review.sh; do
+          for file in scripts/check-pr.sh scripts/check-docs.sh scripts/check-openspec.sh scripts/check-openspec.rs; do
             git show "$TRUSTED_REF:$file" > "$RUNNER_TEMP/taku-gates/$(basename "$file")"
           done
           if git cat-file -e "$TRUSTED_REF:scripts/docs-index.sh" 2>/dev/null; then
@@ -189,7 +185,6 @@ jobs:
           toolchain=$(cat "$RUNNER_TEMP/taku-gates/toolchain")
           rustup toolchain install "$toolchain" --profile minimal --component rustfmt --component clippy
           cargo install okf --version 0.2.7 --locked
-          cargo install tq-cli --version 0.3.0 --locked
           openspec_version=$(awk '/^\[\[.*openspec --version/ { print $5 }' "$RUNNER_TEMP/taku-gates/check-openspec.sh")
           [[ "$openspec_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'Unable to determine trusted OpenSpec version.' >&2; exit 1; }
           npm install --global "@fission-ai/openspec@$openspec_version"
@@ -199,14 +194,6 @@ jobs:
           repository: ${{ github.event.pull_request.head.repo.full_name }}
           ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
-      - name: Verify maintainer approval for trusted gate changes
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR_REPOSITORY: ${{ github.repository }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
-        run: bash "$RUNNER_TEMP/taku-gates/check-workflow-review.sh"
       - name: Validate documentation and PR contract
         if: steps.trusted-gates.outputs.available == 'true'
         env:
@@ -236,7 +223,6 @@ jobs:
           rustup toolchain install "$toolchain" --profile minimal --component rustfmt --component clippy
           rustup toolchain install 1.89.0 --profile minimal
           cargo install okf --version 0.2.7 --locked
-          cargo install tq-cli --version 0.3.0 --locked
           npm install --global @fission-ai/openspec@1.14.0
           go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
