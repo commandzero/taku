@@ -23,9 +23,8 @@ Notable user-facing changes are recorded here. The dated 0.1.0 section is the fi
 - Correct the domain glossary to describe parallel scheduling as the default.
 - Declare Git as a runtime dependency in generated Homebrew formulas.
 - Keep README documentation links usable from packaged CLI source.
-- Require manual review for changes to dependency-notice validation code and inputs.
 - Verify Homebrew archive licenses and notices against the reviewed tag, require matching provenance in local mode, and check the native binary version before formula generation.
-- Allow reviewed CI and validation-gate changes through exact-head human maintainer approval instead of an unconditional workflow-integrity failure, while retaining trusted-base execution and read-only credentials.
+- Align CI with Agent + Copilot + Author approval instead of requiring an independent human GitHub review, while retaining trusted-base contract checks and read-only credentials.
 - Generate and validate numbered documentation indexes consistently with the adopted repository format while keeping trusted-base checks read-only.
 
 ### Added
