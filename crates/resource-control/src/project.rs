@@ -8,7 +8,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct ContextFile {
     schema_version: u32,
@@ -63,12 +63,12 @@ pub fn initialize(
     }
     let mut environments = BTreeMap::new();
     for name in &environment_names {
-        if name.is_empty()
-            || environments
-                .insert(name.clone(), EnvironmentConfig::default())
-                .is_some()
+        validate_directory_name(name, "Environment")?;
+        if environments
+            .insert(name.clone(), EnvironmentConfig::default())
+            .is_some()
         {
-            bail!("Environment names must be non-empty and unique");
+            bail!("Environment names must be unique");
         }
     }
     fs::create_dir_all(&taku_dir).context("failed to create .taku directory")?;
@@ -106,7 +106,7 @@ pub fn load_project(root: &Path) -> Result<Project> {
     if project.max_requests == 0 {
         bail!("max_requests must be greater than zero");
     }
-    validate_environment_graph(&project)?;
+    validate_project_configuration(&project)?;
     Ok(project)
 }
 
@@ -148,15 +148,19 @@ pub fn current_environment(
 }
 
 pub fn save_context(root: &Path, environment: &str) -> Result<String> {
-    let project = load_project(root)?;
+    let root = git_root(root)?;
+    let project = load_project(&root)?;
     if !project.environments.contains_key(environment) {
         bail!("unknown Environment {environment}");
     }
-    fs::write(
-        root.join(".taku/context.yaml"),
-        format!("schema_version: 1\nenvironment: {environment}\n"),
-    )?;
-    Ok(environment.to_owned())
+    let path = root.join(".taku/context.yaml");
+    crate::canonical::reject_symlink_components(&root, &path)?;
+    let context = ContextFile {
+        schema_version: SCHEMA_VERSION,
+        environment: environment.to_owned(),
+    };
+    fs::write(path, serde_yaml::to_string(&context)?)?;
+    Ok(context.environment)
 }
 
 pub fn list_targets(root: &Path, environment: Option<&str>) -> Result<Vec<TargetListing>> {
@@ -183,6 +187,7 @@ pub fn add_target(
     url: &str,
 ) -> Result<TargetConfig> {
     let root = git_root(root)?;
+    validate_directory_name(name, "Target")?;
     let mut project = load_project(&root)?;
     let env_name = current_environment(&root, &project, environment)?;
     if !root
@@ -193,6 +198,8 @@ pub fn add_target(
     {
         bail!("Application {application} is not installed");
     }
+    let path = target_tree_path(&root, &project, &env_name, name);
+    validate_target_tree_path(&root, &path)?;
     let env = project.environments.get_mut(&env_name).unwrap();
     if env.targets.contains_key(name) {
         bail!("Target {name} already exists in Environment {env_name}");
@@ -212,6 +219,8 @@ pub fn add_target(
 
 pub fn rename_target(root: &Path, environment: Option<&str>, old: &str, new: &str) -> Result<()> {
     let root = git_root(root)?;
+    validate_directory_name(old, "Target")?;
+    validate_directory_name(new, "Target")?;
     let mut project = load_project(&root)?;
     let env_name = current_environment(&root, &project, environment)?;
     let env = project.environments.get_mut(&env_name).unwrap();
@@ -223,16 +232,16 @@ pub fn rename_target(root: &Path, environment: Option<&str>, old: &str, new: &st
         .remove(old)
         .with_context(|| format!("unknown Target {old}"))?;
     env.targets.insert(new.into(), target);
-    let prefix = if project.layout == RepositoryLayout::Multi {
-        root.join(&env_name)
-    } else {
-        root.clone()
-    };
-    let old_path = prefix.join(old);
-    if old_path.exists() {
-        fs::rename(&old_path, prefix.join(new)).context("failed to rename Target Resource tree")?;
+    let old_path = target_tree_path(&root, &project, &env_name, old);
+    let new_path = target_tree_path(&root, &project, &env_name, new);
+    let old_exists = validate_target_tree_path(&root, &old_path)?;
+    if validate_target_tree_path(&root, &new_path)? {
+        bail!(
+            "Target rename destination already exists: {}",
+            new_path.display()
+        );
     }
-    for disposable in [
+    let disposable_paths = [
         root.join(".taku/cache").join(&env_name).join(old),
         root.join(".taku/journals").join(&env_name).join(old),
         root.join(".taku/baselines")
@@ -241,7 +250,16 @@ pub fn rename_target(root: &Path, environment: Option<&str>, old: &str, new: &st
         root.join(".taku/journals")
             .join(&env_name)
             .join("push.yaml"),
-    ] {
+    ];
+    // Check every cleanup path before moving desired state or removing cache
+    // entries: an operational-state symlink must not redirect deletion.
+    for path in &disposable_paths {
+        crate::canonical::reject_symlink_components(&root, path)?;
+    }
+    if old_exists {
+        fs::rename(&old_path, &new_path).context("failed to rename Target Resource tree")?;
+    }
+    for disposable in disposable_paths {
         if disposable.exists() {
             if disposable.is_dir() {
                 fs::remove_dir_all(disposable)?;
@@ -253,8 +271,12 @@ pub fn rename_target(root: &Path, environment: Option<&str>, old: &str, new: &st
     save_project(&root, &project)
 }
 
-fn validate_environment_graph(project: &Project) -> Result<()> {
-    for start in project.environments.keys() {
+fn validate_project_configuration(project: &Project) -> Result<()> {
+    for (start, environment) in &project.environments {
+        validate_directory_name(start, "Environment")?;
+        for name in environment.targets.keys() {
+            validate_directory_name(name, "Target")?;
+        }
         let mut seen = std::collections::BTreeSet::new();
         let mut next = Some(start.as_str());
         while let Some(name) = next {
@@ -273,4 +295,36 @@ fn validate_environment_graph(project: &Project) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn validate_directory_name(name: &str, kind: &str) -> Result<()> {
+    if name.is_empty()
+        || matches!(name, "." | "..")
+        || name.eq_ignore_ascii_case(".git")
+        || name.eq_ignore_ascii_case(".taku")
+        || name.chars().any(|c| matches!(c, '/' | '\\' | '\0'))
+    {
+        bail!("{kind} must be one non-empty path segment outside .git and .taku");
+    }
+    Ok(())
+}
+
+fn target_tree_path(root: &Path, project: &Project, environment: &str, target: &str) -> PathBuf {
+    match project.layout {
+        RepositoryLayout::Single => root.join(target),
+        RepositoryLayout::Multi => root.join(environment).join(target),
+    }
+}
+
+fn validate_target_tree_path(root: &Path, path: &Path) -> Result<bool> {
+    crate::canonical::reject_symlink_components(root, path)?;
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.is_dir() => Ok(true),
+        Ok(_) => bail!(
+            "Target Resource tree is not a directory: {}",
+            path.display()
+        ),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error).context("failed to inspect Target Resource tree"),
+    }
 }

@@ -318,3 +318,98 @@ fn invalid_higher_precedence_cache_and_metadata_are_rejected() {
     let installed = run_failure(&project, &["install", "custom"]);
     assert!(String::from_utf8_lossy(&installed.stderr).contains("schema version"));
 }
+
+#[test]
+fn invalid_selected_applications_never_partially_install() {
+    let source = tempfile::tempdir().unwrap();
+    git_init(source.path());
+    for name in ["elasticsearch", "kibana"] {
+        let app = source.path().join("applications").join(name);
+        std::fs::create_dir_all(&app).unwrap();
+        write_definition(&app, name, "1.0.0");
+    }
+    commit(source.path(), "valid definitions");
+
+    let project = tempfile::tempdir().unwrap();
+    git_init(project.path());
+    run(
+        &project,
+        &["init", "--layout", "single", "--environment", "dev"],
+    );
+    run(
+        &project,
+        &["app", "refresh", "--from", source.path().to_str().unwrap()],
+    );
+    let project_path = project.path().join(".taku/project.yaml");
+    let project_before = std::fs::read(&project_path).unwrap();
+
+    for (name, other) in [("elasticsearch", "kibana"), ("kibana", "elasticsearch")] {
+        let cached = project.path().join(format!(
+            ".taku/cache/application-source/applications/{name}/version-9.yaml"
+        ));
+        let valid: serde_yaml::Value = serde_yaml::from_str(&catalog(name, "1.0.0")).unwrap();
+        for (problem, diagnostic) in [
+            ("unknown field", "invalid Major Version Catalog"),
+            ("identity mismatch", "identity"),
+            ("unknown dependency", "unknown Resource Type"),
+            ("unsupported intent", "Write Intent"),
+            ("overlapping versions", "matching"),
+            ("dependency cycle", "dependency cycle"),
+        ] {
+            let mut invalid = valid.clone();
+            match problem {
+                "unknown field" => invalid["unexpected"] = true.into(),
+                "identity mismatch" => {
+                    invalid["application"]["name"] = "different".into();
+                }
+                "unknown dependency" => {
+                    invalid["resource_types"]["widgets"][0]["dependencies"] =
+                        serde_yaml::from_str("[missing]").unwrap();
+                }
+                "unsupported intent" => {
+                    invalid["resource_types"]["widgets"][0]["operations"]
+                        .as_mapping_mut()
+                        .unwrap()
+                        .remove(serde_yaml::Value::from("upsert"));
+                }
+                "overlapping versions" => {
+                    let definitions = invalid["resource_types"]["widgets"]
+                        .as_sequence_mut()
+                        .unwrap();
+                    let mut overlap = definitions[0].clone();
+                    overlap["version"] = ">=9.4.0, <9.6.0".into();
+                    definitions.push(overlap);
+                }
+                "dependency cycle" => {
+                    invalid["resource_types"]["widgets"][0]["dependencies"] =
+                        serde_yaml::from_str("[widgets]").unwrap();
+                }
+                _ => unreachable!(),
+            }
+            std::fs::write(&cached, serde_yaml::to_string(&invalid).unwrap()).unwrap();
+            for names in [vec![name], vec![other, name]] {
+                let mut args = vec!["install"];
+                args.extend(names);
+                let output = run_failure(&project, &args);
+                assert_eq!(output.status.code(), Some(2), "{name}: {problem}");
+                assert!(
+                    String::from_utf8_lossy(&output.stderr).contains(diagnostic),
+                    "{name}: {problem}: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                for selected in ["elasticsearch", "kibana"] {
+                    assert!(
+                        !project
+                            .path()
+                            .join(".taku/applications")
+                            .join(selected)
+                            .exists(),
+                        "{name}: {problem}: partially installed {selected}"
+                    );
+                }
+                assert_eq!(std::fs::read(&project_path).unwrap(), project_before);
+            }
+        }
+        std::fs::write(&cached, catalog(name, "1.0.0")).unwrap();
+    }
+}

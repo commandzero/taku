@@ -2,37 +2,41 @@
 type: Guide
 title: Contributing
 description: Local validation, PR conventions, and OpenSpec completion checks.
-generated: { by: openai-codex/gpt-6.1-sol, at: 2026-10-05T05:02:12Z }
+generated: { by: openai-codex/gpt-6.1-sol, at: 2026-10-07T04:14:11Z }
 ---
 
 # Contributing
 
-Install the toolchain from `rust-toolchain.toml`, Rust 1.89.0 for minimum-compiler checks, ShellCheck, actionlint 1.7.12, OKF 0.2.7, tq 0.3.0, and OpenSpec 1.14.0. OpenSpec is external authoring tooling; the application has no JavaScript build.
+Install the toolchain from `rust-toolchain.toml`, Rust 1.89.0 for minimum-compiler checks, ShellCheck, actionlint 1.7.12, OKF 0.2.7, cargo-about 0.8.4, and OpenSpec 1.14.0. OpenSpec is external authoring tooling; the application has no JavaScript build.
 
 ```sh
 rustup toolchain install 1.97.1 --profile minimal --component rustfmt --component clippy
 rustup toolchain install 1.89.0 --profile minimal
 cargo install okf --version 0.2.7 --locked
-cargo install tq-cli --version 0.3.0 --locked
+rustup run 1.97.1 cargo install cargo-about --version 0.8.4 --locked
 go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
 bun install --global @fission-ai/openspec@1.14.0
 bash scripts/preflight.sh
 bash scripts/preflight.sh msrv
 ```
 
-Use `docs` mode for documentation-only changes and `code` for Rust and validation-tool changes. The default `all` runs both. Ordinary tests use local temporary projects and mock servers; live validation is a separate, explicit opt-in, not evidence supplied by preflight. Follow the [recommended live API validator](../../README.md#configuration-driven-api-validation), not the legacy `live_elastic` tests: the latter perform automatic DELETE cleanup and must not be run. Do not use a blanket command to run all ignored tests.
+Use `docs` mode for documentation-only changes and `code` for Rust and validation-tool changes. The default `all` runs both. Ordinary tests use local temporary projects and mock servers; live validation is a separate, explicit opt-in, not evidence supplied by preflight. Follow the [recommended live API validator](../live-api-validation.md), not the legacy `live_elastic` tests: the latter perform automatic DELETE cleanup and must not be run. Do not use a blanket command to run all ignored tests.
 
 Keep the installed tools on PATH, including the Go and Bun global binary directories. CI uses the runner's npm to install the same pinned OpenSpec CLI.
 
 CI runs Rust code checks in an unprivileged `pull_request` job with no repository secrets or shared dependency cache. A separate `pull_request_target` job runs documentation and OpenSpec contract checks from gate code copied from the trusted base revision. Pushes to `main` and manual runs execute the complete preflight from trusted repository contents.
 
-Changes to workflows, toolchain selection, preflight, contract helpers and dependency-notice inputs require an `APPROVED` review of the exact PR head from a human collaborator with write, maintain or admin access. `scripts/check-workflow-review.sh` is copied from the trusted base; neither a PR-supplied replacement, a bot, the PR author, a read-only reviewer nor an approval of an earlier commit can satisfy this gate. A reviewer's later request for changes or dismissal invalidates that reviewer's approval; an ordinary comment does not.
+PR approval follows Agent + Copilot + Author review: the agent validates the implementation, Copilot reviews the current head with findings addressed, and the author decides whether to approve and merge. This includes workflow, toolchain, preflight and contract-helper changes. No independent human reviewer or non-author GitHub `APPROVED` review is required. Agents still need explicit authorization to merge into `main` or publish a release.
 
-After a maintainer approves the current head, rerun the failed `PR contract` job (`gh run rerun RUN_ID --failed`). A new commit requires new approval. No write token or repository secret is needed; `pull_request_target` has only contents/read and pull-requests/read permissions and executes only base-snapshot helpers. An optional base `docs-index.sh` is copied when present so older trusted gates do not require newer PR-only helper inputs.
+CI validates code and the documentation/OpenSpec contract; it does not turn review roles into a separate approval gate. No write token or repository secret is needed; `pull_request_target` has only contents/read permission and executes only base-snapshot helpers. An optional base `docs-index.sh` is copied when present so older trusted gates do not require newer PR-only helper inputs.
 
-The initial CI bootstrap PR cannot change the workflow already executing from its base. Review its implementation, full local preflight and minimum-compiler evidence, then land that focused PR through the existing documented manual bootstrap exception. Do not merge a release PR to bootstrap its own trusted workflow. After the bootstrap lands, synchronize dependent PR workflows with it and approve their exact new heads before rerunning contract checks.
+A CI policy correction cannot replace the workflow already executing from its base. Complete Agent + Copilot review and local preflight before the author approves landing that focused trusted-base update. Do not merge a release PR to bootstrap its own trusted workflow. After the update lands, synchronize dependent PRs with the trusted baseline and run checks on their new head/base.
 
-Both packages inherit one version and compiler policy. Keep application builds locked. Run the minimum compiler separately; optional feature combinations need new checks if package features are introduced. The library remains reusable, but neither package publishes to a registry today.
+License generation remains in the unprivileged code job; do not run a PR-supplied helper in `pull_request_target`.
+
+Both packages inherit one version and compiler policy. Keep application builds locked. Run the minimum compiler separately; optional feature combinations need new checks if package features are introduced. The library remains reusable and publishes before the CLI; use the reviewed [release procedure](releases.md) and confirm its exact registry version resolves before publishing the CLI. Neither package has been published yet.
+
+After dependency changes, run `bash scripts/license-notices.sh` and review `NOTICES.md`. Code preflight and archive packaging regenerate notices into a temporary file and reject stale output or synthesized license text without a source. `about.toml` selects existing permissive license alternatives across the release targets; new obligations or changed hash-verified clarifications need review.
 
 Use Conventional Commit PR titles with `feat`, `fix`, `docs`, `refactor`, `perf`, `test`, `build`, `ci`, `chore`, or `revert`. Add `!` and explain migration when the public contract breaks. Squash coherent changes into main; preserve historical commits. Add notable user effects to the changelog, keeping empty categories out.
 
@@ -42,7 +46,7 @@ Keep API scenarios declarative. The generic [live harness](../../tests/live_api.
 
 The Elastic suite requires Elasticsearch/Kibana 9.4 with Agent Builder enabled. Externally supply `LIVE_ES_URL`, `LIVE_ES_AUTHORIZATION`, `LIVE_KB_URL`, and `LIVE_KB_AUTHORIZATION` in the process environment, never in secret files. A live invocation requires `TAKU_LIVE_SUITE`, an already-existing `TAKU_LIVE_ARTIFACTS` directory, and exactly `TAKU_LIVE_ALLOW_MUTATIONS=1`. Every HTTP request and CLI invocation is bounded to 60 seconds. Review fixtures and catalogs before granting access: the guardrails are not a security sandbox. Projects, reports, and remote resources remain after success or failure; there is no automatic cleanup.
 
-Use the narrowly selected command in the root README. The `elastic.yaml` fixture covers pipeline create/update, a unique Kibana space, and skill/agent create/update. The separate `saved-objects.yaml` fixture is an honest known-failure diagnostic for fresh saved-object absence detection; preserve strict expectations rather than turning an unexpected response into a pass. Record the actual product versions, suite, and retained report when reporting results. Acquisition, create, update, and no-op coverage must be established by the authored steps and assertions; passing a suite is not complete API compatibility certification.
+Use the narrowly selected command in the [live API validation guide](../live-api-validation.md). The `elastic.yaml` fixture covers pipeline create/update, a unique Kibana space, and skill/agent create/update. The separate `saved-objects.yaml` fixture is an honest known-failure diagnostic for fresh saved-object absence detection; preserve strict expectations rather than turning an unexpected response into a pass. Record the actual product versions, suite, and retained report when reporting results. Acquisition, create, update, and no-op coverage must be established by the authored steps and assertions; passing a suite is not complete API compatibility certification.
 
 Run offline transport contracts without service credentials:
 
@@ -68,7 +72,7 @@ BASE_REF=origin/main OPENSPEC_CHANGES=my-change bash scripts/check-openspec.sh
 
 With `BASE_REF`, the gate checks committed HEAD state against the merge base. Without it, local preflight checks working-tree changes against HEAD, including untracked files. `OPENSPEC_CHANGES` adds IDs in either mode. Set `CHECK_ALL_ARCHIVES=1` to check all archives against current specs, useful for this initial adoption but not a permanent gate once later changes supersede old requirements.
 
-CI reruns on PR edits and synchronization, with no workflow path filters. Require the `preflight`, `minimum compiler`, and `PR contract` results before merge. The normal-PR bootstrap job checks that the base contains the actual contract-gate dependencies, not every new unprivileged validation input introduced by the PR. Maintainers must inspect required results and exact-head integrity approval; repository branch protection is an additional control, not a replacement for validation.
+CI reruns on PR edits and synchronization, with no workflow path filters. Require the `preflight`, `minimum compiler`, and `PR contract` results before merge. The normal-PR bootstrap job checks that the base contains the actual contract-gate dependencies, not every new unprivileged validation input introduced by the PR. The author must inspect required results and Agent + Copilot review before approving a merge; repository branch protection is an additional control, not a replacement for validation.
 
 See [bundle rules](bundle.md) for documentation validation and [release policy](releases.md) for compatibility and distribution.
 
