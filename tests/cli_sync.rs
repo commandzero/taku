@@ -2,138 +2,15 @@ use assert_cmd::Command;
 use resource_control::{CompletionIntent, CompletionQuery, completion_candidates};
 use serde_json::{Value, json};
 use std::process::Command as StdCommand;
-use std::sync::{
-    Arc, Mutex,
-    atomic::{AtomicBool, Ordering},
-};
-use std::thread;
-use std::time::Duration;
 use tempfile::TempDir;
-use tiny_http::{Header, Method, Response, Server};
 
-#[derive(Clone, Debug)]
-struct Captured {
-    method: String,
-    path: String,
-    authorization: Option<String>,
-    if_match: Option<String>,
-    body: String,
-}
+#[path = "cli_sync/fake.rs"]
+mod fake;
 
-struct FakeTarget {
-    url: String,
-    version: Arc<Mutex<String>>,
-    requests: Arc<Mutex<Vec<Captured>>>,
-    stop: Arc<AtomicBool>,
-    thread: Option<thread::JoinHandle<()>>,
-}
+#[path = "cli_sync/deletion.rs"]
+mod deletion;
 
-impl FakeTarget {
-    fn start() -> Self {
-        let server = Server::http("127.0.0.1:0").unwrap();
-        let url = format!("http://{}", server.server_addr());
-        let resource = Arc::new(Mutex::new(
-            json!({"id":"pipe-1","name":"Pipeline","description":"remote","processors":[],"version":"7","created_date_millis":1000,"modified_date_millis":2000,"_secret":"NEVER-PERSIST"}),
-        ));
-        let version = Arc::new(Mutex::new(String::from("9.1.0")));
-        let requests = Arc::new(Mutex::new(Vec::new()));
-        let stop = Arc::new(AtomicBool::new(false));
-        let (state, remote_version, captured, stopping) = (
-            resource.clone(),
-            version.clone(),
-            requests.clone(),
-            stop.clone(),
-        );
-        let thread = thread::spawn(move || {
-            while !stopping.load(Ordering::Relaxed) {
-                let Some(mut request) = server.recv_timeout(Duration::from_millis(50)).unwrap()
-                else {
-                    continue;
-                };
-                let mut body = String::new();
-                request.as_reader().read_to_string(&mut body).unwrap();
-                let authorization = request
-                    .headers()
-                    .iter()
-                    .find(|h| h.field.equiv("authorization"))
-                    .map(|h| h.value.as_str().to_owned());
-                let if_match = request
-                    .headers()
-                    .iter()
-                    .find(|header| header.field.equiv("if-match"))
-                    .map(|header| header.value.as_str().to_owned());
-                captured.lock().unwrap().push(Captured {
-                    method: request.method().as_str().into(),
-                    path: request.url().into(),
-                    authorization,
-                    if_match,
-                    body: body.clone(),
-                });
-                let response = match (request.method(), request.url()) {
-                    (&Method::Get, "/_ingest/pipeline/pipe-1") => Response::from_string(
-                        json!({"pipe-1": state.lock().unwrap().clone()}).to_string(),
-                    )
-                    .with_header(Header::from_bytes("content-type", "application/json").unwrap()),
-                    (&Method::Get, "/_ingest/pipeline/pipe-2") => Response::from_string(
-                        json!({
-                            "pipe-2": {
-                                "name": "Second",
-                                "description": "adopt me",
-                                "processors": []
-                            }
-                        })
-                        .to_string(),
-                    )
-                    .with_header(Header::from_bytes("content-type", "application/json").unwrap()),
-                    (&Method::Get, "/") => Response::from_string(
-                        json!({"version":{"number":remote_version.lock().unwrap().clone()}})
-                            .to_string(),
-                    )
-                    .with_header(Header::from_bytes("content-type", "application/json").unwrap()),
-                    (&Method::Get, "/_ingest/pipeline") => Response::from_string(
-                        json!({
-                            "pipe-1": state.lock().unwrap().clone(),
-                            "pipe-2": {"name":"Second","description":"adopt me","processors":[]}
-                        })
-                        .to_string(),
-                    )
-                    .with_header(Header::from_bytes("content-type", "application/json").unwrap()),
-                    (&Method::Put, path) if path.starts_with("/_ingest/pipeline/pipe-1") => {
-                        *state.lock().unwrap() = serde_json::from_str(&body).unwrap();
-                        Response::from_string("{\"acknowledged\":true}").with_header(
-                            Header::from_bytes("content-type", "application/json").unwrap(),
-                        )
-                    }
-                    (&Method::Delete, "/_ingest/pipeline/pipe-1") => {
-                        Response::from_string("{\"acknowledged\":true}")
-                    }
-                    (&Method::Post, "/jobs") => Response::from_string(
-                        "{\"id\":\"job-1\",\"name\":\"Pending Job\",\"enabled\":true}",
-                    )
-                    .with_header(Header::from_bytes("content-type", "application/json").unwrap()),
-                    (&Method::Post, "/mapped-jobs") => Response::from_string(
-                        json!({
-                            "assigned_id": "job-1",
-                            "resource": {"name": "Pending Job", "enabled": false},
-                            "acknowledged": true
-                        })
-                        .to_string(),
-                    )
-                    .with_header(Header::from_bytes("content-type", "application/json").unwrap()),
-                    _ => Response::from_string("not found").with_status_code(404),
-                };
-                request.respond(response).unwrap();
-            }
-        });
-        Self {
-            url,
-            version,
-            requests,
-            stop,
-            thread: Some(thread),
-        }
-    }
-}
+use fake::FakeTarget;
 
 #[test]
 fn changed_application_version_that_selects_a_new_definition_blocks_push_until_pull_reconciles() {
@@ -248,11 +125,7 @@ resource_types:
     );
 }
 
-#[test]
-fn mapped_mutation_response_becomes_authoritative_observed_state() {
-    let target = FakeTarget::start();
-    let project = setup(&target);
-    let definition = r#"schema_version: 1
+const MAPPED_JOB_DEFINITION: &str = r#"schema_version: 1
 version: "test-definition"
 application: { name: elasticsearch, version: ">=9.0.0, <10.0.0" }
 resource_types:
@@ -269,11 +142,16 @@ resource_types:
             identity_pointer: /assigned_id
             resource_pointer: /resource
 "#;
+
+#[test]
+fn mapped_mutation_response_becomes_authoritative_observed_state() {
+    let target = FakeTarget::start();
+    let project = setup(&target);
     std::fs::write(
         project
             .path()
             .join(".taku/applications/elasticsearch/version-9.yaml"),
-        definition,
+        MAPPED_JOB_DEFINITION,
     )
     .unwrap();
     let dir = project.path().join("es/jobs");
@@ -500,243 +378,7 @@ fn remote_completion_lists_untracked_ids_without_persisting_operational_state() 
     assert!(!project.path().join(".taku/cache/dev").exists());
 }
 
-#[test]
-fn push_deletes_only_through_a_matching_guarded_marker_and_consumes_it() {
-    let target = FakeTarget::start();
-    let project = setup(&target);
-    run(&project, &["fetch"]);
-    run(&project, &["remove", "es", "ingest_pipelines", "pipe-1"]);
-    let result = run(
-        &project,
-        &["push", "--uncommitted", "allow", "--untracked", "allow"],
-    );
-    assert_eq!(result["result"][0]["outcome"], "deleted");
-    assert!(
-        target
-            .requests
-            .lock()
-            .unwrap()
-            .iter()
-            .any(|request| request.method == "DELETE")
-    );
-    assert!(
-        !std::fs::read_dir(project.path().join("es/ingest_pipelines"))
-            .unwrap()
-            .filter_map(Result::ok)
-            .any(|entry| entry
-                .file_name()
-                .to_string_lossy()
-                .ends_with(".delete.yaml"))
-    );
-}
-
-#[test]
-fn deletion_marker_push_requires_fetch_and_pull_after_a_hint_change() {
-    let target = FakeTarget::start();
-    let project = setup(&target);
-    run(&project, &["fetch"]);
-    run(&project, &["remove", "es", "ingest_pipelines", "pipe-1"]);
-    std::fs::write(
-        project.path().join("es/.target.yaml"),
-        "schema_version: 1\nmetadata: { track: true }\n",
-    )
-    .unwrap();
-
-    run(&project, &["fetch"]);
-    target.requests.lock().unwrap().clear();
-    let blocked = output(
-        &project,
-        &["push", "--uncommitted", "allow", "--untracked", "allow"],
-    );
-    assert!(!blocked.status.success());
-    assert!(String::from_utf8_lossy(&blocked.stderr).contains("requires Pull"));
-    assert!(target.requests.lock().unwrap().is_empty());
-
-    run(&project, &["pull", "--yes"]);
-    run(
-        &project,
-        &["push", "--uncommitted", "allow", "--untracked", "allow"],
-    );
-    assert!(
-        target
-            .requests
-            .lock()
-            .unwrap()
-            .iter()
-            .any(|request| request.method == "DELETE")
-    );
-}
-
-#[test]
-fn pull_reconciles_a_deletion_guard_when_metadata_tracking_is_disabled() {
-    let target = FakeTarget::start();
-    let project = setup(&target);
-    let hint = project.path().join("es/.target.yaml");
-    std::fs::write(&hint, "schema_version: 1\nmetadata: { track: true }\n").unwrap();
-    run(&project, &["fetch"]);
-    run(&project, &["remove", "es", "ingest_pipelines", "pipe-1"]);
-    let marker = std::fs::read_dir(project.path().join("es/ingest_pipelines"))
-        .unwrap()
-        .filter_map(Result::ok)
-        .find(|entry| {
-            entry
-                .file_name()
-                .to_string_lossy()
-                .ends_with(".delete.yaml")
-        })
-        .unwrap()
-        .path();
-    let tracked_guard = std::fs::read_to_string(&marker).unwrap();
-    std::fs::write(&hint, "schema_version: 1\nmetadata: { track: false }\n").unwrap();
-
-    run(&project, &["fetch"]);
-    let blocked = output(
-        &project,
-        &["push", "--uncommitted", "allow", "--untracked", "allow"],
-    );
-    assert!(!blocked.status.success());
-    assert!(String::from_utf8_lossy(&blocked.stderr).contains("requires Pull"));
-
-    let pulled = run(&project, &["pull", "--yes"]);
-    assert_eq!(pulled["result"][0]["outcome"], "pulled");
-    assert_ne!(std::fs::read_to_string(&marker).unwrap(), tracked_guard);
-    run(
-        &project,
-        &["push", "--uncommitted", "allow", "--untracked", "allow"],
-    );
-    assert!(
-        target
-            .requests
-            .lock()
-            .unwrap()
-            .iter()
-            .any(|request| request.method == "DELETE")
-    );
-}
-
-#[test]
-fn fetch_explicitly_reobserves_resources_marked_for_deletion() {
-    let target = FakeTarget::start();
-    let project = setup(&target);
-    run(&project, &["fetch"]);
-    run(&project, &["remove", "es", "ingest_pipelines", "pipe-1"]);
-    target.requests.lock().unwrap().clear();
-
-    let fetched = run(&project, &["fetch"]);
-
-    assert_eq!(fetched["result"][0]["id"], "pipe-1");
-    assert!(
-        target
-            .requests
-            .lock()
-            .unwrap()
-            .iter()
-            .any(|request| request.method == "GET" && request.path == "/_ingest/pipeline/pipe-1")
-    );
-}
-
-#[test]
-fn deletion_markers_reject_unknown_schema_versions() {
-    let target = FakeTarget::start();
-    let project = setup(&target);
-    run(&project, &["fetch"]);
-    run(&project, &["remove", "es", "ingest_pipelines", "pipe-1"]);
-    let marker = std::fs::read_dir(project.path().join("es/ingest_pipelines"))
-        .unwrap()
-        .filter_map(Result::ok)
-        .find(|entry| {
-            entry
-                .file_name()
-                .to_string_lossy()
-                .ends_with(".delete.yaml")
-        })
-        .unwrap()
-        .path();
-    let text = std::fs::read_to_string(&marker).unwrap();
-    std::fs::write(
-        &marker,
-        text.replacen("schema_version: 1", "schema_version: 99", 1),
-    )
-    .unwrap();
-
-    let failed = output(&project, &["forget", "es", "ingest_pipelines", "pipe-1"]);
-
-    assert!(!failed.status.success());
-    assert!(marker.exists());
-    assert!(String::from_utf8_lossy(&failed.stderr).contains("schema version"));
-}
-
-#[test]
-fn deletion_marker_binding_must_match_the_tree_that_contains_it() {
-    let target = FakeTarget::start();
-    let project = setup(&target);
-    run(
-        &project,
-        &[
-            "target",
-            "add",
-            "elasticsearch",
-            "other",
-            "--url",
-            &target.url,
-        ],
-    );
-    run(&project, &["fetch"]);
-    run(&project, &["remove", "es", "ingest_pipelines", "pipe-1"]);
-    let marker = std::fs::read_dir(project.path().join("es/ingest_pipelines"))
-        .unwrap()
-        .filter_map(Result::ok)
-        .find(|entry| {
-            entry
-                .file_name()
-                .to_string_lossy()
-                .ends_with(".delete.yaml")
-        })
-        .unwrap()
-        .path();
-    let text = std::fs::read_to_string(&marker).unwrap();
-    std::fs::write(&marker, text.replacen("target: es", "target: other", 1)).unwrap();
-    let requests = target.requests.lock().unwrap().len();
-
-    let failed = output(
-        &project,
-        &["push", "--untracked", "allow", "--uncommitted", "allow"],
-    );
-
-    assert!(!failed.status.success());
-    assert_eq!(target.requests.lock().unwrap().len(), requests);
-    assert!(String::from_utf8_lossy(&failed.stderr).contains("binding"));
-}
-
-#[cfg(unix)]
-#[test]
-fn deletion_marker_discovery_rejects_symlinked_inputs() {
-    use std::os::unix::fs::symlink;
-    let target = FakeTarget::start();
-    let project = setup(&target);
-    let outside = project.path().join("outside.delete.yaml");
-    std::fs::write(
-        &outside,
-        "schema_version: 1\nenvironment: dev\ntarget: es\ntype: ingest_pipelines\nid: pipe-1\nguard: guard\nsource_path: ignored\n",
-    )
-    .unwrap();
-    let linked = project
-        .path()
-        .join("es/ingest_pipelines/Linked.delete.yaml");
-    symlink(&outside, &linked).unwrap();
-
-    let failed = output(&project, &["forget", "es", "ingest_pipelines", "pipe-1"]);
-
-    assert!(!failed.status.success());
-    assert!(linked.exists());
-    assert!(String::from_utf8_lossy(&failed.stderr).contains("symlinked"));
-}
-
-#[test]
-fn guarded_concurrency_uses_a_response_token_without_persisting_the_response_only_field() {
-    let target = FakeTarget::start();
-    let project = setup(&target);
-    let definition = r#"schema_version: 1
+const GUARDED_PIPELINE_DEFINITION: &str = r#"schema_version: 1
 version: guard-definition
 application: { name: elasticsearch, version: ">=9.0.0, <10.0.0" }
 resource_types:
@@ -750,11 +392,16 @@ resource_types:
         read: { method: GET, path: "/_ingest/pipeline/{id}", extract: "/{id}" }
         upsert: { method: PUT, path: "/_ingest/pipeline/{id}", guard_header: if-match }
 "#;
+
+#[test]
+fn guarded_concurrency_uses_a_response_token_without_persisting_the_response_only_field() {
+    let target = FakeTarget::start();
+    let project = setup(&target);
     std::fs::write(
         project
             .path()
             .join(".taku/applications/elasticsearch/version-9.yaml"),
-        definition,
+        GUARDED_PIPELINE_DEFINITION,
     )
     .unwrap();
     run(&project, &["fetch"]);
@@ -1001,13 +648,6 @@ fn pull_conflicts_prevent_all_resource_writes_in_the_invocation() {
             .unwrap()
             .contains("local-change")
     );
-}
-
-impl Drop for FakeTarget {
-    fn drop(&mut self) {
-        self.stop.store(true, Ordering::Relaxed);
-        self.thread.take().unwrap().join().unwrap();
-    }
 }
 
 fn setup(target: &FakeTarget) -> TempDir {

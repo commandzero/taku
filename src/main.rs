@@ -14,7 +14,7 @@ use scope::{EnvironmentSelection, ResourcePath, ResourceScope, ScopePolicy};
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::io::{self, IsTerminal, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Parser)]
 #[command(
@@ -237,16 +237,7 @@ enum Commands {
         command: ContextCommand,
     },
     /// List the local Resource Inventory.
-    List {
-        #[command(flatten)]
-        scope: PartialResourceArgs,
-        #[command(flatten)]
-        provider: ProviderArgs,
-        #[arg(long, requires = "resource_type")]
-        remote: bool,
-        #[arg(long, requires = "remote")]
-        untracked: bool,
-    },
+    List(ListArgs),
     /// Adopt explicitly selected remotely listed Resources.
     Add {
         #[command(flatten)]
@@ -265,24 +256,7 @@ enum Commands {
         scope: ExactResourceArgs,
     },
     /// Copy complete Resources through Environment mappings.
-    Promote {
-        #[arg(long)]
-        #[arg(add = completion::environment())]
-        from: Option<String>,
-        #[arg(long)]
-        #[arg(add = completion::environment())]
-        to: Option<String>,
-        #[arg(long)]
-        #[arg(add = completion::promotion_source_target())]
-        from_target: Option<String>,
-        #[arg(long)]
-        #[arg(add = completion::promotion_destination_target())]
-        to_target: Option<String>,
-        #[arg(long, value_hint = clap::ValueHint::DirPath)]
-        from_project: Option<PathBuf>,
-        #[arg(long, value_hint = clap::ValueHint::DirPath)]
-        to_project: Option<PathBuf>,
-    },
+    Promote(PromotionArgs),
     /// Validate Project metadata, Applications, Targets, and Resources.
     Validate,
     /// Generate a sourceable dynamic shell completion script.
@@ -318,24 +292,7 @@ enum Commands {
         missing: Option<MissingArg>,
     },
     /// Reconcile selected desired Resources to their Targets.
-    Push {
-        #[command(flatten)]
-        scope: PartialResourceArgs,
-        #[command(flatten)]
-        provider: ProviderArgs,
-        #[arg(long)]
-        dry_run: bool,
-        #[arg(long, value_enum)]
-        uncommitted: Option<GitPolicyArg>,
-        #[arg(long, value_enum)]
-        untracked: Option<GitPolicyArg>,
-        #[arg(long, value_enum)]
-        missing: Option<MissingArg>,
-        #[arg(long)]
-        yes: bool,
-        #[arg(long)]
-        new_plan: bool,
-    },
+    Push(PushArgs),
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -379,15 +336,7 @@ enum AppCommand {
 
 #[derive(Subcommand)]
 enum TargetCommand {
-    Add {
-        #[arg(add = completion::application())]
-        application: String,
-        name: Option<String>,
-        #[arg(long)]
-        url: String,
-        #[arg(long)]
-        yes: bool,
-    },
+    Add(TargetAddArgs),
     Rename {
         #[arg(add = completion::target())]
         old: String,
@@ -401,6 +350,49 @@ enum ContextCommand {
         #[arg(add = completion::environment())]
         environment: String,
     },
+}
+
+#[derive(Args)]
+struct ListArgs {
+    #[command(flatten)]
+    scope: PartialResourceArgs,
+    #[command(flatten)]
+    provider: ProviderArgs,
+    #[arg(long, requires = "resource_type")]
+    remote: bool,
+    #[arg(long, requires = "remote")]
+    untracked: bool,
+}
+
+#[derive(Args)]
+struct PromotionArgs {
+    #[arg(long)]
+    #[arg(add = completion::environment())]
+    from: Option<String>,
+    #[arg(long)]
+    #[arg(add = completion::environment())]
+    to: Option<String>,
+    #[arg(long)]
+    #[arg(add = completion::promotion_source_target())]
+    from_target: Option<String>,
+    #[arg(long)]
+    #[arg(add = completion::promotion_destination_target())]
+    to_target: Option<String>,
+    #[arg(long, value_hint = clap::ValueHint::DirPath)]
+    from_project: Option<PathBuf>,
+    #[arg(long, value_hint = clap::ValueHint::DirPath)]
+    to_project: Option<PathBuf>,
+}
+
+#[derive(Args)]
+struct TargetAddArgs {
+    #[arg(add = completion::application())]
+    application: String,
+    name: Option<String>,
+    #[arg(long)]
+    url: String,
+    #[arg(long)]
+    yes: bool,
 }
 
 #[derive(Serialize)]
@@ -419,541 +411,524 @@ fn main() {
 }
 
 fn run() -> Result<()> {
-    let cli = Cli::parse();
-    match cli.command {
+    let options = Cli::parse();
+    let cli = CommandContext {
+        project: &options.project,
+        output: options.output,
+        non_interactive: options.non_interactive,
+    };
+    match options.command {
         Commands::Init {
             layout,
             environment,
-            mut environments,
-        } => {
-            let interactive = !cli.non_interactive && io::stdin().is_terminal();
-            let layout = match layout {
-                Some(value) => value,
-                None if interactive => prompt_layout()?,
-                None => bail!("--layout is required in non-interactive execution"),
-            };
-            environments.extend(environment);
-            let environments = if environments.is_empty() && interactive {
-                vec![prompt("Environment name")?]
-            } else if environments.is_empty() {
-                bail!("--environment is required in non-interactive execution")
-            } else {
-                environments
-            };
-            let result = initialize(&cli.project, layout.into(), environments)?;
-            emit(
-                cli.output,
-                &Envelope {
-                    schema_version: 1,
-                    command: "init",
-                    result,
-                },
-            )?;
-        }
-        Commands::App { command: None } => {
-            let result = list_applications(&cli.project)?;
-            emit(
-                cli.output,
-                &Envelope {
-                    schema_version: 1,
-                    command: "app",
-                    result,
-                },
-            )?;
-        }
-        Commands::Target {
-            environment,
-            command:
-                Some(TargetCommand::Add {
-                    application,
-                    name,
-                    url,
-                    yes,
-                }),
-        } => {
-            let name = name.unwrap_or_else(|| application.clone());
-            let environment = environment.environment;
-            let project_root = git_root(&cli.project)?;
-            let installed = project_root
-                .join(".taku/applications")
-                .join(&application)
-                .join("application.yaml")
-                .is_file();
-            if !installed {
-                let authorized = yes
-                    || (!cli.non_interactive
-                        && io::stdin().is_terminal()
-                        && confirm(&format!(
-                            "Install Application {application} and add Target {name}"
-                        ))?);
-                if !authorized {
-                    bail!(
-                        "Application {application} is not installed; repeat with --yes to install and add atomically"
-                    );
-                }
-                install_applications(&cli.project, std::slice::from_ref(&application))?;
+            environments,
+        } => init_project(&cli, layout, environment, environments)?,
+        Commands::App { command } => match command {
+            None => cli.report("app", list_applications(cli.project)?)?,
+            Some(AppCommand::Refresh { from }) => {
+                cli.report("app refresh", refresh_source(cli.project, from.as_deref())?)?;
             }
-            let added = add_target(
-                &cli.project,
-                environment.as_deref(),
-                &application,
-                &name,
-                &url,
-            );
-            if let Err(error) = added {
-                if !installed {
-                    let installed_path = project_root.join(".taku/applications").join(&application);
-                    if let Err(rollback) = std::fs::remove_dir_all(&installed_path) {
-                        bail!(
-                            "Target Addition failed ({error}); Application install rollback also failed: {rollback}"
-                        );
-                    }
-                }
-                return Err(error);
-            }
-            emit(
-                cli.output,
-                &Envelope {
-                    schema_version: 1,
-                    command: "target add",
-                    result: serde_json::json!({"environment": environment, "application": application, "target": name}),
-                },
-            )?;
-        }
+        },
         Commands::Target {
             environment,
-            command: Some(TargetCommand::Rename { old, new }),
-        } => {
-            rename_target(&cli.project, environment.environment.as_deref(), &old, &new)?;
-            emit(
-                cli.output,
-                &Envelope {
-                    schema_version: 1,
-                    command: "target rename",
-                    result: serde_json::json!({"environment": environment.environment, "old": old, "new": new}),
-                },
-            )?;
-        }
-        Commands::App {
-            command: Some(AppCommand::Refresh { from }),
-        } => {
-            let result = refresh_source(&cli.project, from.as_deref())?;
-            emit(
-                cli.output,
-                &Envelope {
-                    schema_version: 1,
-                    command: "app refresh",
-                    result,
-                },
-            )?;
-        }
-        Commands::Target {
-            environment,
-            command: None,
-        } => {
-            let result = list_targets(&cli.project, environment.environment.as_deref())?;
-            emit(
-                cli.output,
-                &Envelope {
-                    schema_version: 1,
-                    command: "target",
-                    result,
-                },
-            )?;
-        }
+            command,
+        } => manage_target(&cli, environment, command)?,
         Commands::Install { from, applications } => {
-            let result = install_applications_from(&cli.project, &applications, from.as_deref())?;
-            emit(
-                cli.output,
-                &Envelope {
-                    schema_version: 1,
-                    command: "install",
-                    result,
-                },
-            )?;
+            let result = install_applications_from(cli.project, &applications, from.as_deref())?;
+            cli.report("install", result)?;
         }
         Commands::Update { from, applications } => {
-            let result = update_applications(&cli.project, &applications, from.as_deref())?;
-            emit(
-                cli.output,
-                &Envelope {
-                    schema_version: 1,
-                    command: "update",
-                    result,
-                },
-            )?;
+            let result = update_applications(cli.project, &applications, from.as_deref())?;
+            cli.report("update", result)?;
         }
         Commands::Context {
             command: ContextCommand::Set { environment },
         } => {
             let result =
-                serde_json::json!({"environment": save_context(&cli.project, &environment)?});
-            emit(
-                cli.output,
-                &Envelope {
-                    schema_version: 1,
-                    command: "context set",
-                    result,
-                },
-            )?;
+                serde_json::json!({"environment": save_context(cli.project, &environment)?});
+            cli.report("context set", result)?;
         }
-        Commands::List {
-            scope,
-            provider,
-            remote,
-            untracked,
-        } => {
-            let scope = scope.scope()?;
-            let selections = scope.selections(
-                &cli.project,
-                if remote {
-                    ScopePolicy::RemoteList
-                } else {
-                    ScopePolicy::Partial
-                },
-            )?;
-            let provider = provider_map(&provider);
-            if remote {
-                let mut result: Vec<serde_json::Value> = Vec::new();
-                let mut transformation_conflict = false;
-                for selection in &selections {
-                    match remote_list(&cli.project, selection, untracked, &provider) {
-                        Ok(entries) => {
-                            result.extend(
-                                entries
-                                    .into_iter()
-                                    .map(serde_json::to_value)
-                                    .collect::<std::result::Result<Vec<_>, _>>()?,
-                            );
-                        }
-                        Err(error) if is_transformation_conflict(&error) => {
-                            transformation_conflict = true;
-                            result.push(serde_json::json!({
-                                "outcome": "transformation_conflict"
-                            }));
-                        }
-                        Err(error) => return Err(error),
-                    }
-                }
-                emit(
-                    cli.output,
-                    &Envelope {
-                        schema_version: 1,
-                        command: "list",
-                        result,
-                    },
-                )?;
-                if transformation_conflict {
-                    std::process::exit(4);
-                }
-            } else {
-                let mut result = Vec::new();
-                for selection in &selections {
-                    result.extend(list_inventory(&cli.project, selection)?);
-                }
-                emit(
-                    cli.output,
-                    &Envelope {
-                        schema_version: 1,
-                        command: "list",
-                        result,
-                    },
-                )?;
-            }
-        }
+        Commands::List(args) => list_resources(&cli, args)?,
         Commands::Add { scope, provider } => {
-            let selections = scope
-                .scope()?
-                .selections(&cli.project, ScopePolicy::Exact)?;
             let provider = provider_map(&provider);
-            let mut result = Vec::new();
-            for selection in &selections {
-                result.extend(add_remote(&cli.project, selection, &provider)?);
-            }
-            emit(
-                cli.output,
-                &Envelope {
-                    schema_version: 1,
-                    command: "add",
-                    result,
-                },
-            )?;
+            cli.exact("add", scope, |scope| {
+                add_remote(cli.project, scope, &provider)
+            })?;
         }
         Commands::Remove { scope } => {
-            let selections = scope
-                .scope()?
-                .selections(&cli.project, ScopePolicy::Exact)?;
-            let mut result = Vec::new();
-            for selection in &selections {
-                result.extend(remove(&cli.project, selection)?);
-            }
-            emit(
-                cli.output,
-                &Envelope {
-                    schema_version: 1,
-                    command: "remove",
-                    result,
-                },
-            )?;
+            cli.exact("remove", scope, |scope| remove(cli.project, scope))?
         }
         Commands::Forget { scope } => {
-            let selections = scope
-                .scope()?
-                .selections(&cli.project, ScopePolicy::Exact)?;
-            let mut result = Vec::new();
-            for selection in &selections {
-                result.extend(forget(&cli.project, selection)?);
-            }
-            emit(
-                cli.output,
-                &Envelope {
-                    schema_version: 1,
-                    command: "forget",
-                    result,
-                },
-            )?;
+            cli.exact("forget", scope, |scope| forget(cli.project, scope))?
         }
-        Commands::Promote {
-            from,
-            to,
-            from_target,
-            to_target,
-            from_project,
-            to_project,
-        } => {
-            let result = if let Some(source) = from_project {
-                let destination = to_project.as_deref().unwrap_or(&cli.project);
-                promote_projects(
-                    &source,
-                    destination,
-                    from_target.as_deref().ok_or_else(|| {
-                        anyhow::anyhow!("--from-target is required for cross-Project Promotion")
-                    })?,
-                    to_target.as_deref().ok_or_else(|| {
-                        anyhow::anyhow!("--to-target is required for cross-Project Promotion")
-                    })?,
-                )?
-            } else {
-                promote(
-                    &cli.project,
-                    from.as_deref(),
-                    to.as_deref(),
-                    from_target.as_deref(),
-                    to_target.as_deref(),
-                )?
-            };
-            emit(
-                cli.output,
-                &Envelope {
-                    schema_version: 1,
-                    command: "promote",
-                    result,
-                },
-            )?;
-        }
+        Commands::Promote(args) => promote_resources(&cli, args)?,
         Commands::Validate => {
-            let result = validate_project(&cli.project)?;
-            emit(
-                cli.output,
-                &Envelope {
-                    schema_version: 1,
-                    command: "validate",
-                    result,
-                },
-            )?;
+            let result = validate_project(cli.project)?;
+            cli.report("validate", result)?;
         }
-        Commands::Completion { shell } => {
-            let executable = std::env::current_exe()?;
-            let output = std::process::Command::new(executable)
-                .env("COMPLETE", shell.as_str())
-                .output()?;
-            if !output.status.success() {
-                bail!(
-                    "failed to generate {} completion: {}",
-                    shell.as_str(),
-                    String::from_utf8_lossy(&output.stderr).trim()
-                );
-            }
-            io::stdout().write_all(&output.stdout)?;
-        }
-        Commands::Fetch { scope, provider } => {
-            let selections = scope
-                .scope()?
-                .selections(&cli.project, ScopePolicy::Partial)?;
-            let provider = provider_map(&provider);
-            let mut result = Vec::new();
-            for selection in &selections {
-                result.extend(fetch(&cli.project, selection, &provider)?);
-            }
-            let conflicts = result
-                .iter()
-                .any(|item| item.outcome == "transformation_conflict");
-            emit(
-                cli.output,
-                &Envelope {
-                    schema_version: 1,
-                    command: "fetch",
-                    result,
-                },
-            )?;
-            if conflicts {
-                std::process::exit(4);
-            }
-        }
-        Commands::Status { scope, check } => {
-            let selections = scope
-                .scope()?
-                .selections(&cli.project, ScopePolicy::Partial)?;
-            let mut result = Vec::new();
-            for selection in &selections {
-                result.extend(compare(&cli.project, selection)?);
-            }
-            let differs = result.iter().any(|item| item.state != "in_sync");
-            let conflicts = result.iter().any(|item| item.state.ends_with("conflict"));
-            emit(
-                cli.output,
-                &Envelope {
-                    schema_version: 1,
-                    command: "status",
-                    result,
-                },
-            )?;
-            if conflicts {
-                std::process::exit(4);
-            } else if check && differs {
-                std::process::exit(3);
-            }
-        }
-        Commands::Diff { scope, exit_code } => {
-            let selections = scope
-                .scope()?
-                .selections(&cli.project, ScopePolicy::Partial)?;
-            let mut result = Vec::new();
-            for selection in &selections {
-                result.extend(diff(&cli.project, selection)?);
-            }
-            let differs = !result.is_empty();
-            let conflicts = result.iter().any(|item| item.state.ends_with("conflict"));
-            emit(
-                cli.output,
-                &Envelope {
-                    schema_version: 1,
-                    command: "diff",
-                    result,
-                },
-            )?;
-            if conflicts {
-                std::process::exit(4);
-            } else if exit_code && differs {
-                std::process::exit(3);
-            }
-        }
+        Commands::Completion { shell } => generate_completion(shell)?,
+        Commands::Fetch { scope, provider } => fetch_resources(&cli, scope, provider)?,
+        Commands::Status { scope, check } => resource_status(&cli, scope, check)?,
+        Commands::Diff { scope, exit_code } => resource_diff(&cli, scope, exit_code)?,
         Commands::Pull {
             scope,
             yes,
             missing,
-        } => {
-            let selections = scope
-                .scope()?
-                .selections(&cli.project, ScopePolicy::Partial)?;
-            if !yes && !io::stdin().is_terminal() {
-                bail!("--yes is required to apply Pull non-interactively");
-            }
-            if !yes && !confirm("Apply observed changes to desired Resources")? {
-                bail!("Pull cancelled");
-            }
-            let mut result = Vec::new();
-            for selection in &selections {
-                result.extend(pull(&cli.project, selection, missing.map(Into::into))?);
-            }
-            let conflicts = result.iter().any(|item| item.outcome.ends_with("conflict"));
-            emit(
-                cli.output,
-                &Envelope {
-                    schema_version: 1,
-                    command: "pull",
-                    result,
-                },
-            )?;
-            if conflicts {
-                std::process::exit(4);
-            }
-        }
-        Commands::Push {
-            scope,
-            provider,
-            dry_run,
-            uncommitted,
-            untracked,
-            missing,
-            yes,
-            new_plan,
-        } => {
-            let selections = scope
-                .scope()?
-                .selections(&cli.project, ScopePolicy::Partial)?;
-            let provider = provider_map(&provider);
-            let interactive = !cli.non_interactive && io::stdin().is_terminal();
-            let mut confirmed = yes;
-            if interactive && !confirmed {
-                let mut required = false;
-                for selection in &selections {
-                    required |= push_confirmation_required(
-                        &cli.project,
-                        selection,
-                        uncommitted.map(Into::into),
-                        untracked.map(Into::into),
-                    )?;
-                }
-                if required {
-                    confirmed = confirm("Push selected Resources with pending Git changes")?;
-                    if !confirmed {
-                        bail!("Push cancelled");
-                    }
-                }
-            }
-            let mut result = Vec::new();
-            for selection in &selections {
-                result.extend(push(
-                    &cli.project,
-                    selection,
-                    dry_run,
-                    uncommitted.map(Into::into),
-                    untracked.map(Into::into),
-                    interactive,
-                    confirmed,
-                    new_plan,
-                    missing.map(Into::into),
-                    &provider,
-                )?);
-            }
-            let failed = result.iter().any(|item| {
-                !matches!(
-                    item.outcome.as_str(),
-                    "success"
-                        | "resumed_success"
-                        | "in_sync"
-                        | "planned"
-                        | "planned_delete"
-                        | "planned_already_absent"
-                        | "deleted"
-                        | "already_absent"
-                )
-            });
-            emit(
-                cli.output,
-                &Envelope {
-                    schema_version: 1,
-                    command: "push",
-                    result,
-                },
-            )?;
-            if failed {
-                std::process::exit(4);
-            }
-        }
+        } => pull_resources(&cli, scope, yes, missing)?,
+        Commands::Push(args) => push_resources(&cli, args)?,
     }
     Ok(())
+}
+
+struct CommandContext<'a> {
+    project: &'a Path,
+    output: OutputFormat,
+    non_interactive: bool,
+}
+
+impl CommandContext<'_> {
+    fn exact<T: Serialize>(
+        &self,
+        command: &'static str,
+        scope: ExactResourceArgs,
+        run: impl Fn(&resource_control::Selection) -> Result<Vec<T>>,
+    ) -> Result<()> {
+        let selections = scope
+            .scope()?
+            .selections(self.project, ScopePolicy::Exact)?;
+        let mut result = Vec::new();
+        for selection in &selections {
+            result.extend(run(selection)?);
+        }
+        self.report(command, result)
+    }
+
+    fn interactive(&self) -> bool {
+        !self.non_interactive && io::stdin().is_terminal()
+    }
+
+    fn report(&self, command: &'static str, result: impl Serialize) -> Result<()> {
+        emit(
+            self.output,
+            &Envelope {
+                schema_version: 1,
+                command,
+                result,
+            },
+        )
+    }
+}
+
+#[derive(Args)]
+struct PushArgs {
+    #[command(flatten)]
+    scope: PartialResourceArgs,
+    #[command(flatten)]
+    provider: ProviderArgs,
+    #[command(flatten)]
+    options: PushOptions,
+}
+
+#[derive(Args)]
+struct PushOptions {
+    #[arg(long)]
+    dry_run: bool,
+    #[arg(long, value_enum)]
+    uncommitted: Option<GitPolicyArg>,
+    #[arg(long, value_enum)]
+    untracked: Option<GitPolicyArg>,
+    #[arg(long, value_enum)]
+    missing: Option<MissingArg>,
+    #[arg(long)]
+    yes: bool,
+    #[arg(long)]
+    new_plan: bool,
+}
+
+fn init_project(
+    cli: &CommandContext<'_>,
+    layout: Option<LayoutArg>,
+    environment: Vec<String>,
+    mut environments: Vec<String>,
+) -> Result<()> {
+    let interactive = cli.interactive();
+    let layout = match layout {
+        Some(value) => value,
+        None if interactive => prompt_layout()?,
+        None => bail!("--layout is required in non-interactive execution"),
+    };
+    environments.extend(environment);
+    let environments = if environments.is_empty() && interactive {
+        vec![prompt("Environment name")?]
+    } else if environments.is_empty() {
+        bail!("--environment is required in non-interactive execution")
+    } else {
+        environments
+    };
+    let result = initialize(cli.project, layout.into(), environments)?;
+    cli.report("init", result)?;
+    Ok(())
+}
+
+fn manage_target(
+    cli: &CommandContext<'_>,
+    environment: SingleEnvironmentArgs,
+    command: Option<TargetCommand>,
+) -> Result<()> {
+    let environment = environment.environment.as_deref();
+    match command {
+        Some(TargetCommand::Add(args)) => add_project_target(cli, environment, args),
+        Some(TargetCommand::Rename { old, new }) => {
+            rename_target(cli.project, environment, &old, &new)?;
+            cli.report(
+                "target rename",
+                serde_json::json!({"environment": environment, "old": old, "new": new}),
+            )
+        }
+        None => cli.report("target", list_targets(cli.project, environment)?),
+    }
+}
+
+fn add_project_target(
+    cli: &CommandContext<'_>,
+    environment: Option<&str>,
+    args: TargetAddArgs,
+) -> Result<()> {
+    let TargetAddArgs {
+        application,
+        name,
+        url,
+        yes,
+    } = args;
+    let name = name.unwrap_or_else(|| application.clone());
+    let installed_path = git_root(cli.project)?
+        .join(".taku/applications")
+        .join(&application);
+    let installed = installed_path.join("application.yaml").is_file();
+    if !installed {
+        install_for_target(cli, &application, &name, yes)?;
+    }
+    if let Err(error) = add_target(cli.project, environment, &application, &name, &url) {
+        if !installed {
+            rollback_target_install(&installed_path, &error)?;
+        }
+        return Err(error);
+    }
+    cli.report(
+        "target add",
+        serde_json::json!({"environment": environment, "application": application, "target": name}),
+    )?;
+    Ok(())
+}
+
+fn install_for_target(
+    cli: &CommandContext<'_>,
+    application: &str,
+    name: &str,
+    yes: bool,
+) -> Result<()> {
+    let authorized = yes
+        || (cli.interactive()
+            && confirm(&format!(
+                "Install Application {application} and add Target {name}"
+            ))?);
+    if !authorized {
+        bail!(
+            "Application {application} is not installed; repeat with --yes to install and add atomically"
+        );
+    }
+    install_applications(cli.project, &[application.to_owned()])?;
+    Ok(())
+}
+
+fn rollback_target_install(path: &Path, error: &anyhow::Error) -> Result<()> {
+    if let Err(rollback) = std::fs::remove_dir_all(path) {
+        bail!(
+            "Target Addition failed ({error}); Application install rollback also failed: {rollback}"
+        );
+    }
+    Ok(())
+}
+
+fn list_resources(cli: &CommandContext<'_>, args: ListArgs) -> Result<()> {
+    let ListArgs {
+        scope,
+        provider,
+        remote,
+        untracked,
+    } = args;
+    let scope = scope.scope()?;
+    let selections = scope.selections(
+        cli.project,
+        if remote {
+            ScopePolicy::RemoteList
+        } else {
+            ScopePolicy::Partial
+        },
+    )?;
+    let provider = provider_map(&provider);
+    if remote {
+        return list_remote_resources(cli, &selections, &provider, untracked);
+    }
+    let mut result = Vec::new();
+    for selection in &selections {
+        result.extend(list_inventory(cli.project, selection)?);
+    }
+    cli.report("list", result)
+}
+
+fn list_remote_resources(
+    cli: &CommandContext<'_>,
+    selections: &[resource_control::Selection],
+    provider: &BTreeMap<String, String>,
+    untracked: bool,
+) -> Result<()> {
+    let mut result: Vec<serde_json::Value> = Vec::new();
+    let mut transformation_conflict = false;
+    for selection in selections {
+        match remote_list(cli.project, selection, untracked, provider) {
+            Ok(entries) => {
+                result.extend(
+                    entries
+                        .into_iter()
+                        .map(serde_json::to_value)
+                        .collect::<std::result::Result<Vec<_>, _>>()?,
+                );
+            }
+            Err(error) if is_transformation_conflict(&error) => {
+                transformation_conflict = true;
+                result.push(serde_json::json!({
+                    "outcome": "transformation_conflict"
+                }));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    cli.report("list", result)?;
+    if transformation_conflict {
+        std::process::exit(4);
+    }
+    Ok(())
+}
+
+fn promote_resources(cli: &CommandContext<'_>, args: PromotionArgs) -> Result<()> {
+    let PromotionArgs {
+        from,
+        to,
+        from_target,
+        to_target,
+        from_project,
+        to_project,
+    } = args;
+    let result = if let Some(source) = from_project {
+        let destination = to_project.as_deref().unwrap_or(cli.project);
+        promote_projects(
+            &source,
+            destination,
+            from_target.as_deref().ok_or_else(|| {
+                anyhow::anyhow!("--from-target is required for cross-Project Promotion")
+            })?,
+            to_target.as_deref().ok_or_else(|| {
+                anyhow::anyhow!("--to-target is required for cross-Project Promotion")
+            })?,
+        )?
+    } else {
+        promote(
+            cli.project,
+            from.as_deref(),
+            to.as_deref(),
+            from_target.as_deref(),
+            to_target.as_deref(),
+        )?
+    };
+    cli.report("promote", result)?;
+    Ok(())
+}
+
+fn generate_completion(shell: CompletionShell) -> Result<()> {
+    let executable = std::env::current_exe()?;
+    let output = std::process::Command::new(executable)
+        .env("COMPLETE", shell.as_str())
+        .output()?;
+    if !output.status.success() {
+        bail!(
+            "failed to generate {} completion: {}",
+            shell.as_str(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    io::stdout().write_all(&output.stdout)?;
+    Ok(())
+}
+
+fn fetch_resources(
+    cli: &CommandContext<'_>,
+    scope: PartialResourceArgs,
+    provider: ProviderArgs,
+) -> Result<()> {
+    let selections = scope
+        .scope()?
+        .selections(cli.project, ScopePolicy::Partial)?;
+    let provider = provider_map(&provider);
+    let mut result = Vec::new();
+    for selection in &selections {
+        result.extend(fetch(cli.project, selection, &provider)?);
+    }
+    let conflicts = result
+        .iter()
+        .any(|item| item.outcome == "transformation_conflict");
+    cli.report("fetch", result)?;
+    if conflicts {
+        std::process::exit(4);
+    }
+    Ok(())
+}
+
+fn resource_status(
+    cli: &CommandContext<'_>,
+    scope: PartialResourceArgs,
+    check: bool,
+) -> Result<()> {
+    let selections = scope
+        .scope()?
+        .selections(cli.project, ScopePolicy::Partial)?;
+    let mut result = Vec::new();
+    for selection in &selections {
+        result.extend(compare(cli.project, selection)?);
+    }
+    let differs = result.iter().any(|item| item.state != "in_sync");
+    let conflicts = result.iter().any(|item| item.state.ends_with("conflict"));
+    cli.report("status", result)?;
+    if conflicts {
+        std::process::exit(4);
+    } else if check && differs {
+        std::process::exit(3);
+    }
+    Ok(())
+}
+
+fn resource_diff(
+    cli: &CommandContext<'_>,
+    scope: PartialResourceArgs,
+    exit_code: bool,
+) -> Result<()> {
+    let selections = scope
+        .scope()?
+        .selections(cli.project, ScopePolicy::Partial)?;
+    let mut result = Vec::new();
+    for selection in &selections {
+        result.extend(diff(cli.project, selection)?);
+    }
+    let differs = !result.is_empty();
+    let conflicts = result.iter().any(|item| item.state.ends_with("conflict"));
+    cli.report("diff", result)?;
+    if conflicts {
+        std::process::exit(4);
+    } else if exit_code && differs {
+        std::process::exit(3);
+    }
+    Ok(())
+}
+
+fn pull_resources(
+    cli: &CommandContext<'_>,
+    scope: PartialResourceArgs,
+    yes: bool,
+    missing: Option<MissingArg>,
+) -> Result<()> {
+    let selections = scope
+        .scope()?
+        .selections(cli.project, ScopePolicy::Partial)?;
+    if !yes && !io::stdin().is_terminal() {
+        bail!("--yes is required to apply Pull non-interactively");
+    }
+    if !yes && !confirm("Apply observed changes to desired Resources")? {
+        bail!("Pull cancelled");
+    }
+    let mut result = Vec::new();
+    for selection in &selections {
+        result.extend(pull(cli.project, selection, missing.map(Into::into))?);
+    }
+    let conflicts = result.iter().any(|item| item.outcome.ends_with("conflict"));
+    cli.report("pull", result)?;
+    if conflicts {
+        std::process::exit(4);
+    }
+    Ok(())
+}
+
+fn push_resources(cli: &CommandContext<'_>, args: PushArgs) -> Result<()> {
+    let PushArgs {
+        scope,
+        provider,
+        options,
+    } = args;
+    let selections = scope
+        .scope()?
+        .selections(cli.project, ScopePolicy::Partial)?;
+    let provider = provider_map(&provider);
+    let interactive = cli.interactive();
+    let confirmed = confirm_push(cli.project, &selections, &options, interactive)?;
+    let mut result = Vec::new();
+    for selection in &selections {
+        result.extend(push(
+            cli.project,
+            selection,
+            options.dry_run,
+            options.uncommitted.map(Into::into),
+            options.untracked.map(Into::into),
+            interactive,
+            confirmed,
+            options.new_plan,
+            options.missing.map(Into::into),
+            &provider,
+        )?);
+    }
+    let failed = result.iter().any(|item| {
+        !matches!(
+            item.outcome.as_str(),
+            "success"
+                | "resumed_success"
+                | "in_sync"
+                | "planned"
+                | "planned_delete"
+                | "planned_already_absent"
+                | "deleted"
+                | "already_absent"
+        )
+    });
+    cli.report("push", result)?;
+    if failed {
+        std::process::exit(4);
+    }
+    Ok(())
+}
+
+fn confirm_push(
+    project: &Path,
+    selections: &[resource_control::Selection],
+    options: &PushOptions,
+    interactive: bool,
+) -> Result<bool> {
+    if options.yes || !interactive {
+        return Ok(options.yes);
+    }
+    let mut required = false;
+    for selection in selections {
+        required |= push_confirmation_required(
+            project,
+            selection,
+            options.uncommitted.map(Into::into),
+            options.untracked.map(Into::into),
+        )?;
+    }
+    if !required {
+        return Ok(false);
+    }
+    if !confirm("Push selected Resources with pending Git changes")? {
+        bail!("Push cancelled");
+    }
+    Ok(true)
 }
 
 fn provider_map(args: &ProviderArgs) -> BTreeMap<String, String> {
@@ -1016,88 +991,4 @@ fn write_document(writer: &mut impl Write, document: &[u8]) -> io::Result<()> {
 }
 
 #[cfg(test)]
-mod cli_tests {
-    use super::*;
-
-    #[test]
-    fn output_write_errors_propagate_without_panicking() {
-        struct ClosedPipe;
-        impl Write for ClosedPipe {
-            fn write(&mut self, _: &[u8]) -> io::Result<usize> {
-                Err(io::Error::from(io::ErrorKind::BrokenPipe))
-            }
-            fn flush(&mut self) -> io::Result<()> {
-                Ok(())
-            }
-        }
-        assert_eq!(
-            write_document(&mut ClosedPipe, b"report")
-                .unwrap_err()
-                .kind(),
-            io::ErrorKind::BrokenPipe
-        );
-    }
-
-    fn parse(args: &[&str]) -> Result<Cli, clap::Error> {
-        Cli::try_parse_from(std::iter::once("taku").chain(args.iter().copied()))
-    }
-
-    #[test]
-    fn exact_commands_require_a_complete_variadic_resource_path() {
-        for command in ["add", "remove", "forget"] {
-            assert!(parse(&[command]).is_err());
-            assert!(parse(&[command, "es"]).is_err());
-            assert!(parse(&[command, "es", "roles"]).is_err());
-            assert!(parse(&[command, "es", "roles", "one", "two"]).is_ok());
-        }
-    }
-
-    #[test]
-    fn partial_commands_accept_every_contiguous_path_prefix() {
-        for command in ["list", "fetch", "status", "diff", "pull", "push"] {
-            assert!(parse(&[command]).is_ok(), "{command}");
-            assert!(parse(&[command, "es"]).is_ok(), "{command}");
-            assert!(parse(&[command, "es", "roles"]).is_ok(), "{command}");
-            assert!(
-                parse(&[command, "es", "roles", "one", "two"]).is_ok(),
-                "{command}"
-            );
-        }
-    }
-
-    #[test]
-    fn remote_list_requires_target_and_type_and_owns_untracked() {
-        assert!(parse(&["list", "--remote"]).is_err());
-        assert!(parse(&["list", "--remote", "es"]).is_err());
-        assert!(parse(&["list", "--remote", "es", "roles"]).is_ok());
-        assert!(parse(&["list", "--untracked"]).is_err());
-    }
-
-    #[test]
-    fn namespace_and_removed_selector_flags_are_rejected_outside_the_new_grammar() {
-        assert!(parse(&["status", "--namespace", "default"]).is_err());
-        for removed in ["--target", "--type", "--id"] {
-            assert!(parse(&["add", removed, "value", "es", "roles", "one"]).is_err());
-        }
-        assert!(parse(&["app", "add"]).is_err());
-        assert!(parse(&["app", "rename"]).is_err());
-    }
-
-    #[test]
-    fn root_and_command_specific_options_stay_separate() {
-        assert!(parse(&["validate", "--environment", "dev"]).is_err());
-        assert!(parse(&["app", "--namespace", "default"]).is_err());
-        assert!(parse(&["promote", "--set", "token=value"]).is_err());
-        assert!(parse(&["fetch", "--environment", "dev", "--set", "token=value"]).is_ok());
-    }
-
-    #[test]
-    fn remaining_commands_keep_their_concise_grammar() {
-        assert!(parse(&["install"]).is_err());
-        assert!(parse(&["install", "elasticsearch", "kibana"]).is_ok());
-        assert!(parse(&["update"]).is_ok());
-        assert!(parse(&["context", "set", "prod"]).is_ok());
-        assert!(parse(&["validate"]).is_ok());
-        assert!(parse(&["promote", "--from", "dev", "--to", "prod"]).is_ok());
-    }
-}
+mod cli_tests;
