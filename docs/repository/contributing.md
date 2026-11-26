@@ -2,18 +2,17 @@
 type: Guide
 title: Contributing
 description: Local validation, PR conventions, and OpenSpec completion checks.
-generated: { by: openai-codex/gpt-6.1-sol, at: 2026-10-05T05:02:12Z }
+generated: { by: openai-codex/gpt-6.1-sol, at: 2026-10-07T04:14:11Z }
 ---
 
 # Contributing
 
-Install the toolchain from `rust-toolchain.toml`, Rust 1.89.0 for minimum-compiler checks, ShellCheck, actionlint 1.7.12, OKF 0.2.7, tq 0.3.0, and OpenSpec 1.14.0. OpenSpec is external authoring tooling; the application has no JavaScript build.
+Install the toolchain from `rust-toolchain.toml`, Rust 1.89.0 for minimum-compiler checks, ShellCheck, actionlint 1.7.12, OKF 0.2.7, and OpenSpec 1.14.0. OpenSpec is external authoring tooling; the application has no JavaScript build.
 
 ```sh
 rustup toolchain install 1.97.1 --profile minimal --component rustfmt --component clippy
 rustup toolchain install 1.89.0 --profile minimal
 cargo install okf --version 0.2.7 --locked
-cargo install tq-cli --version 0.3.0 --locked
 go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
 bun install --global @fission-ai/openspec@1.14.0
 bash scripts/preflight.sh
@@ -26,11 +25,11 @@ Keep the installed tools on PATH, including the Go and Bun global binary directo
 
 CI runs Rust code checks in an unprivileged `pull_request` job with no repository secrets or shared dependency cache. A separate `pull_request_target` job runs documentation and OpenSpec contract checks from gate code copied from the trusted base revision. Pushes to `main` and manual runs execute the complete preflight from trusted repository contents.
 
-Changes to workflows, toolchain selection, preflight, contract helpers and dependency-notice inputs require an `APPROVED` review of the exact PR head from a human collaborator with write, maintain or admin access. `scripts/check-workflow-review.sh` is copied from the trusted base; neither a PR-supplied replacement, a bot, the PR author, a read-only reviewer nor an approval of an earlier commit can satisfy this gate. A reviewer's later request for changes or dismissal invalidates that reviewer's approval; an ordinary comment does not.
+PR approval follows Agent + Copilot + Author review: the agent validates the implementation, Copilot reviews the current head with findings addressed, and the author decides whether to approve and merge. This includes workflow, toolchain, preflight and contract-helper changes. No independent human reviewer or non-author GitHub `APPROVED` review is required. Agents still need explicit authorization to merge into `main` or publish a release.
 
-After a maintainer approves the current head, rerun the failed `PR contract` job (`gh run rerun RUN_ID --failed`). A new commit requires new approval. No write token or repository secret is needed; `pull_request_target` has only contents/read and pull-requests/read permissions and executes only base-snapshot helpers. An optional base `docs-index.sh` is copied when present so older trusted gates do not require newer PR-only helper inputs.
+CI validates code and the documentation/OpenSpec contract; it does not turn review roles into a separate approval gate. No write token or repository secret is needed; `pull_request_target` has only contents/read permission and executes only base-snapshot helpers. An optional base `docs-index.sh` is copied when present so older trusted gates do not require newer PR-only helper inputs.
 
-The initial CI bootstrap PR cannot change the workflow already executing from its base. Review its implementation, full local preflight and minimum-compiler evidence, then land that focused PR through the existing documented manual bootstrap exception. Do not merge a release PR to bootstrap its own trusted workflow. After the bootstrap lands, synchronize dependent PR workflows with it and approve their exact new heads before rerunning contract checks.
+A CI policy correction cannot replace the workflow already executing from its base. Complete Agent + Copilot review and local preflight before the author approves landing that focused trusted-base update. Do not merge a release PR to bootstrap its own trusted workflow. After the update lands, synchronize dependent PRs with the trusted baseline and run checks on their new head/base.
 
 Both packages inherit one version and compiler policy. Keep application builds locked. Run the minimum compiler separately; optional feature combinations need new checks if package features are introduced. The library remains reusable, but neither package publishes to a registry today.
 
@@ -68,7 +67,7 @@ BASE_REF=origin/main OPENSPEC_CHANGES=my-change bash scripts/check-openspec.sh
 
 With `BASE_REF`, the gate checks committed HEAD state against the merge base. Without it, local preflight checks working-tree changes against HEAD, including untracked files. `OPENSPEC_CHANGES` adds IDs in either mode. Set `CHECK_ALL_ARCHIVES=1` to check all archives against current specs, useful for this initial adoption but not a permanent gate once later changes supersede old requirements.
 
-CI reruns on PR edits and synchronization, with no workflow path filters. Require the `preflight`, `minimum compiler`, and `PR contract` results before merge. The normal-PR bootstrap job checks that the base contains the actual contract-gate dependencies, not every new unprivileged validation input introduced by the PR. Maintainers must inspect required results and exact-head integrity approval; repository branch protection is an additional control, not a replacement for validation.
+CI reruns on PR edits and synchronization, with no workflow path filters. Require the `preflight`, `minimum compiler`, and `PR contract` results before merge. The normal-PR bootstrap job checks that the base contains the actual contract-gate dependencies, not every new unprivileged validation input introduced by the PR. The author must inspect required results and Agent + Copilot review before approving a merge; repository branch protection is an additional control, not a replacement for validation.
 
 See [bundle rules](bundle.md) for documentation validation and [release policy](releases.md) for compatibility and distribution.
 
