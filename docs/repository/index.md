@@ -5,4 +5,4 @@
 # Policy
 
 1. [Documentation bundle](bundle.md) - Bundle boundary and checks for Taku documentation.
-2. [Releases and compatibility](releases.md) - Package versions, compiler support, and the first binary release procedure.
+2. [Releases and compatibility](releases.md) - Package versions, compiler support, registry publication, and reviewed binary and Homebrew distribution.

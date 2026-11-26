@@ -5,7 +5,12 @@ edition.workspace = true
 rust-version.workspace = true
 repository.workspace = true
 license.workspace = true
-publish = false
+description = "Reusable engine for Git-versioned remote resource control"
+readme = false
+keywords = ["configuration", "git", "http"]
+categories = ["api-bindings", "config"]
+include = ["/Cargo.toml", "/src/**", "/assets/**", "/tests/fixtures/transport/**", "/LICENCE.md"]
+publish = true
 
 [lints]
 workspace = true

@@ -133,12 +133,48 @@ fn adds_and_renames_environment_scoped_targets() {
         "schema_version: 1\nmetadata: { track: false }\n",
     )
     .unwrap();
+    let resource = project
+        .path()
+        .join("dev/es1/ingest_pipelines/pipeline.json");
+    let payload = br#"{"_taku":{"id":"stable-id"},"processors":[]}"#;
+    std::fs::write(&resource, payload).unwrap();
+    json(
+        &project,
+        &[
+            "target",
+            "--environment",
+            "prod",
+            "add",
+            "elasticsearch",
+            "es1",
+            "--url",
+            "http://127.0.0.1:9202",
+        ],
+    );
+    let prod_before = json(&project, &["target", "--environment", "prod"]);
     json(&project, &["target", "rename", "es1", "cluster"]);
 
-    let metadata = std::fs::read_to_string(project.path().join(".taku/project.yaml")).unwrap();
-    assert!(metadata.contains("cluster:"));
-    assert!(metadata.contains("es2:"));
-    assert!(!metadata.contains("es1:"));
+    let targets = json(&project, &["target"]);
+    let names: Vec<_> = targets["result"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|target| target["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["cluster", "es2"]);
+    assert_eq!(
+        json(&project, &["target", "--environment", "prod"]),
+        prod_before
+    );
+    assert_eq!(
+        std::fs::read(
+            project
+                .path()
+                .join("dev/cluster/ingest_pipelines/pipeline.json")
+        )
+        .unwrap(),
+        payload
+    );
     assert!(project.path().join("dev/cluster/.target.yaml").is_file());
     assert!(
         project
@@ -499,4 +535,346 @@ fn rejects_symlinked_and_traversal_escaped_resource_inputs() {
         .args(["list"])
         .assert()
         .failure();
+}
+
+#[test]
+fn target_names_cannot_escape_their_environment_or_use_project_metadata() {
+    for layout in ["single", "multi"] {
+        let project = project(
+            layout,
+            if layout == "single" {
+                &["dev"]
+            } else {
+                &["dev", "prod"]
+            },
+        );
+        json(&project, &["install", "elasticsearch"]);
+        json(&project, &["context", "set", "dev"]);
+        json(
+            &project,
+            &[
+                "target",
+                "add",
+                "elasticsearch",
+                "es",
+                "--url",
+                "http://invalid",
+            ],
+        );
+        let tree = project
+            .path()
+            .join(if layout == "single" { "es" } else { "dev/es" });
+        std::fs::create_dir_all(tree.join("ingest_pipelines")).unwrap();
+        let resource = tree.join("ingest_pipelines/pipeline.json");
+        let payload = br#"{"_taku":{"id":"stable-id"},"processors":[]}"#;
+        std::fs::write(&resource, payload).unwrap();
+        let metadata = project.path().join(".taku/project.yaml");
+        let before = std::fs::read(&metadata).unwrap();
+        let absolute = project.path().join("escaped").display().to_string();
+        for name in [
+            "",
+            ".",
+            "..",
+            ".git",
+            ".taku",
+            "../escaped",
+            "a/b",
+            "a\\b",
+            &absolute,
+        ] {
+            for args in [
+                vec![
+                    "target",
+                    "add",
+                    "elasticsearch",
+                    name,
+                    "--url",
+                    "http://invalid",
+                ],
+                vec!["target", "rename", "es", name],
+            ] {
+                let output = Command::cargo_bin("taku")
+                    .unwrap()
+                    .current_dir(project.path())
+                    .args(&args)
+                    .output()
+                    .unwrap();
+                assert_eq!(output.status.code(), Some(2), "{layout}: {args:?}");
+                assert_eq!(std::fs::read(&metadata).unwrap(), before, "{args:?}");
+                assert_eq!(std::fs::read(&resource).unwrap(), payload, "{args:?}");
+            }
+        }
+    }
+}
+
+#[test]
+fn target_rename_rejects_symlinked_cache_before_moving_or_deleting_anything() {
+    use std::os::unix::fs::symlink;
+
+    let project = project("multi", &["dev", "prod"]);
+    json(&project, &["install", "elasticsearch"]);
+    json(&project, &["context", "set", "dev"]);
+    json(
+        &project,
+        &[
+            "target",
+            "add",
+            "elasticsearch",
+            "es",
+            "--url",
+            "http://invalid",
+        ],
+    );
+    let resource = project.path().join("dev/es/ingest_pipelines/pipeline.json");
+    std::fs::create_dir_all(resource.parent().unwrap()).unwrap();
+    let payload = br#"{"_taku":{"id":"stable-id"},"processors":[]}"#;
+    std::fs::write(&resource, payload).unwrap();
+    let external = tempfile::tempdir().unwrap();
+    std::fs::create_dir(external.path().join("es")).unwrap();
+    let unrelated = external.path().join("es/keep.txt");
+    std::fs::write(&unrelated, "unrelated data").unwrap();
+    std::fs::create_dir_all(project.path().join(".taku/cache")).unwrap();
+    symlink(external.path(), project.path().join(".taku/cache/dev")).unwrap();
+    let metadata = project.path().join(".taku/project.yaml");
+    let before = std::fs::read(&metadata).unwrap();
+
+    let output = Command::cargo_bin("taku")
+        .unwrap()
+        .current_dir(project.path())
+        .args(["target", "rename", "es", "renamed"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(std::fs::read(&metadata).unwrap(), before);
+    assert_eq!(std::fs::read(&resource).unwrap(), payload);
+    assert_eq!(
+        std::fs::read_to_string(unrelated).unwrap(),
+        "unrelated data"
+    );
+    assert!(!project.path().join("dev/renamed").exists());
+}
+
+#[test]
+fn target_rename_does_not_replace_an_unmanaged_destination_directory() {
+    let project = project("single", &["dev"]);
+    json(&project, &["install", "elasticsearch"]);
+    json(
+        &project,
+        &[
+            "target",
+            "add",
+            "elasticsearch",
+            "es",
+            "--url",
+            "http://invalid",
+        ],
+    );
+    std::fs::create_dir(project.path().join("es")).unwrap();
+    std::fs::create_dir(project.path().join("unmanaged")).unwrap();
+    let metadata = project.path().join(".taku/project.yaml");
+    let before = std::fs::read(&metadata).unwrap();
+
+    let output = Command::cargo_bin("taku")
+        .unwrap()
+        .current_dir(project.path())
+        .args(["target", "rename", "es", "unmanaged"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(std::fs::read(&metadata).unwrap(), before);
+    assert!(project.path().join("es").is_dir());
+    assert!(project.path().join("unmanaged").is_dir());
+}
+
+#[test]
+fn context_preserves_environment_names_that_require_yaml_quoting() {
+    let project = project("multi", &["dev #1", "prod: blue"]);
+    json(&project, &["install", "elasticsearch"]);
+    for environment in ["dev #1", "prod: blue"] {
+        json(&project, &["context", "set", environment]);
+        json(
+            &project,
+            &["target", "add", "elasticsearch", "--url", "http://invalid"],
+        );
+        let targets = json(&project, &["target"]);
+        assert_eq!(targets["result"][0]["environment"], environment);
+        assert_eq!(targets["result"][0]["name"], "elasticsearch");
+    }
+}
+
+#[test]
+fn target_operations_reject_symlinked_resource_tree_components() {
+    use std::os::unix::fs::symlink;
+
+    for alias in ["target", "environment"] {
+        let project = project("multi", &["dev", "prod"]);
+        json(&project, &["install", "elasticsearch"]);
+        json(&project, &["context", "set", "dev"]);
+        json(
+            &project,
+            &[
+                "target",
+                "add",
+                "elasticsearch",
+                "es",
+                "--url",
+                "http://invalid",
+            ],
+        );
+        let external = tempfile::tempdir().unwrap();
+        let tree = if alias == "target" {
+            std::fs::create_dir(project.path().join("dev")).unwrap();
+            symlink(external.path(), project.path().join("dev/es")).unwrap();
+            external.path().to_owned()
+        } else {
+            symlink(external.path(), project.path().join("dev")).unwrap();
+            external.path().join("es")
+        };
+        std::fs::create_dir_all(tree.join("ingest_pipelines")).unwrap();
+        let resource = tree.join("ingest_pipelines/pipeline.json");
+        let payload = br#"{"_taku":{"id":"stable-id"},"processors":[]}"#;
+        std::fs::write(&resource, payload).unwrap();
+        let metadata = project.path().join(".taku/project.yaml");
+        let before = std::fs::read(&metadata).unwrap();
+        for args in [
+            vec!["target", "rename", "es", "renamed"],
+            vec![
+                "target",
+                "add",
+                "elasticsearch",
+                "es",
+                "--url",
+                "http://invalid",
+            ],
+        ] {
+            let output = Command::cargo_bin("taku")
+                .unwrap()
+                .current_dir(project.path())
+                .args(&args)
+                .output()
+                .unwrap();
+            assert_eq!(output.status.code(), Some(2), "{alias}: {args:?}");
+            assert_eq!(std::fs::read(&metadata).unwrap(), before);
+            assert_eq!(std::fs::read(&resource).unwrap(), payload);
+            assert!(!tree.parent().unwrap().join("renamed").exists());
+        }
+    }
+}
+
+#[test]
+fn first_use_target_add_requires_authorization_and_rolls_back_invalid_names() {
+    let project = project("single", &["dev"]);
+    let metadata = project.path().join(".taku/project.yaml");
+    let mut config: serde_yaml::Value =
+        serde_yaml::from_slice(&std::fs::read(&metadata).unwrap()).unwrap();
+    config["application_source"] =
+        serde_yaml::from_str("location: /this-source-does-not-exist-and-must-not-be-refreshed\n")
+            .unwrap();
+    std::fs::write(&metadata, serde_yaml::to_string(&config).unwrap()).unwrap();
+    let before = std::fs::read(&metadata).unwrap();
+    for args in [
+        vec![
+            "--non-interactive",
+            "target",
+            "add",
+            "elasticsearch",
+            "--url",
+            "http://invalid",
+        ],
+        vec![
+            "--non-interactive",
+            "target",
+            "add",
+            "elasticsearch",
+            "../escaped",
+            "--url",
+            "http://invalid",
+            "--yes",
+        ],
+    ] {
+        let output = Command::cargo_bin("taku")
+            .unwrap()
+            .current_dir(project.path())
+            .args(&args)
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(2), "{args:?}");
+        assert!(
+            !project
+                .path()
+                .join(".taku/applications/elasticsearch")
+                .exists()
+        );
+        assert_eq!(std::fs::read(&metadata).unwrap(), before);
+    }
+
+    json(
+        &project,
+        &[
+            "--non-interactive",
+            "target",
+            "add",
+            "elasticsearch",
+            "--url",
+            "http://invalid",
+            "--yes",
+        ],
+    );
+    let targets = json(&project, &["target"]);
+    assert_eq!(targets["result"][0]["name"], "elasticsearch");
+    assert_eq!(targets["result"][0]["application"], "elasticsearch");
+    assert!(
+        project
+            .path()
+            .join(".taku/applications/elasticsearch/application.yaml")
+            .is_file()
+    );
+    assert!(
+        !project
+            .path()
+            .join(".taku/cache/application-source")
+            .exists()
+    );
+}
+
+#[test]
+fn multi_target_scope_requires_context_or_an_explicit_environment() {
+    let project = project("multi", &["dev", "prod"]);
+    json(&project, &["install", "elasticsearch"]);
+    let metadata = project.path().join(".taku/project.yaml");
+    let before = std::fs::read(&metadata).unwrap();
+    failure(
+        &project,
+        &[
+            "target",
+            "add",
+            "elasticsearch",
+            "es",
+            "--url",
+            "http://invalid",
+        ],
+    );
+    assert_eq!(std::fs::read(&metadata).unwrap(), before);
+    json(
+        &project,
+        &[
+            "target",
+            "--environment",
+            "dev",
+            "add",
+            "elasticsearch",
+            "es",
+            "--url",
+            "http://invalid",
+        ],
+    );
+    failure(&project, &["target"]);
+    json(&project, &["context", "set", "dev"]);
+    let context = project.path().join(".taku/context.yaml");
+    let context_before = std::fs::read(&context).unwrap();
+    failure(&project, &["context", "set", "missing"]);
+    assert_eq!(std::fs::read(context).unwrap(), context_before);
+    let targets = json(&project, &["target"]);
+    assert_eq!(targets["result"][0]["environment"], "dev");
+    assert_eq!(targets["result"][0]["name"], "es");
 }

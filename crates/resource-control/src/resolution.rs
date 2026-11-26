@@ -8,6 +8,7 @@ use crate::{
 use anyhow::{Context, Result, bail};
 use semver::{Version, VersionReq};
 use serde::{Deserialize, Serialize};
+use std::borrow::Borrow;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::fs;
@@ -215,31 +216,39 @@ fn resolve_catalog(
     })
 }
 
-fn validate_dependency_cycles(resource_types: &BTreeMap<String, ResourceType>) -> Result<()> {
-    fn visit(
-        name: &str,
-        resource_types: &BTreeMap<String, ResourceType>,
-        visiting: &mut BTreeSet<String>,
-        done: &mut BTreeSet<String>,
-    ) -> Result<()> {
+pub(crate) fn validate_dependency_cycles<K, V>(resource_types: &BTreeMap<K, V>) -> Result<()>
+where
+    K: Borrow<str> + Ord,
+    V: Borrow<ResourceType>,
+{
+    fn visit<'a, K, V>(
+        name: &'a str,
+        resource_types: &'a BTreeMap<K, V>,
+        visiting: &mut BTreeSet<&'a str>,
+        done: &mut BTreeSet<&'a str>,
+    ) -> Result<()>
+    where
+        K: Borrow<str> + Ord,
+        V: Borrow<ResourceType>,
+    {
         if done.contains(name) {
             return Ok(());
         }
-        if !visiting.insert(name.into()) {
+        if !visiting.insert(name) {
             bail!("Resource Type dependency cycle includes {name}");
         }
-        for dependency in &resource_types[name].dependencies {
+        for dependency in &resource_types[name].borrow().dependencies {
             visit(dependency, resource_types, visiting, done)?;
         }
         visiting.remove(name);
-        done.insert(name.into());
+        done.insert(name);
         Ok(())
     }
 
     let mut visiting = BTreeSet::new();
     let mut done = BTreeSet::new();
     for name in resource_types.keys() {
-        visit(name, resource_types, &mut visiting, &mut done)?;
+        visit(name.borrow(), resource_types, &mut visiting, &mut done)?;
     }
     Ok(())
 }

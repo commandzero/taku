@@ -5,6 +5,7 @@ use crate::{
 };
 use anyhow::{Context, Result, bail};
 use rust_embed::Embed;
+use semver::{Prerelease, Version, VersionReq};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -720,31 +721,115 @@ fn validate_catalog(expected_name: &str, major: u64, catalog: &ResourceTypeCatal
             catalog.application.name
         );
     }
-    semver::VersionReq::parse(&catalog.application.version).with_context(|| {
-        format!(
-            "Major Version Catalog {major} has invalid Application Version constraint {}",
-            catalog.application.version
-        )
-    })?;
+    let application_versions =
+        VersionReq::parse(&catalog.application.version).with_context(|| {
+            format!(
+                "Major Version Catalog {major} has invalid Application Version constraint {}",
+                catalog.application.version
+            )
+        })?;
     if catalog.resource_types.is_empty() {
         bail!("Major Version Catalog {major} has no Resource Types");
     }
+    let mut requirements = BTreeMap::new();
+    let mut boundaries = BTreeSet::from([Version::new(major, 0, 0)]);
+    add_version_boundaries(&application_versions, &mut boundaries)?;
     for (name, definitions) in &catalog.resource_types {
         if definitions.is_empty() {
             bail!("Resource Type {name} has no definitions");
         }
+        let mut definition_versions = Vec::with_capacity(definitions.len());
         for resource_type in definitions {
-            if let Some(version) = &resource_type.version {
-                semver::VersionReq::parse(version).with_context(|| {
-                    format!("Resource Type {name} has invalid version constraint {version}")
-                })?;
+            let versions = resource_type
+                .version
+                .as_deref()
+                .map(|constraint| {
+                    VersionReq::parse(constraint).with_context(|| {
+                        format!("Resource Type {name} has invalid version constraint {constraint}")
+                    })
+                })
+                .transpose()?;
+            if let Some(versions) = &versions {
+                add_version_boundaries(versions, &mut boundaries)?;
             }
+            definition_versions.push(versions);
             validate_resource_type(resource_type, name)?;
             for dependency in &resource_type.dependencies {
                 if !catalog.resource_types.contains_key(dependency) {
                     bail!("Resource Type {name} depends on unknown Resource Type {dependency}");
                 }
             }
+        }
+        requirements.insert(name.as_str(), definition_versions);
+    }
+    for version in boundaries
+        .iter()
+        .filter(|version| version.major == major && application_versions.matches(version))
+    {
+        let mut selected = BTreeMap::new();
+        for (name, definitions) in &catalog.resource_types {
+            for (definition, versions) in definitions.iter().zip(&requirements[name.as_str()]) {
+                if versions
+                    .as_ref()
+                    .unwrap_or(&application_versions)
+                    .matches(version)
+                    && selected.insert(name.as_str(), definition).is_some()
+                {
+                    bail!(
+                        "Resource Type {name} has multiple matching definitions for Application Version {version}"
+                    );
+                }
+            }
+        }
+        for (name, definition) in &selected {
+            for dependency in &definition.dependencies {
+                if !selected.contains_key(dependency.as_str()) {
+                    bail!(
+                        "Resource Type {name} depends on unavailable Resource Type {dependency} for Application Version {version}"
+                    );
+                }
+            }
+        }
+        crate::resolution::validate_dependency_cycles(&selected)?;
+    }
+    Ok(())
+}
+
+fn add_version_boundaries(
+    requirement: &VersionReq,
+    boundaries: &mut BTreeSet<Version>,
+) -> Result<()> {
+    // Comparator truth values change only at their core versions and the next
+    // patch/minor/major boundaries (including caret, tilde and wildcard limits).
+    // Testing those representatives covers every release-version partition,
+    // rather than sampling a fixed list of supported product versions.
+    for comparator in &requirement.comparators {
+        let core = Version::new(
+            comparator.major,
+            comparator.minor.unwrap_or(0),
+            comparator.patch.unwrap_or(0),
+        );
+        boundaries.insert(core.clone());
+        if let Some(patch) = core.patch.checked_add(1) {
+            boundaries.insert(Version::new(core.major, core.minor, patch));
+        }
+        if let Some(minor) = core.minor.checked_add(1) {
+            boundaries.insert(Version::new(core.major, minor, 0));
+        }
+        if let Some(major) = core.major.checked_add(1) {
+            boundaries.insert(Version::new(major, 0, 0));
+        }
+        // A requirement admits prereleases only at an explicitly named core.
+        // "0" is the first prerelease; appending ".0" is the immediate
+        // successor of a comparator's prerelease, covering exclusive bounds.
+        if !comparator.pre.is_empty() {
+            let mut prerelease = core;
+            prerelease.pre = Prerelease::new("0")?;
+            boundaries.insert(prerelease.clone());
+            prerelease.pre = comparator.pre.clone();
+            boundaries.insert(prerelease.clone());
+            prerelease.pre = Prerelease::new(&format!("{}.0", comparator.pre))?;
+            boundaries.insert(prerelease);
         }
     }
     Ok(())
@@ -1428,5 +1513,110 @@ transformations:
   - { kind: frame, pointer: /item }
 "#;
         assert!(serde_yaml::from_str::<crate::Operation>(yaml).is_err());
+    }
+}
+
+#[cfg(test)]
+mod catalog_version_validation_tests {
+    use super::validate_catalog;
+    use crate::ResourceTypeCatalog;
+
+    fn catalog(application: &str, first: &str, second: &str) -> ResourceTypeCatalog {
+        let mut catalog: ResourceTypeCatalog = serde_yaml::from_str(&format!(
+            r#"
+schema_version: 1
+version: test
+application: {{ name: test, version: "{application}" }}
+resource_types:
+  widgets:
+    - version: "{first}"
+      id: {{ pointer: /id, scope: universal }}
+      display_name: {{ strategy: id }}
+      operations:
+        read: {{ method: GET, path: "/widgets/{{id}}" }}
+        upsert: {{ method: PUT, path: "/widgets/{{id}}" }}
+"#
+        ))
+        .unwrap();
+        let mut definition = catalog.resource_types["widgets"][0].clone();
+        definition.version = Some(second.into());
+        catalog
+            .resource_types
+            .get_mut("widgets")
+            .unwrap()
+            .push(definition);
+        catalog
+    }
+
+    #[test]
+    fn rejects_overlaps_at_release_and_prerelease_boundaries() {
+        for (major, application, first, second) in [
+            (9, ">=9, <10", "9.*", "~9.4"),
+            (9, ">=9, <10", "^9.4.2", "=9.4.3"),
+            (9, ">=9, <10", "<=9.4.7", ">=9.4.7"),
+            (0, ">=0.0.0, <1", "^0.2.0", "~0.2.7"),
+            (
+                9,
+                ">=9.4.0-alpha, <9.4.0",
+                ">=9.4.0-beta, <9.4.0",
+                ">9.4.0-beta, <9.4.0",
+            ),
+            (
+                9,
+                ">=9.4.0-alpha, <9.4.0",
+                "=9.4.0-beta",
+                ">=9.4.0-beta, <9.4.0",
+            ),
+            (
+                9,
+                "*",
+                ">=9.18446744073709551615.18446744073709551615",
+                "=9.18446744073709551615.18446744073709551615",
+            ),
+        ] {
+            assert!(
+                validate_catalog("test", major, &catalog(application, first, second)).is_err(),
+                "{application}: {first} overlaps {second}"
+            );
+        }
+    }
+
+    #[test]
+    fn accepts_disjoint_ranges_and_overlap_outside_the_catalog() {
+        for (application, first, second) in [
+            (">=9, <10", "<9.4", ">=9.4"),
+            (">=9, <10", "~9.3", "~9.4"),
+            (">=9, <10", "=9.4.2", ">9.4.2, <9.4.3"),
+            (">=9, <9.4", ">=9.4", ">=9.5"),
+            (">=9.4.0-alpha, <9.4.0", "<=9.4.0-beta", ">9.4.0-beta"),
+            (
+                ">=9.4.0-alpha, <9.4.0",
+                "=9.4.0-beta",
+                ">9.4.0-beta, <9.4.0-beta.0",
+            ),
+        ] {
+            validate_catalog("test", 9, &catalog(application, first, second))
+                .unwrap_or_else(|error| panic!("{application}: {first}, {second}: {error:#}"));
+        }
+    }
+
+    #[test]
+    fn dependencies_must_be_available_and_acyclic_in_each_version_partition() {
+        let mut catalog = catalog(">=9, <10", "<9.4", ">=9.4");
+        let mut related = catalog.resource_types["widgets"].clone();
+        catalog.resource_types.get_mut("widgets").unwrap()[0].dependencies = vec!["related".into()];
+        related[1].dependencies = vec!["widgets".into()];
+        catalog.resource_types.insert("related".into(), related);
+        // The union graph is cyclic, but no supported version selects a cycle.
+        validate_catalog("test", 9, &catalog).unwrap();
+
+        catalog.resource_types.get_mut("related").unwrap()[0].dependencies = vec!["widgets".into()];
+        assert!(validate_catalog("test", 9, &catalog).is_err());
+
+        catalog.resource_types.get_mut("related").unwrap()[0]
+            .dependencies
+            .clear();
+        catalog.resource_types.get_mut("related").unwrap().remove(0);
+        assert!(validate_catalog("test", 9, &catalog).is_err());
     }
 }

@@ -1,0 +1,21 @@
+# Select permissive terms already declared by the locked release dependencies.
+# New license requirements fail generation and need review before publication.
+accepted = ["MIT", "Apache-2.0", "ISC", "BSD-3-Clause", "Unicode-3.0", "CDLA-Permissive-2.0"]
+targets = ["aarch64-apple-darwin", "x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"]
+ignore-dev-dependencies = true
+workarounds = ["chrono"]
+
+# Preserve the complete packaged Apache texts instead of synthesized SPDX text.
+# These select the Apache branch where alternatives are offered; changed files
+# fail hash verification and require a fresh review.
+[ryu.clarify]
+license = "Apache-2.0"
+[[ryu.clarify.files]]
+path = "LICENSE-APACHE"
+checksum = "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a"
+
+[sync_wrapper.clarify]
+license = "Apache-2.0"
+[[sync_wrapper.clarify.files]]
+path = "LICENSE"
+checksum = "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594"

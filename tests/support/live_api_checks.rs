@@ -867,7 +867,9 @@ fn subprocess_timeout_retains_output_and_does_not_hang() {
     let result = capture(
         Command::new("sh")
             .args(["-c", "printf timeout-marker; exec sleep 10"])
-            .timeout(Duration::from_millis(50)),
+            // Allow shell startup under parallel build/test load; 50 ms can
+            // expire before printf runs, which says nothing about retention.
+            .timeout(Duration::from_secs(1)),
         &mut output,
     );
     assert!(result.is_err());

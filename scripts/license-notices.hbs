@@ -1,0 +1,28 @@
+# Third-party notices
+
+Generated with cargo-about 0.8.4 from the committed Cargo.lock for the default
+release features on macOS arm64 and GNU/Linux amd64 and arm64. Development-only
+dependencies are excluded; build dependencies are retained conservatively.
+Regenerate with `bash scripts/license-notices.sh` after dependency changes and
+review the license selections and complete source texts before publication.
+
+Dependency authors retain their respective copyrights and license terms.
+This inventory is not legal advice or a substitute for reviewing distribution
+obligations. Taku's own license is in LICENCE.md (LICENSE inside binary archives).
+
+{{#each licenses}}
+{{#unless source_path}}
+ERROR: unsourced license {{id}}
+{{/unless}}
+## {{name}} ({{id}})
+
+Used by:
+{{#each used_by}}
+- {{#if crate.repository}}[{{crate.name}} {{crate.version}}]({{crate.repository}}){{else}}{{crate.name}} {{crate.version}}{{/if}}
+{{/each}}
+
+```text
+{{{text}}}
+```
+
+{{/each}}
